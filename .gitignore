@@ -1,0 +1,8 @@
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+streamlit.err
+streamlit.log
+.streamlit/secrets.toml
+.DS_Store

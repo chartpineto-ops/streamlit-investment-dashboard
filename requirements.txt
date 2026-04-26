@@ -1,0 +1,8 @@
+altair==5.5.0
+feedparser==6.0.11
+pandas==2.2.3
+plotly==5.24.1
+requests==2.32.3
+streamlit==1.41.1
+streamlit-autorefresh==1.0.1
+yfinance==1.2.2
