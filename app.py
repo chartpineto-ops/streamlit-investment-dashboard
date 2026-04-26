@@ -8,17 +8,27 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from io import StringIO
 from typing import Iterable, Sequence
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+import xml.etree.ElementTree as ET
 
-import feedparser
 import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
-import yfinance as yf
+
+try:
+    import feedparser
+except ModuleNotFoundError:
+    feedparser = None
+
+try:
+    import yfinance as yf
+except ModuleNotFoundError:
+    yf = None
 
 try:
     import plotly.graph_objects as go
@@ -1287,14 +1297,90 @@ def macro_scores_for(text: str) -> tuple[float, Counter[str]]:
     return total, factors
 
 
-def parsed_datetime(entry: dict) -> datetime | None:
-    struct_time = entry.get("published_parsed") or entry.get("updated_parsed")
-    if not struct_time:
+def parse_datetime_text(value: object) -> datetime | None:
+    if value in (None, ""):
         return None
     try:
-        return datetime.fromtimestamp(calendar.timegm(struct_time), tz=timezone.utc)
-    except (OverflowError, TypeError, ValueError):
+        parsed = parsedate_to_datetime(str(value).strip())
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        pass
+    try:
+        parsed_ts = pd.to_datetime(value, errors="coerce", utc=True)
+        if pd.isna(parsed_ts):
+            return None
+        return parsed_ts.to_pydatetime()
+    except Exception:
         return None
+
+
+def parsed_datetime(entry: dict) -> datetime | None:
+    struct_time = entry.get("published_parsed") or entry.get("updated_parsed")
+    if struct_time:
+        try:
+            return datetime.fromtimestamp(calendar.timegm(struct_time), tz=timezone.utc)
+        except (OverflowError, TypeError, ValueError):
+            pass
+    for key in ("published", "updated", "pubDate", "dc_date"):
+        parsed = parse_datetime_text(entry.get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def xml_local_name(tag: str) -> str:
+    return str(tag).rsplit("}", 1)[-1].lower()
+
+
+def xml_child_text(parent: ET.Element, names: tuple[str, ...]) -> str:
+    wanted = {name.lower() for name in names}
+    for child in list(parent):
+        if xml_local_name(child.tag) in wanted and child.text:
+            return clean_text(child.text)
+    return ""
+
+
+def xml_entry_link(entry: ET.Element) -> str:
+    for child in list(entry):
+        if xml_local_name(child.tag) != "link":
+            continue
+        href = child.attrib.get("href")
+        if href:
+            return href
+        if child.text:
+            return clean_text(child.text)
+    return ""
+
+
+def parse_feed_content(content: bytes) -> tuple[list[dict], bool, str]:
+    if feedparser is not None:
+        parsed = feedparser.parse(content)
+        return list(parsed.entries), bool(parsed.bozo and not parsed.entries), str(getattr(parsed, "bozo_exception", ""))
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError as exc:
+        return [], True, str(exc)
+    entries: list[dict] = []
+    for node in root.iter():
+        node_type = xml_local_name(node.tag)
+        if node_type not in {"item", "entry"}:
+            continue
+        summary = xml_child_text(node, ("summary", "description", "subtitle", "content"))
+        date_text = xml_child_text(node, ("published", "updated", "pubDate", "date"))
+        entries.append(
+            {
+                "title": xml_child_text(node, ("title",)),
+                "link": xml_entry_link(node),
+                "summary": summary,
+                "description": summary,
+                "published": date_text,
+                "updated": date_text,
+                "content": [{"value": summary}],
+            }
+        )
+    return entries, False, "feedparser unavailable; used built-in XML parser"
 
 
 def format_age(value: datetime | None) -> str:
@@ -1457,14 +1543,16 @@ def request_feed(source: str, url: str, tickers: tuple[str, ...]) -> tuple[list[
         status["message"] = str(exc)
         return [], status
 
-    parsed = feedparser.parse(response.content)
-    if parsed.bozo and not parsed.entries:
+    entries, parse_error, parse_message = parse_feed_content(response.content)
+    if parse_error and not entries:
         status["status"] = "Error"
-        status["message"] = str(parsed.bozo_exception)
+        status["message"] = parse_message
         return [], status
+    if parse_message and feedparser is None:
+        status["message"] = parse_message
 
     articles: list[Article] = []
-    for entry in parsed.entries:
+    for entry in entries:
         title = clean_text(entry.get("title"))
         link = entry.get("link", "")
         raw_summary = (
@@ -1579,14 +1667,16 @@ def request_social_feed(
         status["message"] = str(exc)
         return [], status
 
-    parsed = feedparser.parse(response.content)
-    if parsed.bozo and not parsed.entries:
+    entries, parse_error, parse_message = parse_feed_content(response.content)
+    if parse_error and not entries:
         status["status"] = "Error"
-        status["message"] = str(parsed.bozo_exception)
+        status["message"] = parse_message
         return [], status
+    if parse_message and feedparser is None:
+        status["message"] = parse_message
 
     mentions: list[SocialMention] = []
-    for entry in parsed.entries:
+    for entry in entries:
         title = clean_text(entry.get("title"))
         content_value = ""
         if entry.get("content"):
