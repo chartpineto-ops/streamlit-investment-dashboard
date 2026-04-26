@@ -7273,6 +7273,135 @@ def inject_css() -> None:
                 border-left-color: #e6d36f;
             }
 
+            .statement-insight-grid {
+                display: grid;
+                gap: 0.55rem;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                margin: 0.35rem 0 0.7rem 0;
+            }
+
+            .statement-insight-tile {
+                background: linear-gradient(180deg, rgba(13, 28, 34, 0.98), rgba(7, 16, 20, 0.98));
+                border: 1px solid var(--term-line-soft);
+                border-left: 3px solid var(--term-line);
+                border-radius: 8px;
+                color: var(--term-text);
+                font-family: Inter, "Segoe UI", Arial, sans-serif;
+                min-height: 218px;
+                padding: 0.7rem 0.78rem;
+            }
+
+            .statement-insight-tile.good {
+                border-left-color: var(--term-green);
+            }
+
+            .statement-insight-tile.bad {
+                border-left-color: var(--term-red);
+            }
+
+            .statement-insight-tile.warn {
+                border-left-color: #e6d36f;
+            }
+
+            .statement-insight-top {
+                align-items: flex-start;
+                display: flex;
+                gap: 0.45rem;
+                justify-content: space-between;
+                margin-bottom: 0.5rem;
+            }
+
+            .statement-insight-label {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.62rem;
+                font-weight: 900;
+                letter-spacing: 0.02em;
+                text-transform: uppercase;
+            }
+
+            .statement-insight-headline {
+                color: var(--term-text);
+                display: block;
+                font-size: 0.9rem;
+                font-weight: 900;
+                line-height: 1.16;
+                margin-top: 0.12rem;
+            }
+
+            .statement-insight-status {
+                border: 1px solid var(--term-line-soft);
+                border-radius: 999px;
+                color: var(--term-muted);
+                flex: 0 0 auto;
+                font-size: 0.58rem;
+                font-weight: 900;
+                padding: 0.18rem 0.45rem;
+                text-transform: uppercase;
+            }
+
+            .statement-insight-tile.good .statement-insight-status {
+                background: rgba(112, 224, 163, 0.12);
+                border-color: rgba(112, 224, 163, 0.45);
+                color: var(--term-green);
+            }
+
+            .statement-insight-tile.bad .statement-insight-status {
+                background: rgba(239, 132, 143, 0.12);
+                border-color: rgba(239, 132, 143, 0.48);
+                color: var(--term-red);
+            }
+
+            .statement-insight-tile.warn .statement-insight-status {
+                background: rgba(230, 211, 111, 0.11);
+                border-color: rgba(230, 211, 111, 0.44);
+                color: #e6d36f;
+            }
+
+            .statement-insight-metrics {
+                display: grid;
+                gap: 0.34rem;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                margin-bottom: 0.6rem;
+            }
+
+            .statement-insight-metric {
+                background: rgba(94, 199, 232, 0.045);
+                border: 1px solid rgba(94, 199, 232, 0.14);
+                border-radius: 6px;
+                padding: 0.38rem 0.42rem;
+            }
+
+            .statement-insight-metric span {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.55rem;
+                font-weight: 900;
+                text-transform: uppercase;
+            }
+
+            .statement-insight-metric strong {
+                color: var(--term-text);
+                display: block;
+                font-size: 0.77rem;
+                line-height: 1.18;
+                margin-top: 0.08rem;
+            }
+
+            .statement-insight-copy {
+                color: var(--term-muted);
+                font-size: 0.72rem;
+                font-weight: 700;
+                line-height: 1.35;
+                margin: 0.32rem 0 0 0;
+            }
+
+            .statement-insight-copy strong {
+                color: var(--term-text);
+                font-size: 0.62rem;
+                text-transform: uppercase;
+            }
+
             @keyframes statementFadeIn {
                 from {
                     opacity: 0;
@@ -10137,6 +10266,235 @@ def generate_three_statement_insights(income: pd.DataFrame, balance: pd.DataFram
     return insights[:10]
 
 
+def statement_row_value(row: pd.Series, column: str) -> float | None:
+    return coerce_float(row.get(column)) if not row.empty else None
+
+
+def statement_row_delta(current_row: pd.Series, previous_row_value: pd.Series, column: str) -> float | None:
+    current = statement_row_value(current_row, column)
+    previous = statement_row_value(previous_row_value, column)
+    return current - previous if current is not None and previous is not None else None
+
+
+def structured_statement_insight_tiles(
+    income: pd.DataFrame,
+    balance: pd.DataFrame,
+    cashflow: pd.DataFrame,
+) -> list[dict[str, object]]:
+    latest_income = latest_row(income)
+    prev_income = previous_row(income)
+    latest_balance = latest_row(balance)
+    prev_balance = previous_row(balance)
+    latest_cash = latest_row(cashflow)
+
+    revenue = statement_row_value(latest_income, "Revenue")
+    revenue_growth = latest_change(income, "Revenue")
+    gross_margin = statement_row_value(latest_income, "Gross Margin %")
+    operating_margin = statement_row_value(latest_income, "Operating Margin %")
+    net_margin = statement_row_value(latest_income, "Net Margin %")
+    net_income = statement_row_value(latest_income, "Net Income")
+    operating_margin_delta = statement_row_delta(latest_income, prev_income, "Operating Margin %")
+    net_margin_delta = statement_row_delta(latest_income, prev_income, "Net Margin %")
+
+    if revenue is None and net_income is None:
+        income_tone = "neutral"
+        income_headline = "Income statement data is limited"
+        income_suggests = "May suggest the provider did not return enough income statement history to judge growth quality."
+        income_watch = "Confirm revenue, margin, and EPS history once more periods are available."
+    elif net_income is not None and net_income < 0:
+        income_tone = "bad"
+        income_headline = "Profitability is under pressure"
+        income_suggests = "May suggest the current cost structure or demand environment is not yet supporting positive earnings."
+        income_watch = "Watch operating margin, gross margin, and whether losses narrow in the next reported period."
+    elif revenue_growth is not None and revenue_growth >= 0 and (operating_margin_delta is None or operating_margin_delta >= 0):
+        income_tone = "good"
+        income_headline = "Growth is converting into operating leverage"
+        income_suggests = "May suggest the business is scaling revenue while preserving or improving profitability."
+        income_watch = "Watch whether margin expansion persists after mix, pricing, or one-time benefits normalize."
+    elif revenue_growth is not None and revenue_growth >= 0 and operating_margin_delta is not None and operating_margin_delta < 0:
+        income_tone = "warn"
+        income_headline = "Growth is coming with margin pressure"
+        income_suggests = "May suggest revenue growth is being offset by cost inflation, weaker mix, or heavier investment."
+        income_watch = "Watch operating expenses, gross margin, and whether incremental revenue restores earnings leverage."
+    elif revenue_growth is not None and revenue_growth < 0:
+        income_tone = "warn"
+        income_headline = "Revenue momentum is softening"
+        income_suggests = "May suggest demand, pricing, product mix, or cyclical exposure is weighing on the top line."
+        income_watch = "Watch whether margins hold if revenue remains below the prior period."
+    else:
+        income_tone = "neutral"
+        income_headline = "Profitability signal is mixed"
+        income_suggests = "May suggest the latest period has usable earnings data, but not enough trend evidence for a strong call."
+        income_watch = "Watch revenue growth, margin direction, and EPS consistency across additional periods."
+
+    cash = statement_row_value(latest_balance, "Cash")
+    total_debt = statement_row_value(latest_balance, "Total Debt")
+    net_debt = statement_row_value(latest_balance, "Net Debt")
+    current_ratio = statement_row_value(latest_balance, "Current Ratio")
+    debt_to_equity = statement_row_value(latest_balance, "Debt / Equity")
+    cash_to_debt = statement_row_value(latest_balance, "Cash / Debt")
+    debt_delta_pct = latest_change(balance, "Total Debt")
+    cash_delta_pct = latest_change(balance, "Cash")
+
+    if cash is None and total_debt is None and debt_to_equity is None:
+        balance_tone = "neutral"
+        balance_headline = "Balance sheet data is limited"
+        balance_suggests = "May suggest the provider did not return enough asset, liability, or liquidity detail."
+        balance_watch = "Confirm cash, debt, liabilities, and equity once more complete balance sheet data is available."
+    elif debt_to_equity is not None and debt_to_equity > 2:
+        balance_tone = "bad"
+        balance_headline = "Leverage looks elevated"
+        balance_suggests = "May suggest capital structure risk is higher, especially if earnings or cash flow weaken."
+        balance_watch = "Watch debt maturities, interest expense, refinancing terms, and debt-to-equity direction."
+    elif cash_to_debt is not None and cash_to_debt >= 1:
+        balance_tone = "good"
+        balance_headline = "Liquidity covers debt"
+        balance_suggests = "May suggest the company has balance sheet flexibility to fund operations, investment, or shareholder returns."
+        balance_watch = "Watch whether cash balances are durable or temporarily boosted by working capital timing."
+    elif net_debt is not None and net_debt > 0:
+        balance_tone = "warn"
+        balance_headline = "Net debt position requires monitoring"
+        balance_suggests = "May suggest the company depends more on future cash generation to protect financial flexibility."
+        balance_watch = "Watch cash-to-debt, debt-to-equity, and whether debt growth is outpacing equity or cash flow."
+    else:
+        balance_tone = "neutral"
+        balance_headline = "Capital structure appears balanced"
+        balance_suggests = "May suggest neither liquidity nor leverage is sending an extreme signal from the latest period."
+        balance_watch = "Watch changes in cash, current ratio, total debt, and shareholders' equity."
+
+    ocf = statement_row_value(latest_cash, "Operating Cash Flow")
+    capex = statement_row_value(latest_cash, "Capital Expenditures")
+    fcf = statement_row_value(latest_cash, "Free Cash Flow")
+    fcf_margin = statement_row_value(latest_cash, "FCF Margin %")
+    conversion = statement_row_value(latest_cash, "NI to FCF Conversion %")
+    if conversion is None and fcf is not None and net_income not in (None, 0):
+        conversion = safe_ratio(fcf, net_income, 100)
+    fcf_change_pct = latest_change(cashflow, "Free Cash Flow")
+
+    if ocf is None and fcf is None:
+        cash_tone = "neutral"
+        cash_headline = "Cash flow data is limited"
+        cash_suggests = "May suggest the provider did not return enough cash flow detail to evaluate earnings quality."
+        cash_watch = "Confirm operating cash flow, capex, and free cash flow when more statement detail is available."
+    elif fcf is not None and fcf < 0:
+        cash_tone = "bad"
+        cash_headline = "Free cash flow is negative"
+        cash_suggests = "May suggest reinvestment needs, working capital, or weaker operating cash flow are consuming cash."
+        cash_watch = "Watch operating cash flow recovery, capex intensity, and whether financing activity funds the gap."
+    elif conversion is not None and conversion >= 100:
+        cash_tone = "good"
+        cash_headline = "Earnings are converting strongly to cash"
+        cash_suggests = "May suggest high earnings quality, favorable working capital, or disciplined reinvestment."
+        cash_watch = "Watch whether conversion remains above net income without relying on one-time working capital benefits."
+    elif conversion is not None and conversion < 50:
+        cash_tone = "warn"
+        cash_headline = "Cash conversion is light"
+        cash_suggests = "May suggest reported earnings are not fully translating into free cash flow in the latest period."
+        cash_watch = "Watch receivables, inventory, capex, and non-cash earnings adjustments."
+    elif fcf is not None and fcf > 0:
+        cash_tone = "good"
+        cash_headline = "Free cash flow is positive"
+        cash_suggests = "May suggest the company is generating cash after reinvestment needs."
+        cash_watch = "Watch whether free cash flow grows with revenue and remains resilient through investment cycles."
+    else:
+        cash_tone = "neutral"
+        cash_headline = "Cash generation signal is mixed"
+        cash_suggests = "May suggest cash flow is directionally usable, but not enough trend evidence is available for a stronger read."
+        cash_watch = "Watch operating cash flow, capex, free cash flow, and financing cash flow over additional periods."
+
+    return [
+        {
+            "statement": "Income Statement",
+            "tone": income_tone,
+            "headline": income_headline,
+            "status": "Profitability",
+            "metrics": [
+                ("Revenue", format_compact_currency(revenue, 2)),
+                ("Revenue growth", format_percent(revenue_growth, 1, signed=True)),
+                ("Gross margin", format_percent(gross_margin, 1)),
+                ("Operating margin", format_percent(operating_margin, 1)),
+                ("Net margin", format_percent(net_margin, 1)),
+                ("Net income", format_compact_currency(net_income, 2)),
+            ],
+            "suggests": income_suggests,
+            "watch": income_watch,
+        },
+        {
+            "statement": "Balance Sheet",
+            "tone": balance_tone,
+            "headline": balance_headline,
+            "status": "Liquidity & Leverage",
+            "metrics": [
+                ("Cash", format_compact_currency(cash, 2)),
+                ("Total debt", format_compact_currency(total_debt, 2)),
+                ("Net debt", format_compact_currency(net_debt, 2)),
+                ("Current ratio", format_number(current_ratio, 2)),
+                ("Debt / equity", format_number(debt_to_equity, 2)),
+                ("Cash / debt", format_number(cash_to_debt, 2)),
+                ("Debt change", format_percent(debt_delta_pct, 1, signed=True)),
+                ("Cash change", format_percent(cash_delta_pct, 1, signed=True)),
+            ],
+            "suggests": balance_suggests,
+            "watch": balance_watch,
+        },
+        {
+            "statement": "Cash Flow",
+            "tone": cash_tone,
+            "headline": cash_headline,
+            "status": "Cash Quality",
+            "metrics": [
+                ("Operating CF", format_compact_currency(ocf, 2)),
+                ("Capex", format_compact_currency(capex, 2)),
+                ("Free CF", format_compact_currency(fcf, 2)),
+                ("FCF margin", format_percent(fcf_margin, 1)),
+                ("FCF / NI", format_percent(conversion, 1)),
+                ("FCF change", format_percent(fcf_change_pct, 1, signed=True)),
+            ],
+            "suggests": cash_suggests,
+            "watch": cash_watch,
+        },
+    ]
+
+
+def render_structured_statement_insight_tiles(tiles: list[dict[str, object]]) -> None:
+    tile_html: list[str] = []
+    for tile in tiles:
+        tone = html.escape(str(tile.get("tone", "neutral")))
+        statement = html.escape(str(tile.get("statement", "Statement")))
+        headline = html.escape(str(tile.get("headline", "Signal unavailable")))
+        status = html.escape(str(tile.get("status", "Signal")))
+        suggests = html.escape(str(tile.get("suggests", "Not enough data to infer a signal.")))
+        watch = html.escape(str(tile.get("watch", "Review additional periods as data becomes available.")))
+        metrics = tile.get("metrics", [])
+        metric_html = ""
+        if isinstance(metrics, list):
+            for metric in metrics[:8]:
+                if not isinstance(metric, tuple) or len(metric) != 2:
+                    continue
+                label, value = metric
+                metric_html += (
+                    "<div class='statement-insight-metric'>"
+                    f"<span>{html.escape(str(label))}</span>"
+                    f"<strong>{html.escape(str(value))}</strong>"
+                    "</div>"
+                )
+        tile_html.append(
+            f"<article class='statement-insight-tile {tone}'>"
+            "<div class='statement-insight-top'>"
+            "<div>"
+            f"<span class='statement-insight-label'>{statement}</span>"
+            f"<span class='statement-insight-headline'>{headline}</span>"
+            "</div>"
+            f"<span class='statement-insight-status'>{status}</span>"
+            "</div>"
+            f"<div class='statement-insight-metrics'>{metric_html}</div>"
+            f"<p class='statement-insight-copy'><strong>What it may suggest</strong><br>{suggests}</p>"
+            f"<p class='statement-insight-copy'><strong>What to watch</strong><br>{watch}</p>"
+            "</article>"
+        )
+    st.markdown("<div class='statement-insight-grid'>" + "".join(tile_html) + "</div>", unsafe_allow_html=True)
+
+
 def render_insight_cards(insights: list[dict[str, str]]) -> None:
     cards = [
         f"<div class='insight-card {html.escape(str(item.get('tone', 'neutral')))}'>{html.escape(str(item.get('text', '')))}</div>"
@@ -10375,6 +10733,9 @@ def render_three_statement_insights(
     with st.container(border=True):
         render_statement_section_title("3-Statement Insights", "Rule-based dashboard signals generated from the selected financial statements.", animate=animate, delay=4)
         st.caption(meta_caption + " | Signals are dashboard context, not investment advice.")
+        tiles = structured_statement_insight_tiles(income, balance, cashflow)
+        render_structured_statement_insight_tiles(tiles)
+        render_section_title("Supporting Signals", "Additional deterministic checks from the normalized statement history")
         insights = generate_three_statement_insights(income, balance, cashflow)
         render_insight_cards(insights)
         return insights
