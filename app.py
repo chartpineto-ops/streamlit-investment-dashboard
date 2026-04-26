@@ -27,8 +27,13 @@ except ModuleNotFoundError:
 
 try:
     import yfinance as yf
-except ModuleNotFoundError:
+    YFINANCE_IMPORT_ERROR = ""
+except ModuleNotFoundError as exc:
     yf = None
+    YFINANCE_IMPORT_ERROR = str(exc)
+except Exception as exc:
+    yf = None
+    YFINANCE_IMPORT_ERROR = str(exc)
 
 try:
     import plotly.graph_objects as go
@@ -3288,6 +3293,19 @@ def default_yahoo_metadata(data_type: str, *, last_updated: datetime | None = No
     )
 
 
+def yfinance_unavailable_message() -> str:
+    if yf is not None:
+        return ""
+    detail = f" ({YFINANCE_IMPORT_ERROR})" if YFINANCE_IMPORT_ERROR else ""
+    return "Yahoo Finance/yfinance is unavailable in this runtime. Reboot the app after dependency install or check Streamlit Cloud build logs." + detail
+
+
+def make_yf_ticker(symbol: str):
+    if yf is None:
+        raise RuntimeError(yfinance_unavailable_message())
+    return yf.Ticker(symbol)
+
+
 def freshness_caption(meta: ProviderMetadata | dict | None, fallback_source: str = "N/A") -> str:
     if meta is None:
         return f"Source: {fallback_source} | Freshness: Unavailable"
@@ -3588,7 +3606,7 @@ def fetch_ticker_payload(
     include_30d_options: bool,
 ) -> dict:
     try:
-        yf_ticker = yf.Ticker(ticker)
+        yf_ticker = make_yf_ticker(ticker)
         history = yf_ticker.history(
             period=period,
             interval="1d",
@@ -3718,7 +3736,7 @@ def enrich_payloads_with_universe(payloads: Iterable[dict], scan_universe: pd.Da
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_benchmark_history(period: str) -> pd.DataFrame:
     try:
-        history = yf.Ticker("SPY").history(
+        history = make_yf_ticker("SPY").history(
             period=period,
             interval="1d",
             auto_adjust=False,
@@ -4558,7 +4576,7 @@ def fetch_company_financials(
         return {"status": "Error", "message": "Invalid ticker symbol"}
 
     try:
-        yf_ticker = yf.Ticker(symbol)
+        yf_ticker = make_yf_ticker(symbol)
         info: dict = {}
         try:
             fast_info = getattr(yf_ticker, "fast_info", {}) or {}
@@ -4619,7 +4637,7 @@ def fetch_performance_history(ticker: str, range_key: str) -> pd.DataFrame:
         return empty_history()
 
     try:
-        yf_ticker = yf.Ticker(symbol)
+        yf_ticker = make_yf_ticker(symbol)
         if range_key == "YTD":
             today = date.today()
             history = yf_ticker.history(
@@ -4663,7 +4681,7 @@ def fetch_quote_snapshot(ticker: str) -> dict:
         }
 
     try:
-        yf_ticker = yf.Ticker(symbol)
+        yf_ticker = make_yf_ticker(symbol)
         info: dict = {}
         try:
             fast_info = getattr(yf_ticker, "fast_info", {}) or {}
@@ -4822,7 +4840,7 @@ def quote_row_from_yfinance(label: str, symbol: str, value_type: str = "index") 
                 "Freshness": provider.get("freshness_status", quote.get("quote_label", "Delayed")) if isinstance(provider, dict) else quote.get("quote_label", "Delayed"),
             }
 
-        yf_ticker = yf.Ticker(symbol)
+        yf_ticker = make_yf_ticker(symbol)
         fast_info = {}
         try:
             fast_info = dict(getattr(yf_ticker, "fast_info", {}) or {})
@@ -4933,7 +4951,7 @@ def fetch_sector_performance() -> tuple[pd.DataFrame, pd.DataFrame, datetime]:
 def fetch_home_stock_snapshot(ticker: str) -> tuple[dict, pd.DataFrame, datetime]:
     symbol = normalize_symbol(ticker) or "SPY"
     try:
-        yf_ticker = yf.Ticker(symbol)
+        yf_ticker = make_yf_ticker(symbol)
         info = {}
         try:
             info.update(dict(getattr(yf_ticker, "fast_info", {}) or {}))
