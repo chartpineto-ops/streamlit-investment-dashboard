@@ -3,8 +3,9 @@
 A Streamlit dashboard with a sidebar tab switcher:
 
 - **Home**: market dashboard landing page with index snapshot, sector performance, major news, quick stock snapshot, market catalysts, and a heuristic risk gauge.
-- **Stock Due Diligence**: polished equity research dashboard with a top company selector, delayed quote module, intraday chart, compact financial KPI cards, themed charts/tables, stock-price performance ranges, target-year actuals vs analyst targets with Q1-Q4 breakouts, ratios, margins, cash flow, valuation, analyst EPS expectations vs actuals, public analyst report links where available, and raw financial tables.
 - **Volatility Radar**: polished volatility analytics dashboard with scan-status badges, executive summary cards, stress chips, dark themed forecast tables, and integrated catalyst/news/social/data-health tabs across configurable stock universes.
+- **Company Analysis**: three-statement analysis dashboard with profitability, balance sheet, cash-flow, stock-performance, and rule-based insight sections.
+- **Competitive Analysis**: peer-aware comp sheet with automatic or manual peer selection, normalized stock performance, valuation/growth/profitability/balance-sheet/risk charts, competitive scoring, and rule-based takeaways.
 
 The UI is tuned for a compact financial terminal workflow: dark market-screen styling, structured scan toolbars, compact summary cards, dense side filters, and integrated charts/tables.
 

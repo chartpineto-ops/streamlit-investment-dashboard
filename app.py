@@ -108,7 +108,7 @@ DATA_REFRESH_TTLS = {
 PROVIDER_HIERARCHY = {
     "Market Quotes": ["Yahoo Finance/yfinance", "Cached last successful Streamlit data"],
     "Quick Stock Snapshot": ["Yahoo Finance/yfinance quote, fast_info, and basic info", "Cached last successful Streamlit data"],
-    "Stock Due Diligence": ["Yahoo Finance/yfinance financial statements and company info", "Cached/empty state"],
+    "Competitive Analysis": ["Yahoo Finance/yfinance peer quotes, fundamentals, analyst fields, and price history", "Cached/empty state"],
     "Company Analysis": ["Yahoo Finance/yfinance financial statement matrices", "Cached/empty state"],
     "Analyst Expectations": ["Yahoo Finance/yfinance analyst estimates and public news links", "Clean empty state"],
     "Volatility Radar": ["Yahoo Finance/yfinance price history and option chains", "Cached/empty state"],
@@ -132,6 +132,51 @@ HOME_MARKET_SYMBOLS = (
     {"label": "VIX", "symbol": "^VIX", "type": "index"},
     {"label": "10Y Treasury", "symbol": "^TNX", "type": "yield"},
 )
+
+COMPETITIVE_PERIOD_OPTIONS = ["1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"]
+
+CURATED_PEER_GROUPS = {
+    "AAPL": ["MSFT", "GOOGL", "META", "AMZN", "NVDA", "DELL", "HPQ", "SONY"],
+    "MSFT": ["AAPL", "GOOGL", "META", "AMZN", "ORCL", "CRM", "ADBE", "NOW"],
+    "GOOGL": ["META", "MSFT", "AMZN", "AAPL", "NFLX", "SNAP", "PINS", "BIDU"],
+    "META": ["GOOGL", "SNAP", "PINS", "NFLX", "AMZN", "MSFT", "AAPL", "TTD"],
+    "AMZN": ["WMT", "COST", "TGT", "BABA", "SHOP", "MELI", "EBAY", "AAPL"],
+    "NVDA": ["AMD", "AVGO", "QCOM", "INTC", "MRVL", "TXN", "MU", "TSM"],
+    "JPM": ["BAC", "WFC", "C", "GS", "MS", "USB", "PNC", "BK"],
+    "AMPX": ["ENVX", "QS", "SLDP", "FREY", "RUN", "SEDG", "ENPH", "ALB"],
+    "IONQ": ["RGTI", "QBTS", "QUBT", "IBM", "GOOGL", "MSFT", "NVDA", "AMZN"],
+    "TSLA": ["RIVN", "LCID", "GM", "F", "NIO", "XPEV", "LI", "BYDDY"],
+    "XOM": ["CVX", "COP", "EOG", "OXY", "SLB", "MPC", "PSX", "VLO"],
+    "LLY": ["NVO", "MRK", "PFE", "BMY", "AMGN", "ABBV", "REGN", "VRTX"],
+}
+
+INDUSTRY_PEER_SEEDS = {
+    "consumer electronics": ["AAPL", "DELL", "HPQ", "SONY", "MSFT", "GOOGL", "AMZN", "META"],
+    "software": ["MSFT", "ORCL", "CRM", "ADBE", "NOW", "INTU", "SNOW", "DDOG"],
+    "semiconductor": ["NVDA", "AMD", "AVGO", "QCOM", "INTC", "MRVL", "TXN", "MU"],
+    "banks": ["JPM", "BAC", "WFC", "C", "GS", "MS", "USB", "PNC"],
+    "bank": ["JPM", "BAC", "WFC", "C", "GS", "MS", "USB", "PNC"],
+    "battery": ["AMPX", "ENVX", "QS", "SLDP", "FREY", "ALB", "ENPH", "SEDG"],
+    "quantum": ["IONQ", "RGTI", "QBTS", "QUBT", "IBM", "GOOGL", "MSFT", "NVDA"],
+    "internet content": ["GOOGL", "META", "NFLX", "SNAP", "PINS", "TTD", "SPOT", "ROKU"],
+    "auto": ["TSLA", "RIVN", "LCID", "GM", "F", "NIO", "XPEV", "LI"],
+    "oil": ["XOM", "CVX", "COP", "EOG", "OXY", "SLB", "MPC", "PSX"],
+    "drug": ["LLY", "NVO", "MRK", "PFE", "BMY", "AMGN", "ABBV", "REGN"],
+}
+
+SECTOR_PEER_SEEDS = {
+    "technology": ["AAPL", "MSFT", "NVDA", "AVGO", "AMD", "ORCL", "CRM", "ADBE", "NOW", "INTC"],
+    "communication services": ["GOOGL", "META", "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS", "TTD", "SPOT"],
+    "consumer cyclical": ["AMZN", "TSLA", "HD", "MCD", "NKE", "SBUX", "LOW", "BKNG", "TGT", "RIVN"],
+    "consumer defensive": ["WMT", "COST", "PG", "KO", "PEP", "PM", "MO", "CL", "MDLZ", "KMB"],
+    "financial services": ["JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "USB", "PNC"],
+    "healthcare": ["LLY", "UNH", "JNJ", "MRK", "ABBV", "TMO", "ABT", "PFE", "AMGN", "REGN"],
+    "energy": ["XOM", "CVX", "COP", "EOG", "OXY", "SLB", "MPC", "PSX", "VLO", "KMI"],
+    "industrials": ["GE", "CAT", "HON", "RTX", "UPS", "DE", "BA", "LMT", "ETN", "NOC"],
+    "utilities": ["NEE", "DUK", "SO", "AEP", "EXC", "SRE", "D", "XEL", "PEG", "ED"],
+    "real estate": ["PLD", "AMT", "EQIX", "WELL", "SPG", "O", "DLR", "PSA", "CCI", "VICI"],
+    "basic materials": ["LIN", "SHW", "APD", "ECL", "NEM", "FCX", "DOW", "DD", "ALB", "NUE"],
+}
 
 SECTOR_ETFS = (
     ("Technology", "XLK"),
@@ -200,7 +245,10 @@ ECONOMIC_RELEASE_KEYWORDS = {
 PERFORMANCE_RANGES = {
     "MAX": {"period": "max", "interval": "1d", "label": "Max history"},
     "5Y": {"period": "5y", "interval": "1d", "label": "5 year"},
+    "3Y": {"period": "3y", "interval": "1d", "label": "3 year"},
     "1Y": {"period": "1y", "interval": "1d", "label": "1 year"},
+    "6M": {"period": "6mo", "interval": "1d", "label": "6 month"},
+    "3M": {"period": "3mo", "interval": "1d", "label": "3 month"},
     "1M": {"period": "1mo", "interval": "1d", "label": "1 month"},
     "YTD": {"period": "ytd", "interval": "1d", "label": "Year to date"},
     "5D": {"period": "5d", "interval": "15m", "label": "5 day"},
@@ -12875,6 +12923,775 @@ def render_home_dashboard() -> None:
             render_dashboard_table(combined_status[["Area", "Source", "Status", "Message"]].fillna(""), height=320)
 
 
+def parse_peer_list(text: str, primary_ticker: str) -> list[str]:
+    primary = normalize_symbol(primary_ticker)
+    candidates = [primary] if primary else []
+    for item in re.split(r"[,;\s]+", text or ""):
+        symbol = normalize_symbol(item)
+        if symbol:
+            candidates.append(symbol)
+    return dedupe_tickers(candidates)
+
+
+def dedupe_tickers(tickers: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for ticker in tickers:
+        symbol = normalize_symbol(ticker)
+        if symbol and symbol not in seen:
+            seen.add(symbol)
+            output.append(symbol)
+    return output
+
+
+def peer_seed_candidates(ticker: str, info: dict, mode: str) -> tuple[list[str], str]:
+    symbol = normalize_symbol(ticker)
+    sector = clean_text(str(info.get("sector", ""))).casefold()
+    industry = clean_text(str(info.get("industry", ""))).casefold()
+    profile_text = " ".join(
+        clean_text(str(info.get(key, ""))).casefold()
+        for key in ("longBusinessSummary", "industry", "sector")
+    )
+
+    candidates: list[str] = []
+    source_notes: list[str] = []
+    if symbol in CURATED_PEER_GROUPS:
+        candidates.extend(CURATED_PEER_GROUPS[symbol])
+        source_notes.append("curated ticker peer set")
+
+    if mode == "Sector ETF / industry basket":
+        for sector_key, peers in SECTOR_PEER_SEEDS.items():
+            if sector_key in sector:
+                candidates.extend(peers)
+                source_notes.append(f"{sector_key} sector basket")
+                break
+    else:
+        for keyword, peers in INDUSTRY_PEER_SEEDS.items():
+            if keyword in industry or keyword in profile_text:
+                candidates.extend(peers)
+                source_notes.append(f"{keyword} industry match")
+        for sector_key, peers in SECTOR_PEER_SEEDS.items():
+            if sector_key in sector:
+                candidates.extend(peers)
+                source_notes.append(f"{sector_key} sector fallback")
+                break
+
+    if not candidates:
+        candidates.extend([item.strip() for item in DEFAULT_UNIVERSE.split(",")])
+        source_notes.append("broad market fallback")
+
+    peer_list = dedupe_tickers([symbol] + candidates)
+    return peer_list, ", ".join(dict.fromkeys(source_notes)) or "estimated from available profile metadata"
+
+
+@st.cache_data(ttl=86_400, show_spinner=False)
+def get_peer_group(
+    ticker: str,
+    mode: str,
+    manual_peers: str,
+    max_peers: int,
+) -> dict[str, object]:
+    symbol = normalize_symbol(ticker)
+    if not symbol:
+        return {"tickers": [], "note": "Invalid ticker", "profile": {}, "status": "Error"}
+    if mode == "Manual peer list":
+        peers = parse_peer_list(manual_peers, symbol)
+        return {
+            "tickers": peers[: max_peers + 1],
+            "note": "Manual peer list; selected ticker is always included.",
+            "profile": {},
+            "status": "OK" if peers else "Warning",
+        }
+
+    payload = fetch_company_financials(symbol, "Annual", 4, date.today().year)
+    info = payload.get("info", {}) if payload.get("status") == "OK" else {}
+    peers, source_note = peer_seed_candidates(symbol, info, mode)
+    return {
+        "tickers": peers[: max_peers + 1],
+        "note": f"Peers are estimated from {source_note}.",
+        "profile": {
+            "Company": info.get("longName") or info.get("shortName") or symbol,
+            "Sector": info.get("sector", ""),
+            "Industry": info.get("industry", ""),
+            "Market Cap": coerce_float(info.get("marketCap") or info.get("market_cap")),
+        },
+        "status": "OK",
+    }
+
+
+def selected_period_return(ticker: str, period: str) -> tuple[float | None, float | None, float | None, pd.DataFrame]:
+    history = fetch_performance_history(ticker, period)
+    frame = performance_frame(history)
+    summary = performance_summary(frame)
+    max_drawdown = calculate_max_drawdown(frame)
+    volatility = None
+    if not frame.empty and "Stock Price" in frame:
+        prices = pd.to_numeric(frame["Stock Price"], errors="coerce").dropna()
+        returns = prices.pct_change().dropna()
+        if len(returns) >= 5:
+            volatility = float(returns.std() * math.sqrt(252) * 100)
+    return summary.get("return"), volatility, max_drawdown, frame
+
+
+def calculate_max_drawdown(frame: pd.DataFrame) -> float | None:
+    if frame.empty or "Stock Price" not in frame:
+        return None
+    prices = pd.to_numeric(frame["Stock Price"], errors="coerce").dropna()
+    if prices.empty:
+        return None
+    running_high = prices.cummax()
+    drawdowns = (prices / running_high - 1.0) * 100
+    return coerce_float(drawdowns.min())
+
+
+def latest_ratio_value(ratios: pd.DataFrame, key: str) -> float | None:
+    if ratios.empty or key not in ratios:
+        return None
+    values = pd.to_numeric(ratios[key], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return coerce_float(values.iloc[-1])
+
+
+def peer_metric_row(ticker: str, period: str) -> tuple[dict[str, object], dict[str, object]]:
+    symbol = normalize_symbol(ticker)
+    status = {"Ticker": symbol, "Status": "OK", "Message": "", "Provider": "Yahoo Finance/yfinance"}
+    snapshot, snapshot_status, refreshed_at = fetch_home_stock_snapshot(symbol)
+    payload = fetch_company_financials(symbol, "Annual", 4, date.today().year)
+    if payload.get("status") != "OK":
+        status["Status"] = "Warning"
+        status["Message"] = payload.get("message", "Financial statement data unavailable")
+    info = payload.get("info", {}) if payload.get("status") == "OK" else {}
+    income, balance, cashflow, quarterly = company_statement_set(payload, "Annual")
+    financial_df = align_financial_series(financial_series_map(income, balance, cashflow), quarterly, 4)
+    ratios = ratio_frame(financial_df)
+    metrics = latest_financial_metrics(financial_df, ratios, info)
+    latest_row = financial_df.iloc[-1].to_dict() if not financial_df.empty else {}
+    selected_return, selected_volatility, max_drawdown, _ = selected_period_return(symbol, period)
+    return_1m, _, _, _ = selected_period_return(symbol, "1M")
+    return_ytd, _, _, _ = selected_period_return(symbol, "YTD")
+    return_1y, one_year_volatility, _, _ = selected_period_return(symbol, "1Y")
+
+    market_cap = snapshot.get("Market Cap") or metrics.get("Market Cap")
+    enterprise_value = metrics.get("Enterprise Value")
+    revenue = metrics.get("Revenue")
+    total_debt = latest_row.get("Total Debt")
+    cash = latest_row.get("Cash")
+    avg_target = snapshot.get("Avg Target")
+    last_price = snapshot.get("Last Price")
+    implied_upside = safe_ratio((avg_target - last_price) if avg_target is not None and last_price is not None else None, last_price, 100)
+    ev_revenue = coerce_float(info.get("enterpriseToRevenue")) or safe_ratio(enterprise_value, revenue)
+
+    row = {
+        "Ticker": symbol,
+        "Company name": snapshot.get("Name") or info.get("longName") or info.get("shortName") or symbol,
+        "Sector": info.get("sector") or "",
+        "Industry": info.get("industry") or "",
+        "Market cap": market_cap,
+        "Enterprise value": enterprise_value,
+        "Revenue": revenue,
+        "Revenue growth YoY": metrics.get("Revenue Growth %"),
+        "Gross margin": latest_ratio_value(ratios, "Gross Margin %"),
+        "Operating margin": latest_ratio_value(ratios, "Operating Margin %"),
+        "Net margin": metrics.get("Net Margin %"),
+        "EBITDA margin": safe_ratio(coerce_float(info.get("ebitda")), revenue, 100),
+        "Free cash flow margin": metrics.get("FCF Margin %"),
+        "P/E": snapshot.get("Trailing PE") or metrics.get("Trailing PE"),
+        "Forward P/E": snapshot.get("Forward PE") or metrics.get("Forward PE"),
+        "Price/Sales": metrics.get("Price / Sales"),
+        "EV/Revenue": ev_revenue,
+        "EV/EBITDA": metrics.get("EV / EBITDA"),
+        "Debt/Equity": metrics.get("Debt / Equity"),
+        "Net debt": (total_debt - cash) if total_debt is not None and cash is not None else None,
+        "Cash": cash,
+        "ROE": safe_ratio(coerce_float(info.get("returnOnEquity")), 1, 100),
+        "ROIC": safe_ratio(coerce_float(info.get("returnOnCapital")), 1, 100),
+        "1M return": return_1m,
+        "YTD return": return_ytd,
+        "1Y return": return_1y,
+        f"{period} return": selected_return,
+        "Beta": coerce_float(info.get("beta")),
+        "Short interest %": snapshot.get("Short Interest %"),
+        "Analyst rating": snapshot.get("Analyst Rating") or "N/A",
+        "Average price target": avg_target,
+        "Implied upside/downside": implied_upside,
+        "Option implied move %": snapshot.get("Option Move %"),
+        "IV %": snapshot.get("IV %"),
+        "Volatility %": selected_volatility or one_year_volatility,
+        "Max drawdown %": max_drawdown,
+        "Current ratio": metrics.get("Current Ratio"),
+        "Cash/Debt": metrics.get("Cash / Debt"),
+        "Source": snapshot.get("Provider") or "Yahoo Finance/yfinance",
+        "Freshness": snapshot.get("Freshness") or "Cached / delayed",
+        "Last refreshed": refreshed_at,
+        "Status": snapshot.get("Status", "OK"),
+    }
+    if not snapshot_status.empty:
+        first_status = snapshot_status.iloc[0].to_dict()
+        status["Provider"] = first_status.get("Provider", status["Provider"])
+        status["Message"] = "; ".join(part for part in [status.get("Message", ""), first_status.get("Message", "")] if part)
+        status["Status"] = first_status.get("Status", status["Status"]) if status["Status"] == "OK" else status["Status"]
+    return row, status
+
+
+@st.cache_data(ttl=21_600, show_spinner=False)
+def fetch_peer_comparison_data(tickers: tuple[str, ...], period: str) -> tuple[pd.DataFrame, pd.DataFrame, datetime]:
+    rows: list[dict[str, object]] = []
+    statuses: list[dict[str, object]] = []
+    for ticker in tickers:
+        try:
+            row, status = peer_metric_row(ticker, period)
+        except Exception as exc:
+            row = {"Ticker": ticker, "Status": "Error", "Source": "Yahoo Finance/yfinance", "Freshness": "Error"}
+            status = {"Ticker": ticker, "Status": "Error", "Message": str(exc), "Provider": "Yahoo Finance/yfinance"}
+        rows.append(row)
+        statuses.append(status)
+    return pd.DataFrame(rows), pd.DataFrame(statuses), eastern_now()
+
+
+def metric_rank(frame: pd.DataFrame, ticker: str, metric: str, high_better: bool = True) -> str:
+    if frame.empty or metric not in frame:
+        return "N/A"
+    subset = frame[["Ticker", metric]].copy()
+    subset[metric] = pd.to_numeric(subset[metric], errors="coerce")
+    subset = subset.dropna(subset=[metric])
+    if subset.empty or ticker not in set(subset["Ticker"]):
+        return "N/A"
+    subset = subset.sort_values(metric, ascending=not high_better, kind="mergesort").reset_index(drop=True)
+    rank = int(subset.index[subset["Ticker"].eq(ticker)][0]) + 1
+    return f"{rank} of {len(subset)}"
+
+
+def percentile_score(series: pd.Series, high_better: bool = True) -> pd.Series:
+    values = pd.to_numeric(series, errors="coerce")
+    valid = values.dropna()
+    result = pd.Series(pd.NA, index=series.index, dtype="Float64")
+    if valid.empty:
+        return result
+    if len(valid) == 1:
+        result.loc[valid.index] = 100.0
+        return result
+    result.loc[valid.index] = valid.rank(ascending=True if high_better else False, pct=True) * 100
+    return result
+
+
+def average_columns(frame: pd.DataFrame, columns: list[str]) -> pd.Series:
+    available = [column for column in columns if column in frame]
+    if not available:
+        return pd.Series(pd.NA, index=frame.index, dtype="Float64")
+    return frame[available].apply(pd.to_numeric, errors="coerce").mean(axis=1, skipna=True)
+
+
+def calculate_competitive_scores(frame: pd.DataFrame) -> pd.DataFrame:
+    scored = frame.copy()
+    score_inputs = {
+        "Growth Score": [("Revenue growth YoY", True), ("1Y return", True)],
+        "Profitability Score": [("Gross margin", True), ("Operating margin", True), ("Net margin", True), ("Free cash flow margin", True), ("ROE", True), ("ROIC", True)],
+        "Valuation Score": [("Forward P/E", False), ("Price/Sales", False), ("EV/Revenue", False), ("EV/EBITDA", False)],
+        "Balance Sheet Score": [("Debt/Equity", False), ("Net debt", False), ("Cash/Debt", True), ("Current ratio", True)],
+        "Market Momentum Score": [("1M return", True), ("YTD return", True), ("1Y return", True), ("Max drawdown %", True)],
+        "Analyst Sentiment Score": [("Implied upside/downside", True)],
+        "Risk Score": [("Beta", False), ("Volatility %", False), ("Option implied move %", False), ("Short interest %", False)],
+    }
+    for score_name, metrics in score_inputs.items():
+        percentile_cols = []
+        for metric, high_better in metrics:
+            if metric not in scored:
+                continue
+            pct_col = f"__pct_{score_name}_{metric}"
+            scored[pct_col] = percentile_score(scored[metric], high_better)
+            percentile_cols.append(pct_col)
+        scored[score_name] = average_columns(scored, percentile_cols)
+
+    weights = {
+        "Growth Score": 0.20,
+        "Profitability Score": 0.20,
+        "Valuation Score": 0.20,
+        "Balance Sheet Score": 0.15,
+        "Market Momentum Score": 0.15,
+        "Analyst Sentiment Score": 0.10,
+        "Risk Score": 0.10,
+    }
+    totals = pd.Series(0.0, index=scored.index)
+    weight_totals = pd.Series(0.0, index=scored.index)
+    for column, weight in weights.items():
+        if column not in scored:
+            continue
+        values = pd.to_numeric(scored[column], errors="coerce")
+        mask = values.notna()
+        totals.loc[mask] += values.loc[mask] * weight
+        weight_totals.loc[mask] += weight
+    scored["Overall Competitive Score"] = totals.where(weight_totals.eq(0), totals / weight_totals.replace(0, pd.NA))
+    drop_cols = [column for column in scored.columns if column.startswith("__pct_")]
+    return scored.drop(columns=drop_cols, errors="ignore")
+
+
+def build_peer_performance_frame(tickers: Sequence[str], period: str) -> pd.DataFrame:
+    rows = []
+    for ticker in tickers:
+        history = fetch_performance_history(ticker, period)
+        frame = performance_frame(history)
+        if frame.empty:
+            continue
+        chart = frame.reset_index()
+        date_column = chart.columns[0]
+        for _, row in chart.iterrows():
+            rows.append(
+                {
+                    "Date": row[date_column],
+                    "Ticker": ticker,
+                    "Indexed Performance": (coerce_float(row.get("Performance %")) or 0) + 100,
+                    "Return %": coerce_float(row.get("Performance %")),
+                    "Stock Price": coerce_float(row.get("Stock Price")),
+                    "Selected": ticker == tickers[0],
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def render_peer_performance_chart(frame: pd.DataFrame, primary_ticker: str) -> None:
+    if frame.empty:
+        st.info("No peer performance history was returned for the selected period.")
+        return
+    chart = (
+        alt.Chart(frame)
+        .mark_line(point=False)
+        .encode(
+            x=alt.X("Date:T", title=None, axis=alt.Axis(format="%b %d")),
+            y=alt.Y("Indexed Performance:Q", title="Indexed to 100"),
+            color=alt.condition(
+                alt.datum.Ticker == primary_ticker,
+                alt.value("#7bdff2"),
+                alt.Color("Ticker:N", scale=alt.Scale(scheme="tableau20"), legend=alt.Legend(title=None)),
+            ),
+            strokeWidth=alt.condition(alt.datum.Ticker == primary_ticker, alt.value(3.4), alt.value(1.4)),
+            opacity=alt.condition(alt.datum.Ticker == primary_ticker, alt.value(1.0), alt.value(0.58)),
+            tooltip=[
+                alt.Tooltip("Date:T", title="Date"),
+                alt.Tooltip("Ticker:N", title="Ticker"),
+                alt.Tooltip("Indexed Performance:Q", title="Indexed", format=",.2f"),
+                alt.Tooltip("Return %:Q", title="Return", format="+.2f"),
+                alt.Tooltip("Stock Price:Q", title="Price", format=",.2f"),
+            ],
+        )
+        .properties(height=285)
+    )
+    st.altair_chart(base_chart(chart), use_container_width=True)
+
+
+def render_peer_metric_bars(frame: pd.DataFrame, metric: str, title: str, *, high_better: bool = True, height: int = 235) -> None:
+    if frame.empty or metric not in frame:
+        st.info(f"No {title.lower()} data available.")
+        return
+    chart_frame = frame[["Ticker", metric]].copy()
+    chart_frame[metric] = pd.to_numeric(chart_frame[metric], errors="coerce")
+    chart_frame = chart_frame.dropna(subset=[metric]).sort_values(metric, ascending=not high_better, kind="mergesort")
+    if chart_frame.empty:
+        st.info(f"No {title.lower()} data available.")
+        return
+    chart = (
+        alt.Chart(chart_frame)
+        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4)
+        .encode(
+            y=alt.Y("Ticker:N", title=None, sort=list(chart_frame["Ticker"])),
+            x=alt.X(f"{metric}:Q", title=title),
+            color=alt.condition(alt.datum.Ticker == frame.iloc[0]["Ticker"], alt.value("#7bdff2"), alt.value("#58d68d" if high_better else "#e6d36f")),
+            tooltip=[alt.Tooltip("Ticker:N"), alt.Tooltip(f"{metric}:Q", title=title, format=",.2f")],
+        )
+        .properties(height=height)
+    )
+    st.altair_chart(base_chart(chart), use_container_width=True)
+
+
+def render_valuation_growth_scatter(frame: pd.DataFrame, primary_ticker: str) -> None:
+    if frame.empty or "Revenue growth YoY" not in frame:
+        st.info("No valuation/growth data available.")
+        return
+    y_metric = "EV/Revenue" if "EV/Revenue" in frame and pd.to_numeric(frame["EV/Revenue"], errors="coerce").notna().any() else "Forward P/E"
+    chart_frame = frame[["Ticker", "Company name", "Revenue growth YoY", y_metric, "Market cap"]].copy()
+    for column in ("Revenue growth YoY", y_metric, "Market cap"):
+        chart_frame[column] = pd.to_numeric(chart_frame[column], errors="coerce")
+    chart_frame = chart_frame.dropna(subset=["Revenue growth YoY", y_metric])
+    if chart_frame.empty:
+        st.info("No valuation/growth data available.")
+        return
+    chart = (
+        alt.Chart(chart_frame)
+        .mark_circle(opacity=0.82)
+        .encode(
+            x=alt.X("Revenue growth YoY:Q", title="Revenue growth YoY (%)"),
+            y=alt.Y(f"{y_metric}:Q", title=f"{y_metric} (x)"),
+            size=alt.Size("Market cap:Q", title="Market cap", scale=alt.Scale(range=[90, 900]), legend=None),
+            color=alt.condition(alt.datum.Ticker == primary_ticker, alt.value("#7bdff2"), alt.value("#49d69b")),
+            tooltip=[
+                alt.Tooltip("Ticker:N"),
+                alt.Tooltip("Company name:N", title="Company"),
+                alt.Tooltip("Revenue growth YoY:Q", format="+.1f"),
+                alt.Tooltip(f"{y_metric}:Q", format=",.1f"),
+                alt.Tooltip("Market cap:Q", format=",.0f"),
+            ],
+        )
+        .properties(height=285)
+    )
+    st.altair_chart(base_chart(chart), use_container_width=True)
+
+
+def competitive_display_table(frame: pd.DataFrame, primary_ticker: str) -> pd.DataFrame:
+    columns = [
+        "Ticker",
+        "Company name",
+        "Sector",
+        "Industry",
+        "Market cap",
+        "Enterprise value",
+        "Revenue",
+        "Revenue growth YoY",
+        "Gross margin",
+        "Operating margin",
+        "Net margin",
+        "EBITDA margin",
+        "Free cash flow margin",
+        "P/E",
+        "Forward P/E",
+        "Price/Sales",
+        "EV/Revenue",
+        "EV/EBITDA",
+        "Debt/Equity",
+        "Net debt",
+        "Cash",
+        "ROE",
+        "ROIC",
+        "1M return",
+        "YTD return",
+        "1Y return",
+        "Beta",
+        "Short interest %",
+        "Analyst rating",
+        "Average price target",
+        "Implied upside/downside",
+        "Overall Competitive Score",
+    ]
+    display = frame[[column for column in columns if column in frame]].copy()
+    display.insert(0, "Focus", display["Ticker"].map(lambda value: "Primary" if value == primary_ticker else "Peer"))
+    currency_columns = ["Market cap", "Enterprise value", "Revenue", "Net debt", "Cash", "Average price target"]
+    percent_columns = [
+        "Revenue growth YoY",
+        "Gross margin",
+        "Operating margin",
+        "Net margin",
+        "EBITDA margin",
+        "Free cash flow margin",
+        "ROE",
+        "ROIC",
+        "1M return",
+        "YTD return",
+        "1Y return",
+        "Short interest %",
+        "Implied upside/downside",
+        "Overall Competitive Score",
+    ]
+    multiple_columns = ["P/E", "Forward P/E", "Price/Sales", "EV/Revenue", "EV/EBITDA", "Debt/Equity", "Beta"]
+    for column in currency_columns:
+        if column in display:
+            if column == "Average price target":
+                display[column] = display[column].map(lambda value: format_currency(value, 2))
+            else:
+                display[column] = display[column].map(lambda value: format_compact_currency(value, 1))
+    for column in percent_columns:
+        if column in display:
+            display[column] = display[column].map(lambda value: format_percent(value, 1, signed=column.endswith("return") or column == "Implied upside/downside"))
+    for column in multiple_columns:
+        if column in display:
+            display[column] = display[column].map(lambda value: "N/A" if value is None or pd.isna(value) else f"{float(value):,.1f}x" if column not in {"Debt/Equity", "Beta"} else format_number(value, 2))
+    return display.fillna("N/A")
+
+
+def render_competitive_scorecard(frame: pd.DataFrame, primary_ticker: str) -> None:
+    score_columns = [
+        "Growth Score",
+        "Profitability Score",
+        "Valuation Score",
+        "Balance Sheet Score",
+        "Market Momentum Score",
+        "Analyst Sentiment Score",
+        "Risk Score",
+        "Overall Competitive Score",
+    ]
+    if frame.empty or primary_ticker not in set(frame["Ticker"]):
+        return
+    row = frame[frame["Ticker"].eq(primary_ticker)].iloc[0]
+    items = []
+    for column in score_columns:
+        value = coerce_float(row.get(column))
+        label = column.replace(" Score", "")
+        items.append(
+            {
+                "label": label,
+                "value": format_percent(value, 0) if value is not None else "N/A",
+                "helper": "peer percentile",
+                "tone": "good" if value is not None and value >= 67 else "warn" if value is not None and value >= 40 else "bad" if value is not None else "neutral",
+                "progress": value,
+            }
+        )
+    render_research_kpi_grid(items)
+
+
+def competitive_takeaways(frame: pd.DataFrame, primary_ticker: str, period: str) -> list[dict[str, str]]:
+    if frame.empty or primary_ticker not in set(frame["Ticker"]):
+        return []
+    row = frame[frame["Ticker"].eq(primary_ticker)].iloc[0]
+    insights: list[dict[str, str]] = []
+    checks = [
+        ("Operating margin", True, "operating margin"),
+        ("Revenue growth YoY", True, "revenue growth"),
+        ("EV/Revenue", False, "EV/Revenue multiple"),
+        ("Cash/Debt", True, "cash-to-debt liquidity"),
+        (f"{period} return", True, f"{period} stock performance"),
+        ("Implied upside/downside", True, "analyst implied upside"),
+    ]
+    for metric, high_better, label in checks:
+        if metric not in frame:
+            continue
+        rank = metric_rank(frame, primary_ticker, metric, high_better)
+        value = coerce_float(row.get(metric))
+        median = coerce_float(pd.to_numeric(frame[metric], errors="coerce").median())
+        if value is None or median is None or rank == "N/A":
+            continue
+        direction = "above" if value > median else "below" if value < median else "in line with"
+        tone = "good" if (value >= median and high_better) or (value <= median and not high_better) else "bad"
+        insights.append(
+            {
+                "tone": tone,
+                "text": f"{primary_ticker} ranks {rank} on {label} and is {direction} the peer median.",
+            }
+        )
+    overall = coerce_float(row.get("Overall Competitive Score"))
+    if overall is not None:
+        insights.insert(
+            0,
+            {
+                "tone": "good" if overall >= 67 else "warn" if overall >= 40 else "bad",
+                "text": f"{primary_ticker}'s overall competitive score is {overall:.0f}/100 across available peer metrics.",
+            },
+        )
+    return insights[:8]
+
+
+def render_competitive_analysis_tab() -> None:
+    st.sidebar.header("Competitive Analysis")
+    show_debug = st.sidebar.checkbox("Show competitive analysis debug", value=False, key="competitive_debug")
+
+    st.markdown("<div class='equity-kicker'>Equity Research Dashboard</div>", unsafe_allow_html=True)
+    st.title("Competitive Analysis")
+    st.markdown(
+        "<div class='statement-page-subtitle'>Compare company performance, valuation, growth, profitability, balance sheet quality, analyst sentiment, and market risk against relevant peers.</div>",
+        unsafe_allow_html=True,
+    )
+
+    control_cols = st.columns([0.9, 0.95, 0.5, 0.5, 0.46, 0.5, 0.5, 0.5, 0.5, 0.45], gap="small")
+    if "competitive_ticker" not in st.session_state:
+        st.session_state["competitive_ticker"] = st.session_state.get("three_statement_ticker_input", "")
+    with control_cols[0]:
+        ticker_input = st.text_input("Primary ticker", placeholder="AAPL", key="competitive_ticker")
+    with control_cols[1]:
+        peer_mode = st.selectbox("Peer selection", ["Auto-detect peers", "Manual peer list", "Sector ETF / industry basket"], key="competitive_peer_mode")
+    with control_cols[2]:
+        max_peers = int(st.selectbox("Peers", [5, 10, 15, 20], index=1, key="competitive_peer_count"))
+    with control_cols[3]:
+        comparison_period = st.selectbox("Period", COMPETITIVE_PERIOD_OPTIONS, index=4, key="competitive_period")
+    with control_cols[4]:
+        refresh_clicked = st.button("Refresh", use_container_width=True, key="competitive_refresh")
+    with control_cols[5]:
+        include_mega = st.toggle("Mega-cap", value=True, key="competitive_include_mega")
+    with control_cols[6]:
+        exclude_outliers = st.toggle("Outliers", value=False, key="competitive_exclude_outliers")
+    with control_cols[7]:
+        show_percentiles = st.toggle("Ranks", value=True, key="competitive_percentiles")
+    with control_cols[8]:
+        normalize_values = st.toggle("Normalize", value=False, key="competitive_normalize")
+    with control_cols[9]:
+        show_raw = st.toggle("Raw", value=False, key="competitive_raw")
+
+    primary_ticker = normalize_symbol(ticker_input)
+    manual_peers = ""
+    if peer_mode == "Manual peer list":
+        manual_peers = st.text_input("Manual peers", "MSFT, GOOGL, META, AMZN, NVDA", key="competitive_manual_peers")
+
+    if refresh_clicked:
+        fetch_home_stock_snapshot.clear()
+        fetch_quote_snapshot.clear()
+        fetch_performance_history.clear()
+        fetch_peer_comparison_data.clear()
+        get_peer_group.clear()
+        fetch_company_financials.clear()
+
+    if not primary_ticker:
+        st.markdown(
+            "<div class='sankey-empty'>Enter a ticker to compare company performance, valuation, growth, profitability, balance sheet strength, and market sentiment against industry peers.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    peer_group = get_peer_group(primary_ticker, peer_mode, manual_peers, max_peers)
+    tickers = list(peer_group.get("tickers", []))
+    if not tickers:
+        st.warning("No valid tickers were available for comparison.")
+        return
+
+    with st.spinner(f"Building competitive analysis for {primary_ticker}..."):
+        peer_df, status_df, refreshed_at = fetch_peer_comparison_data(tuple(tickers), comparison_period)
+    if peer_df.empty:
+        st.warning("No peer metrics were returned by the provider.")
+        return
+
+    if not include_mega and "Market cap" in peer_df:
+        is_primary = peer_df["Ticker"].eq(primary_ticker)
+        peer_df = peer_df[is_primary | (pd.to_numeric(peer_df["Market cap"], errors="coerce").fillna(0) < 1_000_000_000_000)]
+    if exclude_outliers:
+        for column in ("EV/Revenue", "Forward P/E", "Revenue growth YoY"):
+            if column not in peer_df:
+                continue
+            values = pd.to_numeric(peer_df[column], errors="coerce")
+            low, high = values.quantile(0.05), values.quantile(0.95)
+            peer_df = peer_df[values.between(low, high) | values.isna() | peer_df["Ticker"].eq(primary_ticker)]
+
+    peer_df = calculate_competitive_scores(peer_df)
+    score_sort = pd.to_numeric(peer_df.get("Overall Competitive Score"), errors="coerce")
+    peer_df = peer_df.assign(__score_sort=score_sort).sort_values(["__score_sort", "Ticker"], ascending=[False, True], na_position="last", kind="mergesort").drop(columns="__score_sort")
+    primary_first = pd.concat(
+        [peer_df[peer_df["Ticker"].eq(primary_ticker)], peer_df[~peer_df["Ticker"].eq(primary_ticker)]],
+        ignore_index=True,
+    )
+    peer_df = primary_first
+
+    st.caption(
+        f"{primary_ticker} | {len(peer_df)} companies | {peer_group.get('note', 'Peers estimated from available metadata.')} "
+        f"| Source: Yahoo Finance/yfinance | Cached / delayed: updated {refreshed_at.strftime('%I:%M:%S %p ET').lstrip('0')}"
+    )
+
+    if peer_mode != "Manual peer list":
+        st.info("Peers are estimated based on available sector, industry, market cap, and profile metadata. Use manual mode for a precise comp set.")
+
+    primary_row = peer_df[peer_df["Ticker"].eq(primary_ticker)].iloc[0] if primary_ticker in set(peer_df["Ticker"]) else peer_df.iloc[0]
+    render_metric_strip(
+        [
+            {"label": "Peer Group", "value": len(peer_df), "context": "companies"},
+            {"label": "Mkt Cap Rank", "value": metric_rank(peer_df, primary_ticker, "Market cap", True), "context": "higher is larger"},
+            {"label": "Rev Growth", "value": metric_rank(peer_df, primary_ticker, "Revenue growth YoY", True), "context": "higher is better"},
+            {"label": "Gross Margin", "value": metric_rank(peer_df, primary_ticker, "Gross margin", True), "context": "higher is better"},
+            {"label": "Op Margin", "value": metric_rank(peer_df, primary_ticker, "Operating margin", True), "context": "higher is better"},
+            {"label": "Net Margin", "value": metric_rank(peer_df, primary_ticker, "Net margin", True), "context": "higher is better"},
+            {"label": "Fwd P/E", "value": metric_rank(peer_df, primary_ticker, "Forward P/E", False), "context": "lower is cheaper"},
+            {"label": "EV/Revenue", "value": metric_rank(peer_df, primary_ticker, "EV/Revenue", False), "context": "lower is cheaper"},
+            {"label": "1Y Return", "value": metric_rank(peer_df, primary_ticker, "1Y return", True), "context": "higher is better"},
+            {"label": "Analyst Upside", "value": metric_rank(peer_df, primary_ticker, "Implied upside/downside", True), "context": "higher is better"},
+            {"label": "Overall Score", "value": format_percent(primary_row.get("Overall Competitive Score"), 0), "context": "peer percentile", "tone": "good" if (coerce_float(primary_row.get("Overall Competitive Score")) or 0) >= 67 else "warn"},
+        ],
+        columns=4,
+    )
+
+    with st.container(border=True):
+        render_section_title("Competitive Scorecard", "Heuristic peer percentile model. Higher is better except where noted.")
+        render_competitive_scorecard(peer_df, primary_ticker)
+
+    with st.container(border=True):
+        render_section_title("Normalized Stock Performance", f"Indexed to 100 over {comparison_period}; selected ticker highlighted.")
+        performance_chart_df = build_peer_performance_frame(list(peer_df["Ticker"]), comparison_period)
+        render_peer_performance_chart(performance_chart_df, primary_ticker)
+
+    with st.container(border=True):
+        render_section_title("Core Peer Comparison", "One row per company with compact financial, market, analyst, and risk metrics.")
+        render_dashboard_table(competitive_display_table(peer_df, primary_ticker), height=min(560, max(240, 42 + (len(peer_df) + 1) * 38)))
+
+    left_col, right_col = st.columns(2, gap="small")
+    with left_col:
+        with st.container(border=True):
+            render_section_title("Valuation vs Growth", "Revenue growth against EV/Revenue or Forward P/E.")
+            render_valuation_growth_scatter(peer_df, primary_ticker)
+        with st.container(border=True):
+            render_section_title("Growth Comparison", "Revenue growth and selected-period price momentum.")
+            render_peer_metric_bars(peer_df, "Revenue growth YoY", "Revenue growth YoY (%)", high_better=True)
+            render_peer_metric_bars(peer_df, f"{comparison_period} return", f"{comparison_period} return (%)", high_better=True)
+    with right_col:
+        with st.container(border=True):
+            render_section_title("Profitability Comparison", "Operating margin and free cash flow margin.")
+            render_peer_metric_bars(peer_df, "Operating margin", "Operating margin (%)", high_better=True)
+            render_peer_metric_bars(peer_df, "Free cash flow margin", "FCF margin (%)", high_better=True)
+        with st.container(border=True):
+            render_section_title("Balance Sheet Quality", "Leverage and liquidity across the comp set.")
+            render_peer_metric_bars(peer_df, "Debt/Equity", "Debt / equity", high_better=False)
+            render_peer_metric_bars(peer_df, "Cash/Debt", "Cash / debt", high_better=True)
+
+    analyst_col, risk_col = st.columns(2, gap="small")
+    with analyst_col:
+        with st.container(border=True):
+            render_section_title("Analyst Expectations", "Implied upside/downside using available average target prices.")
+            render_peer_metric_bars(peer_df, "Implied upside/downside", "Implied upside/downside (%)", high_better=True)
+    with risk_col:
+        with st.container(border=True):
+            render_section_title("Risk & Volatility", "Beta, realized volatility, option-implied move, and short interest where available.")
+            render_peer_metric_bars(peer_df, "Volatility %", "Volatility (%)", high_better=False)
+            render_peer_metric_bars(peer_df, "Short interest %", "Short interest (%)", high_better=False)
+
+    with st.container(border=True):
+        render_section_title("Competitive Takeaways", "Rule-based dashboard signals from displayed peer metrics.")
+        insights = competitive_takeaways(peer_df, primary_ticker, comparison_period)
+        if insights:
+            render_insight_cards(insights)
+        else:
+            st.info("Not enough peer metrics were available to generate supported takeaways.")
+
+    if show_percentiles:
+        with st.expander("Percentile ranks", expanded=False):
+            score_cols = [column for column in peer_df.columns if column.endswith("Score")]
+            render_dashboard_table(peer_df[["Ticker"] + score_cols].copy(), height=260)
+
+    if normalize_values:
+        with st.expander("Normalized peer metrics", expanded=False):
+            normalize_columns = [
+                "Revenue growth YoY",
+                "Gross margin",
+                "Operating margin",
+                "Net margin",
+                "Forward P/E",
+                "EV/Revenue",
+                "Debt/Equity",
+                "1Y return",
+                "Volatility %",
+                "Overall Competitive Score",
+            ]
+            normalized = peer_df[["Ticker"]].copy()
+            for column in [item for item in normalize_columns if item in peer_df]:
+                values = pd.to_numeric(peer_df[column], errors="coerce")
+                median = values.median()
+                stdev = values.std()
+                normalized[column] = (values - median) / stdev if stdev and not pd.isna(stdev) else values - median
+            render_dashboard_table(normalized, height=300)
+
+    if show_raw:
+        with st.expander("Raw competitive data", expanded=False):
+            render_dashboard_table(peer_df, height=520)
+        with st.expander("Provider status", expanded=False):
+            render_dashboard_table(status_df.fillna(""), height=300)
+
+    if show_debug:
+        with st.expander("Competitive analysis debug", expanded=False):
+            debug_rows = [
+                {"Metric": "Stock Due Diligence tab replaced", "Value": "Yes; old UI is not routed"},
+                {"Metric": "Final tab order", "Value": "Home > Volatility Radar > Company Analysis > Competitive Analysis"},
+                {"Metric": "Selected ticker", "Value": primary_ticker},
+                {"Metric": "Peer selection mode", "Value": peer_mode},
+                {"Metric": "Peer candidates", "Value": ", ".join(tickers)},
+                {"Metric": "Final peer list", "Value": ", ".join(peer_df["Ticker"].astype(str))},
+                {"Metric": "Providers used", "Value": "Yahoo Finance/yfinance; Yahoo chart API fallback"},
+                {"Metric": "Failed ticker fetches", "Value": int(status_df["Status"].astype(str).str.casefold().eq("error").sum()) if "Status" in status_df else 0},
+                {"Metric": "Metrics included in scoring", "Value": "Growth, profitability, valuation, balance sheet, momentum, analyst sentiment, risk"},
+                {"Metric": "Cache TTLs", "Value": "quotes 60s; history 5m; peer fundamentals/score 6h; peer list 24h"},
+                {"Metric": "Rows displayed", "Value": len(peer_df)},
+            ]
+            render_dashboard_table(pd.DataFrame(debug_rows), height=420)
+
+
 def render_home_financials() -> None:
     st.sidebar.header("Stock Due Diligence")
     period = st.sidebar.radio("Statement period", ["Annual", "Quarterly"], index=0)
@@ -13554,9 +14371,11 @@ def main() -> None:
     inject_css()
     refresh_config = render_global_refresh_controls()
     st.sidebar.divider()
-    page_options = ["Home", "Stock Due Diligence", "Volatility Radar", "Company Analysis"]
+    page_options = ["Home", "Volatility Radar", "Company Analysis", "Competitive Analysis"]
     if st.session_state.get("main_tab") == "3-Statement Analysis":
         st.session_state["main_tab"] = "Company Analysis"
+    if st.session_state.get("main_tab") == "Stock Due Diligence":
+        st.session_state["main_tab"] = "Competitive Analysis"
     page = st.sidebar.radio(
         "Tabs",
         page_options,
@@ -13570,8 +14389,8 @@ def main() -> None:
 
     if page == "Home":
         render_home_dashboard()
-    elif page == "Stock Due Diligence":
-        render_home_financials()
+    elif page == "Competitive Analysis":
+        render_competitive_analysis_tab()
     elif page == "Company Analysis":
         render_three_statement_analysis_dashboard()
     else:
