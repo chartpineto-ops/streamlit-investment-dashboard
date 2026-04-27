@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from io import StringIO
 from typing import Iterable, Sequence
-from urllib.parse import urlparse
+from urllib.parse import quote as url_quote, urlparse
 from zoneinfo import ZoneInfo
 import xml.etree.ElementTree as ET
 
@@ -3306,6 +3306,97 @@ def make_yf_ticker(symbol: str):
     return yf.Ticker(symbol)
 
 
+def yahoo_chart_frame(symbol: str, range_param: str = "5d", interval: str = "1d") -> tuple[pd.DataFrame, dict, str]:
+    encoded = url_quote(symbol, safe="")
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}"
+    try:
+        response = requests.get(
+            url,
+            params={"range": range_param, "interval": interval, "includePrePost": "false", "events": "history"},
+            headers={"User-Agent": "streamlit-investment-dashboard/1.0"},
+            timeout=12,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        return empty_history(), {}, str(exc)
+
+    chart = payload.get("chart", {}) if isinstance(payload, dict) else {}
+    error = chart.get("error")
+    if error:
+        description = error.get("description") if isinstance(error, dict) else str(error)
+        return empty_history(), {}, description or "Yahoo chart endpoint returned an error"
+    results = chart.get("result") or []
+    if not results:
+        return empty_history(), {}, "Yahoo chart endpoint returned no result"
+    result = results[0]
+    timestamps = result.get("timestamp") or []
+    quote_blocks = ((result.get("indicators") or {}).get("quote") or [{}])
+    quote = quote_blocks[0] if quote_blocks else {}
+    if not timestamps or not quote:
+        return empty_history(), result.get("meta") or {}, "Yahoo chart endpoint returned no price bars"
+
+    index = pd.to_datetime(timestamps, unit="s", utc=True)
+    frame = pd.DataFrame(
+        {
+            "Open": quote.get("open", []),
+            "High": quote.get("high", []),
+            "Low": quote.get("low", []),
+            "Close": quote.get("close", []),
+            "Volume": quote.get("volume", []),
+        },
+        index=index,
+    )
+    frame = frame.apply(pd.to_numeric, errors="coerce").dropna(subset=["Close"], how="all")
+    if frame.empty:
+        return empty_history(), result.get("meta") or {}, "Yahoo chart endpoint returned empty close data"
+    return frame, result.get("meta") or {}, ""
+
+
+def yahoo_chart_quote_snapshot(symbol: str) -> dict:
+    intraday, meta_payload, message = yahoo_chart_frame(symbol, "1d", "5m")
+    daily, daily_meta, daily_message = yahoo_chart_frame(symbol, "5d", "1d")
+    meta_payload = meta_payload or daily_meta
+    close = pd.to_numeric(intraday.get("Close", pd.Series(dtype=float)), errors="coerce").dropna()
+    daily_close = pd.to_numeric(daily.get("Close", pd.Series(dtype=float)), errors="coerce").dropna()
+    price = coerce_float(meta_payload.get("regularMarketPrice")) or (coerce_float(close.iloc[-1]) if not close.empty else None)
+    previous_close = coerce_float(meta_payload.get("chartPreviousClose") or meta_payload.get("previousClose"))
+    if previous_close is None and len(daily_close) >= 2:
+        previous_close = coerce_float(daily_close.iloc[-2])
+    change = price - previous_close if price is not None and previous_close not in (None, 0) else None
+    change_pct = safe_ratio(change, previous_close, 100) if change is not None else None
+    quote_frame = pd.DataFrame()
+    if not close.empty:
+        quote_frame = pd.DataFrame({"Price": close})
+        quote_frame.index = pd.to_datetime(quote_frame.index)
+    status_message = message or daily_message
+    meta = provider_metadata(
+        "Yahoo Finance chart API",
+        "Quote",
+        "Delayed / near real-time",
+        last_updated=eastern_now(),
+        is_realtime=False,
+        is_delayed=True,
+        delay_disclaimer="Yahoo chart endpoint is a public delayed/near-real-time fallback when yfinance is unavailable.",
+        rate_limit_notes="Cached by Streamlit; no API key used.",
+        source_label="Yahoo Finance chart API",
+        error=status_message if price is None else "",
+    )
+    return {
+        "status": "OK" if price is not None else "Error",
+        "message": "" if price is not None else status_message,
+        "price": price,
+        "change": change,
+        "change_pct": change_pct,
+        "previous_close": previous_close,
+        "market_status": "Open" if str(meta_payload.get("marketState", "")).upper() in {"REGULAR", "OPEN"} else "Delayed",
+        "quote_label": meta.freshness_status,
+        "updated_at": meta.last_updated,
+        "intraday": quote_frame,
+        "provider": metadata_to_dict(meta),
+    }
+
+
 def freshness_caption(meta: ProviderMetadata | dict | None, fallback_source: str = "N/A") -> str:
     if meta is None:
         return f"Source: {fallback_source} | Freshness: Unavailable"
@@ -3361,6 +3452,8 @@ def metadata_from_status_frame(
 
 
 def active_quote_provider_label() -> str:
+    if yf is None:
+        return "Yahoo Finance chart API fallback"
     return "Yahoo Finance/yfinance"
 
 
@@ -4575,6 +4668,43 @@ def fetch_company_financials(
     if not symbol:
         return {"status": "Error", "message": "Invalid ticker symbol"}
 
+    if yf is None:
+        quote = fetch_quote_snapshot(symbol)
+        history, _, _ = yahoo_chart_frame(symbol, "1y", "1d")
+        info = {
+            "symbol": symbol,
+            "shortName": symbol,
+            "longName": symbol,
+            "currentPrice": quote.get("price"),
+            "regularMarketPrice": quote.get("price"),
+            "previousClose": quote.get("previous_close"),
+        }
+        return {
+            "status": "OK",
+            "message": yfinance_unavailable_message(),
+            "ticker": symbol,
+            "info": info,
+            "history": history if isinstance(history, pd.DataFrame) else empty_history(),
+            "financials_refreshed": eastern_now(),
+            "request_context": {
+                "statement_period": statement_period,
+                "periods_requested": int(periods_requested or 0),
+                "target_year": int(target_year or 0),
+            },
+            "annual_income": pd.DataFrame(),
+            "quarterly_income": pd.DataFrame(),
+            "annual_balance": pd.DataFrame(),
+            "quarterly_balance": pd.DataFrame(),
+            "annual_cashflow": pd.DataFrame(),
+            "quarterly_cashflow": pd.DataFrame(),
+            "earnings_expectations": pd.DataFrame(),
+            "earnings_dates": pd.DataFrame(),
+            "analyst_reports": pd.DataFrame(),
+            "analyst_reports_refreshed": eastern_now(),
+            "earnings_estimate": pd.DataFrame(),
+            "revenue_estimate": pd.DataFrame(),
+        }
+
     try:
         yf_ticker = make_yf_ticker(symbol)
         info: dict = {}
@@ -4635,6 +4765,9 @@ def fetch_performance_history(ticker: str, range_key: str) -> pd.DataFrame:
     config = PERFORMANCE_RANGES.get(range_key, PERFORMANCE_RANGES["1Y"])
     if not symbol:
         return empty_history()
+    if yf is None:
+        direct_history, _, _ = yahoo_chart_frame(symbol, config["period"], config["interval"])
+        return direct_history if isinstance(direct_history, pd.DataFrame) else empty_history()
 
     try:
         yf_ticker = make_yf_ticker(symbol)
@@ -4664,7 +4797,8 @@ def fetch_performance_history(ticker: str, range_key: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=45, show_spinner=False)
 def fetch_quote_snapshot(ticker: str) -> dict:
-    symbol = normalize_symbol(ticker)
+    raw_symbol = clean_text(str(ticker or "")).upper()
+    symbol = raw_symbol if re.fullmatch(r"\^[A-Z0-9]{1,12}", raw_symbol) else normalize_symbol(ticker)
     if not symbol:
         meta = provider_metadata("Unavailable", "Quote", "Unavailable", is_delayed=False, error="Invalid ticker symbol")
         return {
@@ -4679,6 +4813,9 @@ def fetch_quote_snapshot(ticker: str) -> dict:
             "intraday": pd.DataFrame(),
             "provider": metadata_to_dict(meta),
         }
+
+    if yf is None:
+        return yahoo_chart_quote_snapshot(symbol)
 
     try:
         yf_ticker = make_yf_ticker(symbol)
@@ -4950,6 +5087,60 @@ def fetch_sector_performance() -> tuple[pd.DataFrame, pd.DataFrame, datetime]:
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_home_stock_snapshot(ticker: str) -> tuple[dict, pd.DataFrame, datetime]:
     symbol = normalize_symbol(ticker) or "SPY"
+    if yf is None:
+        quote = fetch_quote_snapshot(symbol)
+        history, _, _ = yahoo_chart_frame(symbol, "1y", "1d")
+        last_price = quote.get("price")
+        volume = None
+        if isinstance(history, pd.DataFrame) and not history.empty and "Volume" in history:
+            volume_values = pd.to_numeric(history["Volume"], errors="coerce").dropna()
+            volume = coerce_float(volume_values.iloc[-1]) if not volume_values.empty else None
+        snapshot = {
+            "Ticker": symbol,
+            "Name": symbol,
+            "Last Price": last_price,
+            "Daily Change %": quote.get("change_pct"),
+            "Market Cap": None,
+            "Volume": volume,
+            "Relative Volume": None,
+            "52W High": coerce_float(history["High"].max()) if isinstance(history, pd.DataFrame) and "High" in history else None,
+            "52W Low": coerce_float(history["Low"].min()) if isinstance(history, pd.DataFrame) and "Low" in history else None,
+            "Trailing PE": None,
+            "Forward PE": None,
+            "EPS": None,
+            "Revenue Growth %": None,
+            "Analyst Rating": "N/A",
+            "Avg Target": None,
+            "Option Move %": None,
+            "IV %": None,
+            "IV Rank": None,
+            "Next Earnings": None,
+            "Dividend Yield %": None,
+            "Short Interest %": None,
+            "Market Status": quote.get("market_status"),
+            "Quote Label": quote.get("quote_label"),
+            "Provider": (quote.get("provider") or {}).get("source_label", "Yahoo Finance chart API") if isinstance(quote.get("provider"), dict) else "Yahoo Finance chart API",
+            "Freshness": (quote.get("provider") or {}).get("freshness_status", quote.get("quote_label", "Delayed")) if isinstance(quote.get("provider"), dict) else quote.get("quote_label", "Delayed"),
+            "Provider Metadata": quote.get("provider") or metadata_to_dict(default_yahoo_metadata("Quick Stock Snapshot")),
+            "Status": quote.get("status", "Warning"),
+            "Message": yfinance_unavailable_message(),
+        }
+        return (
+            snapshot,
+            pd.DataFrame(
+                [
+                    {
+                        "Source": "Yahoo Finance chart API",
+                        "Symbol": symbol,
+                        "Status": snapshot["Status"],
+                        "Message": snapshot["Message"],
+                        "Provider": snapshot["Provider"],
+                        "Freshness": snapshot["Freshness"],
+                    }
+                ]
+            ),
+            eastern_now(),
+        )
     try:
         yf_ticker = make_yf_ticker(symbol)
         info = {}
