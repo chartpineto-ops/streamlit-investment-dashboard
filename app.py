@@ -7854,36 +7854,93 @@ def inject_css() -> None:
                 background: #101d22;
                 border: 1px solid var(--term-line-soft);
                 border-radius: 999px;
-                height: 0.7rem;
-                overflow: hidden;
+                height: 0.78rem;
+                margin-top: 1.55rem;
+                overflow: visible;
                 position: relative;
             }
 
             .stock-range-fill {
                 background: linear-gradient(90deg, var(--term-red), #e6d36f, var(--term-green));
+                border-radius: 999px;
                 height: 100%;
-                width: var(--fill-pct);
+                width: 100%;
+            }
+
+            .stock-range-current {
+                align-items: center;
+                display: flex;
+                flex-direction: column;
+                gap: 0.1rem;
+                left: var(--marker-pct);
+                position: absolute;
+                top: -1.42rem;
+                transform: translateX(var(--marker-shift));
+                width: max-content;
+                z-index: 2;
+            }
+
+            .stock-range-current-label {
+                background: #d7e7e9;
+                border: 1px solid rgba(215, 231, 233, 0.7);
+                border-radius: 999px;
+                color: #071014;
+                font-family: Consolas, "Lucida Console", "Courier New", monospace;
+                font-size: 0.58rem;
+                font-weight: 900;
+                line-height: 1;
+                padding: 0.2rem 0.38rem;
+                white-space: nowrap;
             }
 
             .stock-range-pin {
                 background: #e4eef0;
                 border: 2px solid #071014;
                 border-radius: 999px;
-                height: 1rem;
-                left: calc(var(--fill-pct) - 0.5rem);
-                position: absolute;
-                top: -0.18rem;
+                box-shadow: 0 0 0 2px rgba(94, 199, 232, 0.4);
+                height: 1.02rem;
                 width: 1rem;
+            }
+
+            .stock-range-tick {
+                background: #e4eef0;
+                border-radius: 999px;
+                height: 1.25rem;
+                left: var(--marker-pct);
+                position: absolute;
+                top: -0.24rem;
+                transform: translateX(-50%);
+                width: 0.14rem;
+                z-index: 1;
             }
 
             .stock-range-labels {
                 color: var(--term-muted);
-                display: flex;
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
                 font-family: Consolas, "Lucida Console", "Courier New", monospace;
                 font-size: 0.6rem;
                 font-weight: 800;
-                justify-content: space-between;
-                margin-top: 0.28rem;
+                margin-top: 0.42rem;
+            }
+
+            .stock-range-labels span:nth-child(2) {
+                text-align: center;
+            }
+
+            .stock-range-labels span:nth-child(3) {
+                text-align: right;
+            }
+
+            .stock-range-sub {
+                color: var(--term-muted);
+                display: block;
+                font-family: Consolas, "Lucida Console", "Courier New", monospace;
+                font-size: 0.58rem;
+                font-weight: 800;
+                margin-top: 0.18rem;
+                text-align: center;
+                text-transform: uppercase;
             }
 
             @keyframes statementFadeIn {
@@ -10473,32 +10530,88 @@ def waterfall_altair_frame(steps: list[dict[str, object]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def render_waterfall_chart(title: str, steps: list[dict[str, object]], *, key: str, height: int = 295) -> bool:
+WATERFALL_SHORT_LABELS = {
+    "Cost of Revenue": "COGS",
+    "Operating Expenses": "OpEx",
+    "Operating Income": "Op. Income",
+    "Interest / Other": "Int. / Other",
+    "Net Income": "Net Income",
+    "Net Loss": "Net Loss",
+}
+
+
+def waterfall_axis_bounds(steps: list[dict[str, object]]) -> tuple[float, float]:
+    points = [0.0]
+    running = 0.0
+    for step in steps:
+        value = coerce_float(step.get("value")) or 0.0
+        measure = str(step.get("measure") or "relative")
+        if measure in {"absolute", "total"}:
+            start, end = 0.0, value
+            running = value
+        else:
+            start, end = running, running + value
+            running = end
+        points.extend([start, end, value])
+    low = min(points)
+    high = max(points)
+    span = max(abs(high - low), max(abs(item) for item in points) * 0.25, 1.0)
+    padding = span * 0.22
+    return low - padding, high + padding
+
+
+def render_waterfall_chart(title: str, steps: list[dict[str, object]], *, key: str, height: int = 460) -> bool:
     clean_steps = [step for step in steps if coerce_float(step.get("value")) is not None]
     if not clean_steps:
         st.info("No waterfall data available.")
         return False
     plotly_module = plotly_go()
     if plotly_module is not None:
+        y_min, y_max = waterfall_axis_bounds(clean_steps)
+        labels = [str(step.get("label")) for step in clean_steps]
+        short_labels = [WATERFALL_SHORT_LABELS.get(label, label) for label in labels]
+        values = [coerce_float(step.get("value")) or 0 for step in clean_steps]
+        text_values = [format_compact_currency(value, 1) for value in values]
         fig = plotly_module.Figure(
             plotly_module.Waterfall(
                 name=title,
                 orientation="v",
                 measure=[str(step.get("measure") or "relative") for step in clean_steps],
-                x=[str(step.get("label")) for step in clean_steps],
-                y=[coerce_float(step.get("value")) or 0 for step in clean_steps],
-                text=[format_compact_currency(step.get("value"), 1) for step in clean_steps],
+                x=short_labels,
+                y=values,
+                text=text_values,
                 textposition="outside",
+                cliponaxis=False,
+                textfont={"color": "#d7e7e9", "size": 12, "family": "Inter, Segoe UI, Arial"},
                 connector={"line": {"color": "#23424d"}},
                 increasing={"marker": {"color": "#49d69b"}},
                 decreasing={"marker": {"color": "#ef6f7b"}},
                 totals={"marker": {"color": "#5ec7e8"}},
-                hovertemplate="%{x}<br>%{y:$,.0f}<extra></extra>",
+                customdata=labels,
+                hovertemplate="%{customdata}<br>%{y:$,.0f}<extra></extra>",
             )
         )
-        plotly_base_layout(fig, height)
-        fig.update_yaxes(title="Amount ($)", gridcolor="#19313a", zerolinecolor="#23424d")
-        fig.update_xaxes(tickangle=-20)
+        plotly_base_layout(fig, max(height, 460))
+        fig.update_layout(
+            margin={"l": 78, "r": 44, "t": 76, "b": 108},
+            uniformtext={"mode": "show", "minsize": 10},
+        )
+        fig.update_yaxes(
+            title="Amount ($)",
+            gridcolor="#19313a",
+            zerolinecolor="#23424d",
+            range=[y_min, y_max],
+            tickformat="~s",
+            automargin=True,
+        )
+        fig.update_xaxes(tickangle=-12, automargin=True, tickfont={"size": 12})
+        st.session_state[f"{key}_debug"] = {
+            "Waterfall": title,
+            "Y-axis Min": y_min,
+            "Y-axis Max": y_max,
+            "Text Position": "outside",
+            "Labels": ", ".join(short_labels),
+        }
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=key)
         return True
 
@@ -10518,6 +10631,13 @@ def render_waterfall_chart(title: str, steps: list[dict[str, object]], *, key: s
         )
         .properties(height=height)
     )
+    st.session_state[f"{key}_debug"] = {
+        "Waterfall": title,
+        "Y-axis Min": coerce_float(chart_frame["Start"].min()) if "Start" in chart_frame else None,
+        "Y-axis Max": coerce_float(chart_frame["End"].max()) if "End" in chart_frame else None,
+        "Text Position": "Altair fallback",
+        "Labels": ", ".join(chart_frame["Step"].astype(str).tolist()) if "Step" in chart_frame else "",
+    }
     st.altair_chart(base_chart(chart), use_container_width=True)
     return True
 
@@ -11275,29 +11395,66 @@ def render_stock_stat_grid(items: list[dict[str, object]]) -> None:
     st.markdown("<div class='stock-stat-grid'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
 
 
-def render_stock_range_graphic(label: str, value: float | None, low: float | None, high: float | None) -> None:
+def range_marker_shift(position: float) -> str:
+    if position <= 8:
+        return "0%"
+    if position >= 92:
+        return "-100%"
+    return "-50%"
+
+
+def render_stock_range_graphic(label: str, value: float | None, low: float | None, high: float | None, *, ticker: str = "") -> dict[str, object]:
     position = range_position(value, low, high)
     if position is None:
         st.info(f"{label} range data is unavailable.")
-        return
+        return {
+            "current_price": value,
+            "low": low,
+            "midpoint": None,
+            "high": high,
+            "position_pct": None,
+            "clamped": False,
+            "missing": True,
+        }
+    raw_position = (float(value) - float(low)) / (float(high) - float(low)) * 100
+    clamped = raw_position != position
+    midpoint = (float(low) + float(high)) / 2
+    marker_shift = range_marker_shift(position)
+    ticker_label = normalize_symbol(ticker)
+    marker_label = f"{ticker_label} {format_currency(value, 2)}".strip()
     st.markdown(
         "<div class='stock-graphic'>"
         "<div class='stock-graphic-top'>"
         f"<span>{html.escape(label)}</span>"
         f"<span>{html.escape(format_percent(position, 1))} of range</span>"
         "</div>"
-        f"<div class='stock-range-track' style='--fill-pct: {position:.2f}%;'>"
+        f"<div class='stock-range-track' style='--marker-pct: {position:.2f}%; --marker-shift: {marker_shift};'>"
         "<div class='stock-range-fill'></div>"
-        "<div class='stock-range-pin'></div>"
+        "<div class='stock-range-tick'></div>"
+        "<div class='stock-range-current'>"
+        f"<span class='stock-range-current-label'>{html.escape(marker_label)}</span>"
+        "<span class='stock-range-pin'></span>"
+        "</div>"
         "</div>"
         "<div class='stock-range-labels'>"
         f"<span>{html.escape(format_currency(low, 2))}</span>"
-        f"<span>{html.escape(format_currency(value, 2))}</span>"
+        f"<span>{html.escape(format_currency(midpoint, 2))}</span>"
         f"<span>{html.escape(format_currency(high, 2))}</span>"
         "</div>"
+        f"<span class='stock-range-sub'>{html.escape(marker_label)} | {html.escape(format_percent(position, 1))} of 52W range</span>"
         "</div>",
         unsafe_allow_html=True,
     )
+    return {
+        "current_price": value,
+        "low": low,
+        "midpoint": midpoint,
+        "high": high,
+        "position_pct": position,
+        "raw_position_pct": raw_position,
+        "clamped": clamped,
+        "missing": False,
+    }
 
 
 def render_stock_performance_area_chart(frame: pd.DataFrame, *, height: int = 250) -> bool:
@@ -11392,12 +11549,19 @@ def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_s
                     {"label": "1M Return", "value": format_percent(one_month_return, 2, signed=True), "context": "momentum", "tone": quote_tone(one_month_return)},
                 ]
             )
-            render_stock_range_graphic("52W price position", last_price, low_52w, high_52w)
+            range_debug = render_stock_range_graphic("52W Price Position", last_price, low_52w, high_52w, ticker=ticker)
 
         return {
             "chart_rendered": chart_rendered,
             "status_rows": len(stock_status) if isinstance(stock_status, pd.DataFrame) else 0,
             "provider": quote_meta.get("source_label", "Yahoo Finance/yfinance") if isinstance(quote_meta, dict) else "Yahoo Finance/yfinance",
+            "current_price": range_debug.get("current_price"),
+            "range_low": range_debug.get("low"),
+            "range_midpoint": range_debug.get("midpoint"),
+            "range_high": range_debug.get("high"),
+            "range_position_pct": range_debug.get("position_pct"),
+            "range_clamped": range_debug.get("clamped"),
+            "range_missing": range_debug.get("missing"),
         }
 
 
@@ -11534,6 +11698,8 @@ def render_three_statement_analysis_dashboard() -> None:
 
     if show_debug:
         with st.expander("Company analysis debug", expanded=False):
+            income_waterfall_debug = st.session_state.get(f"income_waterfall_{key_suffix}_debug", {})
+            cash_waterfall_debug = st.session_state.get(f"cash_waterfall_{key_suffix}_debug", {})
             debug_rows = [
                 {"Metric": "Selected ticker", "Value": ticker},
                 {"Metric": "Statement period", "Value": statement_period},
@@ -11544,6 +11710,19 @@ def render_three_statement_analysis_dashboard() -> None:
                 {"Metric": "Animation triggered", "Value": str(section_animate)},
                 {"Metric": "Stock context chart rendered", "Value": str(stock_context_debug.get("chart_rendered", False))},
                 {"Metric": "Stock context provider", "Value": stock_context_debug.get("provider", "N/A")},
+                {"Metric": "Current price", "Value": format_currency(stock_context_debug.get("current_price"), 2)},
+                {"Metric": "52-week low", "Value": format_currency(stock_context_debug.get("range_low"), 2)},
+                {"Metric": "52-week midpoint", "Value": format_currency(stock_context_debug.get("range_midpoint"), 2)},
+                {"Metric": "52-week high", "Value": format_currency(stock_context_debug.get("range_high"), 2)},
+                {"Metric": "52-week price position %", "Value": format_percent(stock_context_debug.get("range_position_pct"), 1)},
+                {"Metric": "52-week position clamped", "Value": str(stock_context_debug.get("range_clamped", False))},
+                {"Metric": "52-week fields missing", "Value": str(stock_context_debug.get("range_missing", False))},
+                {"Metric": "Income waterfall y-axis min", "Value": format_compact_currency(income_waterfall_debug.get("Y-axis Min"), 1)},
+                {"Metric": "Income waterfall y-axis max", "Value": format_compact_currency(income_waterfall_debug.get("Y-axis Max"), 1)},
+                {"Metric": "Income waterfall label positions", "Value": income_waterfall_debug.get("Text Position", "N/A")},
+                {"Metric": "Cash waterfall y-axis min", "Value": format_compact_currency(cash_waterfall_debug.get("Y-axis Min"), 1)},
+                {"Metric": "Cash waterfall y-axis max", "Value": format_compact_currency(cash_waterfall_debug.get("Y-axis Max"), 1)},
+                {"Metric": "Cash waterfall label positions", "Value": cash_waterfall_debug.get("Text Position", "N/A")},
                 {"Metric": "Income charts generated", "Value": income_debug.get("charts", 0)},
                 {"Metric": "Balance charts generated", "Value": balance_debug.get("charts", 0)},
                 {"Metric": "Cash flow charts generated", "Value": cash_debug.get("charts", 0)},
