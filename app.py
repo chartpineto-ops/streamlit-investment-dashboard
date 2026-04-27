@@ -100,7 +100,7 @@ DATA_REFRESH_TTLS = {
     "News / Headlines": "10 minutes",
     "Social Pulse": "10 minutes",
     "Analyst / Fundamentals": "6 hours",
-    "Statement Sankey Charts": "6 hours",
+    "Company Analysis": "6 hours",
     "Scheduled Reports / Economic Calendar": "6 hours",
     "Symbol Universe": "24 hours",
 }
@@ -109,7 +109,7 @@ PROVIDER_HIERARCHY = {
     "Market Quotes": ["Yahoo Finance/yfinance", "Cached last successful Streamlit data"],
     "Quick Stock Snapshot": ["Yahoo Finance/yfinance quote, fast_info, and basic info", "Cached last successful Streamlit data"],
     "Stock Due Diligence": ["Yahoo Finance/yfinance financial statements and company info", "Cached/empty state"],
-    "3-Statement Analysis": ["Yahoo Finance/yfinance financial statement matrices", "Cached/empty state"],
+    "Company Analysis": ["Yahoo Finance/yfinance financial statement matrices", "Cached/empty state"],
     "Analyst Expectations": ["Yahoo Finance/yfinance analyst estimates and public news links", "Clean empty state"],
     "Volatility Radar": ["Yahoo Finance/yfinance price history and option chains", "Cached/empty state"],
     "Sector Performance": ["Yahoo Finance/yfinance sector ETF quotes", "Cached last successful Streamlit data"],
@@ -11354,10 +11354,10 @@ def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_s
 
 
 def render_three_statement_analysis_dashboard() -> None:
-    st.sidebar.header("3-Statement Analysis")
-    show_debug = st.sidebar.checkbox("Show 3-statement debug", value=False, key="three_statement_debug")
+    st.sidebar.header("Company Analysis")
+    show_debug = st.sidebar.checkbox("Show company analysis debug", value=False, key="three_statement_debug")
 
-    st.title("3-Statement Analysis")
+    st.title("Company Analysis")
     st.markdown(
         "<div class='statement-page-subtitle'>Analyze profitability, balance sheet strength, cash generation, and financial trend quality across the income statement, balance sheet, and cash flow statement.</div>",
         unsafe_allow_html=True,
@@ -11389,7 +11389,7 @@ def render_three_statement_analysis_dashboard() -> None:
 
     if not ticker:
         st.markdown(
-            "<div class='sankey-empty'>Enter a ticker to generate 3-statement financial analysis.</div>",
+            "<div class='sankey-empty'>Enter a ticker to generate company analysis.</div>",
             unsafe_allow_html=True,
         )
         return
@@ -11437,12 +11437,6 @@ def render_three_statement_analysis_dashboard() -> None:
     section_animate = bool(animate_charts and animation_triggered)
     key_suffix = safe_ui_key(signature)
 
-    stock_context_debug = render_stock_performance_statistics_row(
-        ticker,
-        animate=section_animate,
-        key_suffix=key_suffix,
-    )
-
     income_debug = render_income_statement_analysis(
         ticker,
         income_frame,
@@ -11476,6 +11470,11 @@ def render_three_statement_analysis_dashboard() -> None:
         key_suffix=key_suffix,
         meta_caption=meta_caption,
     )
+    stock_context_debug = render_stock_performance_statistics_row(
+        ticker,
+        animate=section_animate,
+        key_suffix=key_suffix,
+    )
     cash_for_insights = cash_debug.get("merged") if isinstance(cash_debug.get("merged"), pd.DataFrame) else cash_frame
     insights = render_three_statement_insights(
         income_frame,
@@ -11486,7 +11485,7 @@ def render_three_statement_analysis_dashboard() -> None:
     )
 
     if show_debug:
-        with st.expander("3-statement debug", expanded=False):
+        with st.expander("Company analysis debug", expanded=False):
             debug_rows = [
                 {"Metric": "Selected ticker", "Value": ticker},
                 {"Metric": "Statement period", "Value": statement_period},
@@ -13557,7 +13556,7 @@ def main() -> None:
     st.sidebar.divider()
     page = st.sidebar.radio(
         "Tabs",
-        ["Home", "Stock Due Diligence", "Volatility Radar", "3-Statement Analysis"],
+        ["Home", "Stock Due Diligence", "Volatility Radar", "Company Analysis"],
         index=0,
         key="main_tab",
     )
@@ -13570,7 +13569,7 @@ def main() -> None:
         render_home_dashboard()
     elif page == "Stock Due Diligence":
         render_home_financials()
-    elif page == "3-Statement Analysis":
+    elif page == "Company Analysis":
         render_three_statement_analysis_dashboard()
     else:
         render_volatility_radar()
