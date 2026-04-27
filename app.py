@@ -11176,7 +11176,7 @@ def render_three_statement_insights(
     meta_caption: str,
 ) -> list[dict[str, str]]:
     with st.container(border=True):
-        render_statement_section_title("3-Statement Insights", "Rule-based dashboard signals generated from the selected financial statements.", animate=animate, delay=4)
+        render_statement_section_title("Company Insights", "Rule-based dashboard signals generated from the selected financial statements.", animate=animate, delay=4)
         st.caption(meta_caption + " | Signals are dashboard context, not investment advice.")
         tiles = structured_statement_insight_tiles(income, balance, cashflow)
         render_structured_statement_insight_tiles(tiles)
@@ -13554,9 +13554,12 @@ def main() -> None:
     inject_css()
     refresh_config = render_global_refresh_controls()
     st.sidebar.divider()
+    page_options = ["Home", "Stock Due Diligence", "Volatility Radar", "Company Analysis"]
+    if st.session_state.get("main_tab") == "3-Statement Analysis":
+        st.session_state["main_tab"] = "Company Analysis"
     page = st.sidebar.radio(
         "Tabs",
-        ["Home", "Stock Due Diligence", "Volatility Radar", "Company Analysis"],
+        page_options,
         index=0,
         key="main_tab",
     )
