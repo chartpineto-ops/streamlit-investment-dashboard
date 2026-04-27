@@ -7553,6 +7553,108 @@ def inject_css() -> None:
                 text-transform: uppercase;
             }
 
+            .competitive-header-spacer {
+                height: 0.45rem;
+            }
+
+            .compact-callout {
+                background: rgba(94, 199, 232, 0.075);
+                border: 1px solid rgba(94, 199, 232, 0.18);
+                border-left: 3px solid var(--term-blue);
+                border-radius: 7px;
+                color: var(--term-muted);
+                font-family: Inter, "Segoe UI", Arial, sans-serif;
+                font-size: 0.72rem;
+                font-weight: 700;
+                line-height: 1.35;
+                margin: 0.25rem 0 0.55rem 0;
+                padding: 0.48rem 0.62rem;
+            }
+
+            .investment-view-card {
+                background: linear-gradient(180deg, rgba(13, 28, 34, 0.98), rgba(7, 16, 20, 0.98));
+                border: 1px solid var(--term-line-soft);
+                border-left: 4px solid var(--term-line);
+                border-radius: 8px;
+                color: var(--term-text);
+                margin: 0.35rem 0 0.55rem 0;
+                padding: 0.78rem 0.85rem;
+            }
+
+            .investment-view-card.good {
+                border-left-color: var(--term-green);
+            }
+
+            .investment-view-card.warn {
+                border-left-color: #e6d36f;
+            }
+
+            .investment-view-card.bad {
+                border-left-color: var(--term-red);
+            }
+
+            .investment-view-top {
+                align-items: flex-start;
+                display: flex;
+                gap: 0.65rem;
+                justify-content: space-between;
+            }
+
+            .investment-view-label {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.62rem;
+                font-weight: 900;
+                text-transform: uppercase;
+            }
+
+            .investment-view-title {
+                color: var(--term-text);
+                display: block;
+                font-family: Inter, "Segoe UI", Arial, sans-serif;
+                font-size: 1rem;
+                font-weight: 900;
+                line-height: 1.16;
+                margin-top: 0.15rem;
+            }
+
+            .investment-view-pill {
+                border: 1px solid var(--term-line-soft);
+                border-radius: 999px;
+                color: var(--term-muted);
+                flex: 0 0 auto;
+                font-size: 0.62rem;
+                font-weight: 900;
+                padding: 0.22rem 0.55rem;
+                text-transform: uppercase;
+            }
+
+            .investment-view-card.good .investment-view-pill {
+                background: rgba(112, 224, 163, 0.12);
+                border-color: rgba(112, 224, 163, 0.42);
+                color: var(--term-green);
+            }
+
+            .investment-view-card.warn .investment-view-pill {
+                background: rgba(230, 211, 111, 0.12);
+                border-color: rgba(230, 211, 111, 0.42);
+                color: #e6d36f;
+            }
+
+            .investment-view-card.bad .investment-view-pill {
+                background: rgba(239, 132, 143, 0.12);
+                border-color: rgba(239, 132, 143, 0.45);
+                color: var(--term-red);
+            }
+
+            .investment-view-copy {
+                color: var(--term-muted);
+                font-size: 0.76rem;
+                font-weight: 700;
+                line-height: 1.4;
+                margin: 0.52rem 0 0 0;
+            }
+
             .sankey-page-subtitle {
                 color: var(--term-muted);
                 font-size: 0.8rem;
@@ -13656,6 +13758,346 @@ def competitive_takeaways(frame: pd.DataFrame, primary_ticker: str, period: str)
     return insights[:8]
 
 
+def primary_metric_percentile(frame: pd.DataFrame, primary_ticker: str, metric: str, high_better: bool = True) -> float | None:
+    if frame.empty or metric not in frame or "Ticker" not in frame:
+        return None
+    values = pd.to_numeric(frame[metric], errors="coerce")
+    primary_index = frame.index[frame["Ticker"].eq(primary_ticker)]
+    if len(primary_index) == 0:
+        return None
+    score = percentile_score(values, high_better)
+    value = score.loc[primary_index[0]]
+    return coerce_float(value)
+
+
+def metric_median_value(frame: pd.DataFrame, metric: str) -> float | None:
+    if frame.empty or metric not in frame:
+        return None
+    values = pd.to_numeric(frame[metric], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return coerce_float(values.median())
+
+
+def primary_metric_value(frame: pd.DataFrame, primary_ticker: str, metric: str) -> float | None:
+    if frame.empty or metric not in frame or primary_ticker not in set(frame.get("Ticker", [])):
+        return None
+    return coerce_float(frame.loc[frame["Ticker"].eq(primary_ticker), metric].iloc[0])
+
+
+def score_tone(value: float | None) -> str:
+    if value is None:
+        return "neutral"
+    if value >= 67:
+        return "good"
+    if value >= 40:
+        return "warn"
+    return "bad"
+
+
+def investment_view_tone(label: str) -> str:
+    normalized = str(label).casefold()
+    if normalized == "constructive":
+        return "good"
+    if normalized in {"neutral", "mixed"}:
+        return "warn"
+    return "bad"
+
+
+def build_investment_view(
+    frame: pd.DataFrame,
+    primary_ticker: str,
+    peer_mode: str,
+    status_df: pd.DataFrame,
+    period: str,
+) -> dict[str, object]:
+    score_columns = [
+        "Growth Score",
+        "Profitability Score",
+        "Valuation Score",
+        "Balance Sheet Score",
+        "Market Momentum Score",
+        "Analyst Sentiment Score",
+        "Risk Score",
+        "Overall Competitive Score",
+    ]
+    if frame.empty or primary_ticker not in set(frame.get("Ticker", [])):
+        return {
+            "label": "Speculative",
+            "confidence": "Low",
+            "summary": "The dashboard view is Speculative because peer comparison data is too sparse for a stronger signal.",
+            "scores": {},
+            "bull": [],
+            "bear": ["Peer comparison metrics are unavailable for the selected ticker."],
+            "watch": ["Confirm ticker validity and provider availability."],
+            "limitations": ["Peer and financial data unavailable."],
+            "rules": ["Sparse peer data"],
+            "available_metrics": 0,
+            "missing_categories": score_columns,
+        }
+
+    row = frame[frame["Ticker"].eq(primary_ticker)].iloc[0]
+    scores = {column: coerce_float(row.get(column)) for column in score_columns if column in frame}
+    category_scores = {key: value for key, value in scores.items() if key != "Overall Competitive Score"}
+    overall = scores.get("Overall Competitive Score")
+    key_metrics = [
+        "Revenue growth YoY",
+        "Gross margin",
+        "Operating margin",
+        "Net margin",
+        "Free cash flow margin",
+        "Forward P/E",
+        "EV/Revenue",
+        "Debt/Equity",
+        "Cash/Debt",
+        "1Y return",
+        f"{period} return",
+        "Implied upside/downside",
+        "Volatility %",
+        "Short interest %",
+    ]
+    available_metrics = [
+        metric
+        for metric in key_metrics
+        if primary_metric_value(frame, primary_ticker, metric) is not None
+    ]
+    missing_categories = [key for key, value in category_scores.items() if value is None or pd.isna(value)]
+    provider_failures = int(status_df["Status"].astype(str).str.casefold().eq("error").sum()) if isinstance(status_df, pd.DataFrame) and "Status" in status_df else 0
+    peer_count = len(frame)
+    metric_coverage = len(available_metrics) / max(len(key_metrics), 1)
+
+    bull: list[str] = []
+    bear: list[str] = []
+    watch: list[str] = []
+    limitations: list[str] = []
+    rules: list[str] = []
+
+    metric_checks = [
+        ("Revenue growth YoY", True, "Revenue growth"),
+        ("Operating margin", True, "Operating margin"),
+        ("Net margin", True, "Net margin"),
+        ("Free cash flow margin", True, "Free cash flow margin"),
+        ("Cash/Debt", True, "Balance sheet liquidity"),
+        ("Debt/Equity", False, "Debt-to-equity"),
+        ("EV/Revenue", False, "EV/Revenue valuation"),
+        ("Forward P/E", False, "Forward P/E valuation"),
+        (f"{period} return", True, f"{period} stock performance"),
+        ("Implied upside/downside", True, "Analyst implied upside"),
+        ("Volatility %", False, "Realized volatility"),
+        ("Short interest %", False, "Short interest"),
+    ]
+    for metric, high_better, label in metric_checks:
+        value = primary_metric_value(frame, primary_ticker, metric)
+        median = metric_median_value(frame, metric)
+        pct = primary_metric_percentile(frame, primary_ticker, metric, high_better)
+        if value is None or median is None or pct is None:
+            continue
+        if pct >= 75:
+            bull.append(f"{label} ranks in the top quartile of peers.")
+        elif pct > 50:
+            bull.append(f"{label} is above the peer median.")
+        elif pct <= 25:
+            bear.append(f"{label} ranks in the bottom quartile of peers.")
+        elif pct < 50:
+            bear.append(f"{label} is below the peer median.")
+
+    if primary_metric_value(frame, primary_ticker, "Implied upside/downside") is None:
+        limitations.append("Analyst implied upside data unavailable.")
+    if primary_metric_value(frame, primary_ticker, "Option implied move %") is None and primary_metric_value(frame, primary_ticker, "Volatility %") is None:
+        limitations.append("Options/volatility data unavailable.")
+    if metric_coverage < 0.65:
+        limitations.append("Some peer fundamentals are missing.")
+    if peer_mode != "Manual peer list":
+        limitations.append("Peer group estimated automatically.")
+    if provider_failures:
+        limitations.append(f"{provider_failures} provider fetch error(s) occurred.")
+
+    strong_core = sum(
+        1
+        for key in ("Growth Score", "Profitability Score", "Balance Sheet Score", "Market Momentum Score")
+        if (scores.get(key) is not None and scores.get(key) >= 50)
+    )
+    weak_categories = sum(
+        1
+        for value in category_scores.values()
+        if value is not None and value < 40
+    )
+    strong_fundamentals = (
+        (scores.get("Growth Score") or 0) >= 55
+        and (scores.get("Profitability Score") or 0) >= 55
+    )
+    valuation_weak = scores.get("Valuation Score") is not None and scores["Valuation Score"] < 40
+    momentum_strong = scores.get("Market Momentum Score") is not None and scores["Market Momentum Score"] >= 65
+    profitability_weak = scores.get("Profitability Score") is not None and scores["Profitability Score"] < 45
+    risk_poor = scores.get("Risk Score") is not None and scores["Risk Score"] < 25
+    unprofitable = (primary_metric_value(frame, primary_ticker, "Net margin") or 0) < 0
+    sparse_data = peer_count < 5 or len(category_scores) - len(missing_categories) < 4 or metric_coverage < 0.35
+
+    if sparse_data or (unprofitable and risk_poor):
+        label = "Speculative"
+        rules.append("Sparse data or unprofitable/high-risk profile")
+    elif (
+        overall is not None
+        and overall >= 70
+        and strong_core >= 3
+        and not risk_poor
+    ):
+        label = "Constructive"
+        rules.append("Overall score >= 70 with at least three core categories above peer median")
+    elif overall is not None and (overall < 45 or weak_categories >= 4 or risk_poor):
+        label = "Cautious"
+        rules.append("Overall score below 45, multiple weak categories, or elevated risk")
+    elif (strong_fundamentals and valuation_weak) or (momentum_strong and profitability_weak):
+        label = "Mixed"
+        rules.append("Strong factors offset by valuation or profitability weakness")
+    else:
+        label = "Neutral"
+        rules.append("Category scores are balanced or mixed around peer medians")
+
+    if peer_count >= 8 and metric_coverage >= 0.70 and provider_failures == 0 and len(missing_categories) <= 2:
+        confidence = "High"
+    elif peer_count >= 5 and metric_coverage >= 0.45 and len(category_scores) - len(missing_categories) >= 4:
+        confidence = "Medium"
+    else:
+        confidence = "Low"
+
+    if scores.get("Profitability Score") is not None and scores["Profitability Score"] < 45:
+        watch.append("Monitor margin compression and earnings quality versus peers.")
+    if valuation_weak:
+        watch.append("Monitor valuation premium versus growth and profitability.")
+    if scores.get("Balance Sheet Score") is not None and scores["Balance Sheet Score"] < 45:
+        watch.append("Monitor debt trend, liquidity, and cash conversion.")
+    if scores.get("Analyst Sentiment Score") is None or scores.get("Analyst Sentiment Score", 0) < 45:
+        watch.append("Monitor analyst revisions and target-price dispersion.")
+    if risk_poor or (scores.get("Risk Score") is not None and scores["Risk Score"] < 45):
+        watch.append("Monitor volatility, drawdown, and short interest versus peers.")
+    if not watch:
+        watch.append("Monitor whether peer-relative strengths persist through the next reporting cycle.")
+
+    if not bull:
+        bull.append("No clear positive peer-relative metric stood out from the available data.")
+    if not bear:
+        bear.append("No clear negative peer-relative metric stood out from the available data.")
+
+    summary = (
+        f"The dashboard view is {label} because the selected company has an overall competitive score of "
+        f"{overall:.0f}/100 with {strong_core} of 4 core categories above peer median."
+        if overall is not None
+        else f"The dashboard view is {label} because available peer data is incomplete."
+    )
+    return {
+        "label": label,
+        "confidence": confidence,
+        "summary": summary,
+        "scores": scores,
+        "bull": bull[:5],
+        "bear": bear[:5],
+        "watch": watch[:5],
+        "limitations": limitations[:6],
+        "rules": rules,
+        "available_metrics": len(available_metrics),
+        "metric_coverage": metric_coverage,
+        "missing_categories": missing_categories,
+        "peer_count": peer_count,
+        "provider_failures": provider_failures,
+        "strong_core": strong_core,
+    }
+
+
+def render_signal_bullets(items: list[str], empty_text: str) -> None:
+    visible = [clean_text(str(item)) for item in items if clean_text(str(item))]
+    if not visible:
+        visible = [empty_text]
+    st.markdown("\n".join(f"- {item}" for item in visible))
+
+
+def render_investment_view(view: dict[str, object], primary_ticker: str) -> None:
+    label = str(view.get("label", "Neutral"))
+    confidence = str(view.get("confidence", "Low"))
+    tone = investment_view_tone(label)
+    st.markdown(
+        "<div class='investment-view-card {tone}'>"
+        "<div class='investment-view-top'>"
+        "<div><span class='investment-view-label'>Research Signal</span>"
+        "<span class='investment-view-title'>{ticker}: {label}</span></div>"
+        "<span class='investment-view-pill'>Confidence: {confidence}</span>"
+        "</div>"
+        "<p class='investment-view-copy'>{summary}</p>"
+        "</div>".format(
+            tone=html.escape(tone),
+            ticker=html.escape(primary_ticker),
+            label=html.escape(label),
+            confidence=html.escape(confidence),
+            summary=html.escape(str(view.get("summary", ""))),
+        ),
+        unsafe_allow_html=True,
+    )
+
+    scores = view.get("scores", {})
+    if isinstance(scores, dict) and scores:
+        score_items = []
+        for key in (
+            "Overall Competitive Score",
+            "Growth Score",
+            "Profitability Score",
+            "Valuation Score",
+            "Balance Sheet Score",
+            "Market Momentum Score",
+            "Analyst Sentiment Score",
+            "Risk Score",
+        ):
+            value = coerce_float(scores.get(key))
+            if value is None and key == "Analyst Sentiment Score":
+                continue
+            score_items.append(
+                {
+                    "label": key.replace(" Competitive", "").replace(" Score", ""),
+                    "value": f"{value:.0f}/100" if value is not None else "N/A",
+                    "context": "peer percentile",
+                    "tone": score_tone(value),
+                }
+            )
+        render_home_cards(score_items, "home-mini-grid")
+
+    bull_col, bear_col = st.columns(2, gap="small")
+    with bull_col:
+        render_section_title("Bull Case", "Supported peer-relative positives")
+        render_signal_bullets(view.get("bull", []), "No clear positive signal from available metrics.")
+    with bear_col:
+        render_section_title("Bear Case", "Supported peer-relative risks")
+        render_signal_bullets(view.get("bear", []), "No clear negative signal from available metrics.")
+
+    watch_col, limits_col = st.columns(2, gap="small")
+    with watch_col:
+        render_section_title("Watch Items", "Metrics to monitor")
+        render_signal_bullets(view.get("watch", []), "No specific watch items generated.")
+    with limits_col:
+        render_section_title("Data Limitations", "Coverage and source caveats")
+        render_signal_bullets(view.get("limitations", []), "No major data limitations detected.")
+
+    st.caption(
+        "This is a rule-based research signal generated from available peer comparison data, not personalized investment advice. "
+        "It does not account for your personal risk tolerance, time horizon, taxes, or portfolio."
+    )
+
+    with st.expander("Why this view?", expanded=False):
+        rows = [
+            {"Input": "Peer group size", "Value": view.get("peer_count", "N/A")},
+            {"Input": "Available metrics count", "Value": view.get("available_metrics", "N/A")},
+            {"Input": "Metric coverage", "Value": format_percent((coerce_float(view.get("metric_coverage")) or 0) * 100, 1)},
+            {"Input": "Strong core categories", "Value": view.get("strong_core", "N/A")},
+            {"Input": "Missing categories", "Value": ", ".join(view.get("missing_categories", [])) or "None"},
+            {"Input": "Provider failures", "Value": view.get("provider_failures", 0)},
+            {"Input": "Rule triggers", "Value": "; ".join(view.get("rules", [])) or "None"},
+        ]
+        score_rows = [
+            {"Input": key, "Value": format_percent(value, 0)}
+            for key, value in (view.get("scores", {}) or {}).items()
+            if value is not None
+        ]
+        render_dashboard_table(pd.DataFrame(rows + score_rows), height=360)
+
+
 def render_competitive_analysis_tab() -> None:
     st.sidebar.header("Competitive Analysis")
     show_debug = st.sidebar.checkbox("Show competitive analysis debug", value=False, key="competitive_debug")
@@ -13666,35 +14108,42 @@ def render_competitive_analysis_tab() -> None:
         "<div class='statement-page-subtitle'>Compare company performance, valuation, growth, profitability, balance sheet quality, analyst sentiment, and market risk against relevant peers.</div>",
         unsafe_allow_html=True,
     )
+    st.markdown("<div class='competitive-header-spacer'></div>", unsafe_allow_html=True)
 
-    control_cols = st.columns([0.9, 0.95, 0.5, 0.5, 0.46, 0.5, 0.5, 0.5, 0.5, 0.45], gap="small")
     if "competitive_ticker" not in st.session_state:
         st.session_state["competitive_ticker"] = st.session_state.get("three_statement_ticker_input", "")
-    with control_cols[0]:
-        ticker_input = st.text_input("Primary ticker", placeholder="AAPL", key="competitive_ticker")
-    with control_cols[1]:
-        peer_mode = st.selectbox("Peer selection", ["Auto-detect peers", "Manual peer list", "Sector ETF / industry basket"], key="competitive_peer_mode")
-    with control_cols[2]:
-        max_peers = int(st.selectbox("Peers", [5, 10, 15, 20], index=1, key="competitive_peer_count"))
-    with control_cols[3]:
-        comparison_period = st.selectbox("Period", COMPETITIVE_PERIOD_OPTIONS, index=4, key="competitive_period")
-    with control_cols[4]:
-        refresh_clicked = st.button("Refresh", use_container_width=True, key="competitive_refresh")
-    with control_cols[5]:
-        include_mega = st.toggle("Mega-cap", value=True, key="competitive_include_mega")
-    with control_cols[6]:
-        exclude_outliers = st.toggle("Outliers", value=False, key="competitive_exclude_outliers")
-    with control_cols[7]:
-        show_percentiles = st.toggle("Ranks", value=True, key="competitive_percentiles")
-    with control_cols[8]:
-        normalize_values = st.toggle("Normalize", value=False, key="competitive_normalize")
-    with control_cols[9]:
-        show_raw = st.toggle("Raw", value=False, key="competitive_raw")
+    with st.container(border=True):
+        render_section_title("Peer Controls", "Choose the focus company, comp-set method, display period, and optional filters.")
+        control_row = st.columns([1.05, 1.25, 0.55, 0.62, 0.5], gap="small")
+        with control_row[0]:
+            ticker_input = st.text_input("Primary ticker", placeholder="AAPL", key="competitive_ticker")
+        with control_row[1]:
+            peer_mode = st.selectbox("Peer selection", ["Auto-detect peers", "Manual peer list", "Sector ETF / industry basket"], key="competitive_peer_mode")
+        with control_row[2]:
+            max_peers = int(st.selectbox("Peers", [5, 10, 15, 20], index=1, key="competitive_peer_count"))
+        with control_row[3]:
+            comparison_period = st.selectbox("Period", COMPETITIVE_PERIOD_OPTIONS, index=4, key="competitive_period")
+        with control_row[4]:
+            st.write("")
+            refresh_clicked = st.button("Refresh", use_container_width=True, key="competitive_refresh")
+
+        toggle_row = st.columns(5, gap="small")
+        with toggle_row[0]:
+            include_mega = st.checkbox("Mega-cap", value=True, key="competitive_include_mega", help="Include mega-cap companies in the peer group.")
+        with toggle_row[1]:
+            exclude_outliers = st.checkbox("Outliers", value=False, key="competitive_exclude_outliers", help="Exclude extreme valuation/growth outliers while keeping the selected ticker.")
+        with toggle_row[2]:
+            show_percentiles = st.checkbox("Ranks", value=True, key="competitive_percentiles", help="Show peer percentile score details.")
+        with toggle_row[3]:
+            normalize_values = st.checkbox("Normalize", value=False, key="competitive_normalize", help="Show normalized z-score style metrics versus the peer median.")
+        with toggle_row[4]:
+            show_raw = st.checkbox("Raw data", value=False, key="competitive_raw", help="Show raw provider and normalized comparison data.")
+
+        manual_peers = ""
+        if peer_mode == "Manual peer list":
+            manual_peers = st.text_input("Manual peers", "MSFT, GOOGL, META, AMZN, NVDA", key="competitive_manual_peers")
 
     primary_ticker = normalize_symbol(ticker_input)
-    manual_peers = ""
-    if peer_mode == "Manual peer list":
-        manual_peers = st.text_input("Manual peers", "MSFT, GOOGL, META, AMZN, NVDA", key="competitive_manual_peers")
 
     if refresh_clicked:
         fetch_home_stock_snapshot.clear()
@@ -13743,13 +14192,30 @@ def render_competitive_analysis_tab() -> None:
     )
     peer_df = primary_first
 
-    st.caption(
-        f"{primary_ticker} | {len(peer_df)} companies | {peer_group.get('note', 'Peers estimated from available metadata.')} "
-        f"| Source: Yahoo Finance/yfinance | Cached / delayed: updated {refreshed_at.strftime('%I:%M:%S %p ET').lstrip('0')}"
+    updated_text = refreshed_at.strftime("%I:%M:%S %p ET").lstrip("0")
+    render_metric_strip(
+        [
+            {"label": "Selected Ticker", "value": primary_ticker, "context": "focus company"},
+            {"label": "Peer Group", "value": len(peer_df), "context": "companies"},
+            {"label": "Peer Method", "value": peer_mode.replace(" peers", ""), "context": "selection mode"},
+            {"label": "Source", "value": "Yahoo Finance", "context": "yfinance / chart API"},
+            {"label": "Freshness", "value": "Cached / delayed", "context": "provider label"},
+            {"label": "Updated", "value": updated_text, "context": "ET"},
+        ],
+        columns=6,
     )
 
     if peer_mode != "Manual peer list":
-        st.info("Peers are estimated based on available sector, industry, market cap, and profile metadata. Use manual mode for a precise comp set.")
+        st.markdown(
+            "<div class='compact-callout'>Peers are estimated from sector, industry, market cap, and profile metadata. Use manual mode for a precise comp set.</div>",
+            unsafe_allow_html=True,
+        )
+    with st.expander("Peer selection details", expanded=False):
+        st.markdown(
+            f"**Method:** {peer_mode}\n\n"
+            f"**Details:** {peer_group.get('note', 'Peers estimated from available metadata.')}\n\n"
+            f"**Candidate tickers:** {', '.join(tickers)}"
+        )
 
     primary_row = peer_df[peer_df["Ticker"].eq(primary_ticker)].iloc[0] if primary_ticker in set(peer_df["Ticker"]) else peer_df.iloc[0]
     render_metric_strip(
@@ -13853,6 +14319,11 @@ def render_competitive_analysis_tab() -> None:
         with st.expander("Provider status", expanded=False):
             render_dashboard_table(status_df.fillna(""), height=300)
 
+    investment_view = build_investment_view(peer_df, primary_ticker, peer_mode, status_df, comparison_period)
+    with st.container(border=True):
+        render_section_title("Investment View", "Non-personalized, rule-based research signal from displayed peer metrics.")
+        render_investment_view(investment_view, primary_ticker)
+
     if show_debug:
         with st.expander("Competitive analysis debug", expanded=False):
             debug_rows = [
@@ -13865,6 +14336,14 @@ def render_competitive_analysis_tab() -> None:
                 {"Metric": "Providers used", "Value": "Yahoo Finance/yfinance; Yahoo chart API fallback"},
                 {"Metric": "Failed ticker fetches", "Value": int(status_df["Status"].astype(str).str.casefold().eq("error").sum()) if "Status" in status_df else 0},
                 {"Metric": "Metrics included in scoring", "Value": "Growth, profitability, valuation, balance sheet, momentum, analyst sentiment, risk"},
+                {"Metric": "Investment View label", "Value": investment_view.get("label", "N/A")},
+                {"Metric": "Confidence level", "Value": investment_view.get("confidence", "N/A")},
+                {"Metric": "Bull case metrics used", "Value": " | ".join(investment_view.get("bull", []))},
+                {"Metric": "Bear case metrics used", "Value": " | ".join(investment_view.get("bear", []))},
+                {"Metric": "Missing data categories", "Value": ", ".join(investment_view.get("missing_categories", [])) or "None"},
+                {"Metric": "Rule triggers", "Value": "; ".join(investment_view.get("rules", [])) or "None"},
+                {"Metric": "Category scores", "Value": "; ".join(f"{key}: {format_percent(value, 0)}" for key, value in investment_view.get("scores", {}).items() if value is not None)},
+                {"Metric": "UI layout mode", "Value": "Two-row control card + compact status cards"},
                 {"Metric": "Cache TTLs", "Value": "quotes 60s; history 5m; peer fundamentals/score 6h; peer list 24h"},
                 {"Metric": "Rows displayed", "Value": len(peer_df)},
             ]
