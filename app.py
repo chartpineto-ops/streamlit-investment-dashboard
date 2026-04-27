@@ -7701,6 +7701,143 @@ def inject_css() -> None:
                 text-transform: uppercase;
             }
 
+            .stock-context-grid {
+                display: grid;
+                gap: 0.55rem;
+                grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
+                margin: 0.35rem 0 0.7rem 0;
+            }
+
+            .stock-stat-grid {
+                display: grid;
+                gap: 0.4rem;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                margin: 0.25rem 0 0.55rem 0;
+            }
+
+            .stock-stat-card {
+                background: linear-gradient(180deg, rgba(13, 28, 34, 0.98), rgba(7, 16, 20, 0.98));
+                border: 1px solid var(--term-line-soft);
+                border-left: 3px solid var(--term-line);
+                border-radius: 8px;
+                min-width: 0;
+                padding: 0.5rem 0.56rem;
+            }
+
+            .stock-stat-card.good {
+                border-left-color: var(--term-green);
+            }
+
+            .stock-stat-card.bad {
+                border-left-color: var(--term-red);
+            }
+
+            .stock-stat-card.hot {
+                border-left-color: var(--term-amber);
+            }
+
+            .stock-stat-label {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.58rem;
+                font-weight: 900;
+                line-height: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                text-transform: uppercase;
+                white-space: nowrap;
+            }
+
+            .stock-stat-value {
+                color: var(--term-text);
+                display: block;
+                font-family: Consolas, "Lucida Console", "Courier New", monospace;
+                font-size: 0.92rem;
+                font-weight: 900;
+                line-height: 1.08;
+                margin-top: 0.2rem;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .stock-stat-card.good .stock-stat-value,
+            .stock-stat-card.good .stock-stat-context {
+                color: var(--term-green);
+            }
+
+            .stock-stat-card.bad .stock-stat-value,
+            .stock-stat-card.bad .stock-stat-context {
+                color: var(--term-red);
+            }
+
+            .stock-stat-context {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.58rem;
+                font-weight: 800;
+                margin-top: 0.18rem;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                text-transform: uppercase;
+                white-space: nowrap;
+            }
+
+            .stock-graphic {
+                background: #071014;
+                border: 1px solid var(--term-line-soft);
+                border-radius: 8px;
+                margin-top: 0.48rem;
+                padding: 0.52rem 0.58rem;
+            }
+
+            .stock-graphic-top {
+                align-items: center;
+                color: var(--term-muted);
+                display: flex;
+                font-size: 0.62rem;
+                font-weight: 900;
+                justify-content: space-between;
+                margin-bottom: 0.36rem;
+                text-transform: uppercase;
+            }
+
+            .stock-range-track {
+                background: #101d22;
+                border: 1px solid var(--term-line-soft);
+                border-radius: 999px;
+                height: 0.7rem;
+                overflow: hidden;
+                position: relative;
+            }
+
+            .stock-range-fill {
+                background: linear-gradient(90deg, var(--term-red), #e6d36f, var(--term-green));
+                height: 100%;
+                width: var(--fill-pct);
+            }
+
+            .stock-range-pin {
+                background: #e4eef0;
+                border: 2px solid #071014;
+                border-radius: 999px;
+                height: 1rem;
+                left: calc(var(--fill-pct) - 0.5rem);
+                position: absolute;
+                top: -0.18rem;
+                width: 1rem;
+            }
+
+            .stock-range-labels {
+                color: var(--term-muted);
+                display: flex;
+                font-family: Consolas, "Lucida Console", "Courier New", monospace;
+                font-size: 0.6rem;
+                font-weight: 800;
+                justify-content: space-between;
+                margin-top: 0.28rem;
+            }
+
             @keyframes statementFadeIn {
                 from {
                     opacity: 0;
@@ -8653,6 +8790,11 @@ def inject_css() -> None:
                     grid-template-columns: 1fr;
                 }
 
+                .stock-context-grid,
+                .stock-stat-grid {
+                    grid-template-columns: 1fr;
+                }
+
                 .info-strip {
                     grid-template-columns: 1fr;
                 }
@@ -8702,6 +8844,10 @@ def inject_css() -> None:
             @media (min-width: 641px) and (max-width: 980px) {
                 .metric-strip {
                     grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+
+                .stock-context-grid {
+                    grid-template-columns: 1fr;
                 }
 
                 .info-strip {
@@ -11040,6 +11186,173 @@ def render_three_statement_insights(
         return insights
 
 
+def bounded_percent(value: float | None) -> float:
+    if value is None or pd.isna(value):
+        return 0.0
+    return max(0.0, min(100.0, float(value)))
+
+
+def range_position(value: float | None, low: float | None, high: float | None) -> float | None:
+    if value is None or low is None or high is None or high == low:
+        return None
+    return bounded_percent((float(value) - float(low)) / (float(high) - float(low)) * 100)
+
+
+def trailing_return_from_history(history: pd.DataFrame, lookback_rows: int) -> float | None:
+    if history is None or history.empty or "Close" not in history:
+        return None
+    close = pd.to_numeric(history["Close"], errors="coerce").dropna()
+    if len(close) <= lookback_rows:
+        return None
+    current = coerce_float(close.iloc[-1])
+    previous = coerce_float(close.iloc[-lookback_rows - 1])
+    return safe_ratio(current - previous, previous, 100) if current is not None and previous not in (None, 0) else None
+
+
+def render_stock_stat_grid(items: list[dict[str, object]]) -> None:
+    cards: list[str] = []
+    for item in items:
+        tone = html.escape(str(item.get("tone", "neutral") or "neutral"))
+        label = html.escape(str(item.get("label", "")))
+        value = html.escape(str(item.get("value", "N/A")))
+        context = html.escape(str(item.get("context", "")))
+        context_html = f"<span class='stock-stat-context'>{context}</span>" if context else ""
+        cards.append(
+            f"<div class='stock-stat-card {tone}'>"
+            f"<span class='stock-stat-label'>{label}</span>"
+            f"<span class='stock-stat-value'>{value}</span>"
+            f"{context_html}"
+            "</div>"
+        )
+    st.markdown("<div class='stock-stat-grid'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
+
+
+def render_stock_range_graphic(label: str, value: float | None, low: float | None, high: float | None) -> None:
+    position = range_position(value, low, high)
+    if position is None:
+        st.info(f"{label} range data is unavailable.")
+        return
+    st.markdown(
+        "<div class='stock-graphic'>"
+        "<div class='stock-graphic-top'>"
+        f"<span>{html.escape(label)}</span>"
+        f"<span>{html.escape(format_percent(position, 1))} of range</span>"
+        "</div>"
+        f"<div class='stock-range-track' style='--fill-pct: {position:.2f}%;'>"
+        "<div class='stock-range-fill'></div>"
+        "<div class='stock-range-pin'></div>"
+        "</div>"
+        "<div class='stock-range-labels'>"
+        f"<span>{html.escape(format_currency(low, 2))}</span>"
+        f"<span>{html.escape(format_currency(value, 2))}</span>"
+        f"<span>{html.escape(format_currency(high, 2))}</span>"
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_stock_performance_area_chart(frame: pd.DataFrame, *, height: int = 250) -> bool:
+    if frame.empty or "Performance %" not in frame or "Stock Price" not in frame:
+        st.info("No performance chart data available.")
+        return False
+    chart_frame = frame[["Performance %", "Stock Price"]].dropna(how="all").reset_index()
+    if chart_frame.empty:
+        st.info("No performance chart data available.")
+        return False
+    x_column = chart_frame.columns[0]
+    chart_frame = chart_frame.rename(columns={x_column: "Date"})
+    performance = pd.to_numeric(chart_frame["Performance %"], errors="coerce").dropna()
+    final_return = coerce_float(performance.iloc[-1]) if not performance.empty else None
+    color = "#49d69b" if (final_return or 0) >= 0 else "#ef6f7b"
+    area = (
+        alt.Chart(chart_frame)
+        .mark_area(color=color, opacity=0.2, interpolate="monotone")
+        .encode(
+            x=alt.X("Date:T", title=None, axis=alt.Axis(format="%b")),
+            y=alt.Y("Performance %:Q", title="Performance (%)"),
+            tooltip=[
+                alt.Tooltip("Date:T", title="Date"),
+                alt.Tooltip("Stock Price:Q", title="Stock Price", format=",.2f"),
+                alt.Tooltip("Performance %:Q", title="Performance", format="+.2f"),
+            ],
+        )
+    )
+    line = (
+        alt.Chart(chart_frame)
+        .mark_line(color=color, strokeWidth=2.5, interpolate="monotone")
+        .encode(x="Date:T", y="Performance %:Q")
+    )
+    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#365965", strokeDash=[4, 4]).encode(y="y:Q")
+    st.altair_chart(base_chart((area + line + zero).properties(height=height)), use_container_width=True)
+    return True
+
+
+def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_suffix: str) -> dict[str, object]:
+    with st.container(border=True):
+        render_statement_section_title(
+            "Stock Performance & Statistics",
+            "Market context before the financial statement read-through.",
+            animate=animate,
+            delay=1,
+        )
+        quote = fetch_quote_snapshot(ticker)
+        snapshot, stock_status, refreshed_at = fetch_home_stock_snapshot(ticker)
+        performance_history = fetch_performance_history(ticker, "1Y")
+        performance_df = performance_frame(performance_history)
+        performance_stats = performance_summary(performance_df)
+
+        quote_meta = quote.get("provider") or snapshot.get("Provider Metadata") or metadata_to_dict(default_yahoo_metadata("Stock Performance", last_updated=refreshed_at))
+        st.caption(f"{ticker} | 1Y performance context | " + freshness_caption(quote_meta, "Yahoo Finance/yfinance"))
+
+        last_price = coerce_float(quote.get("price") or snapshot.get("Last Price") or performance_stats.get("last"))
+        day_change_pct = coerce_float(quote.get("change_pct") or snapshot.get("Daily Change %"))
+        day_change = coerce_float(quote.get("change"))
+        one_year_return = coerce_float(performance_stats.get("return"))
+        one_month_return = trailing_return_from_history(performance_history, 21)
+        five_day_return = trailing_return_from_history(performance_history, 5)
+        high_52w = coerce_float(snapshot.get("52W High") or performance_stats.get("high"))
+        low_52w = coerce_float(snapshot.get("52W Low") or performance_stats.get("low"))
+        volume = coerce_float(snapshot.get("Volume"))
+        market_cap = coerce_float(snapshot.get("Market Cap"))
+        trailing_pe = coerce_float(snapshot.get("Trailing PE"))
+        forward_pe = coerce_float(snapshot.get("Forward PE"))
+        relative_volume = coerce_float(snapshot.get("Relative Volume"))
+
+        row_cols = st.columns([1.25, 1], gap="small")
+        chart_rendered = False
+        with row_cols[0]:
+            render_section_title("Performance Trend", "1Y price action indexed to starting price")
+            stat_strip = [
+                {"label": "Last Price", "value": format_currency(last_price, 2), "context": "latest quote", "tone": quote_tone(day_change_pct)},
+                {"label": "Day Move", "value": format_percent(day_change_pct, 2, signed=True), "context": format_currency(day_change, 2), "tone": quote_tone(day_change_pct)},
+                {"label": "1Y Return", "value": format_percent(one_year_return, 2, signed=True), "context": "total price return", "tone": quote_tone(one_year_return)},
+                {"label": "5D Return", "value": format_percent(five_day_return, 2, signed=True), "context": "short-term tape", "tone": quote_tone(five_day_return)},
+            ]
+            render_metric_strip(stat_strip, columns=4)
+            chart_rendered = render_stock_performance_area_chart(performance_df, height=250)
+
+        with row_cols[1]:
+            render_section_title("Trading Statistics", "Valuation, liquidity, and price range")
+            render_stock_stat_grid(
+                [
+                    {"label": "Market Cap", "value": format_compact_currency(market_cap, 2), "context": "equity value"},
+                    {"label": "Volume", "value": compact_number(volume), "context": "latest available"},
+                    {"label": "Rel Volume", "value": format_number(relative_volume, 2), "context": "vs average", "tone": "hot" if relative_volume is not None and relative_volume >= 1.5 else "neutral"},
+                    {"label": "Trailing P/E", "value": format_number(trailing_pe, 2), "context": "valuation"},
+                    {"label": "Forward P/E", "value": format_number(forward_pe, 2), "context": "estimate"},
+                    {"label": "1M Return", "value": format_percent(one_month_return, 2, signed=True), "context": "momentum", "tone": quote_tone(one_month_return)},
+                ]
+            )
+            render_stock_range_graphic("52W price position", last_price, low_52w, high_52w)
+
+        return {
+            "chart_rendered": chart_rendered,
+            "status_rows": len(stock_status) if isinstance(stock_status, pd.DataFrame) else 0,
+            "provider": quote_meta.get("source_label", "Yahoo Finance/yfinance") if isinstance(quote_meta, dict) else "Yahoo Finance/yfinance",
+        }
+
+
 def render_three_statement_analysis_dashboard() -> None:
     st.sidebar.header("3-Statement Analysis")
     show_debug = st.sidebar.checkbox("Show 3-statement debug", value=False, key="three_statement_debug")
@@ -11124,6 +11437,12 @@ def render_three_statement_analysis_dashboard() -> None:
     section_animate = bool(animate_charts and animation_triggered)
     key_suffix = safe_ui_key(signature)
 
+    stock_context_debug = render_stock_performance_statistics_row(
+        ticker,
+        animate=section_animate,
+        key_suffix=key_suffix,
+    )
+
     income_debug = render_income_statement_analysis(
         ticker,
         income_frame,
@@ -11176,6 +11495,8 @@ def render_three_statement_analysis_dashboard() -> None:
                 {"Metric": "Provider used", "Value": "Yahoo Finance/yfinance"},
                 {"Metric": "Cache TTL", "Value": "6 hours"},
                 {"Metric": "Animation triggered", "Value": str(section_animate)},
+                {"Metric": "Stock context chart rendered", "Value": str(stock_context_debug.get("chart_rendered", False))},
+                {"Metric": "Stock context provider", "Value": stock_context_debug.get("provider", "N/A")},
                 {"Metric": "Income charts generated", "Value": income_debug.get("charts", 0)},
                 {"Metric": "Balance charts generated", "Value": balance_debug.get("charts", 0)},
                 {"Metric": "Cash flow charts generated", "Value": cash_debug.get("charts", 0)},
