@@ -670,6 +670,8 @@ FORECAST_COLUMNS = [
     "30D Options Move %",
     "30D Options IV %",
     "30D Options Expiry",
+    "Short %",
+    "Direction Skew",
     "20D Hist Move %",
     "60D Hist Move %",
     "90D Hist Move %",
@@ -701,7 +703,19 @@ FORECAST_COLUMNS = [
 ]
 
 PINNED_FORECAST_COLUMNS = ["Rank", "Ticker", "Company"]
-DEFAULT_FORECAST_DISPLAY_COLUMNS = ["Last Price", "Options Move %", "Direction Bias"]
+DEFAULT_FORECAST_DISPLAY_COLUMNS = [
+    "Last Price",
+    "30D Options Move %",
+    "30D Options IV %",
+    "30D Options Expiry",
+    "Short %",
+    "Direction Skew",
+    "Projected Move %",
+    "Volatility Score",
+    "Confidence",
+    "Main Drivers",
+    "Data Notes",
+]
 HISTORICAL_WINDOW_COLUMNS = {
     "20D": "20D Hist Move %",
     "60D": "60D Hist Move %",
@@ -1974,6 +1988,10 @@ def sort_descending_by_metric(
 
 
 def forecast_rank_metric(frame: pd.DataFrame) -> str:
+    if "30D Options Move %" in frame:
+        options_30d_values = frame["30D Options Move %"].map(parse_percent_value)
+        if options_30d_values.notna().any():
+            return "30D Options Move %"
     if "Options Move %" in frame:
         options_values = frame["Options Move %"].map(parse_percent_value)
         if options_values.notna().any():
@@ -1982,8 +2000,9 @@ def forecast_rank_metric(frame: pd.DataFrame) -> str:
 
 
 FORECAST_SORT_MODES = {
-    "Option Move %": ("Options Move %", "Projected Move %"),
-    "IV Rank / IV Percentile": ("Options IV %", "30D Options IV %"),
+    "30D Options Move %": ("30D Options Move %", "Projected Move %"),
+    "Option Move %": ("30D Options Move %", "Options Move %", "Projected Move %"),
+    "IV Rank / IV Percentile": ("30D Options IV %", "Options IV %"),
     "ATR %": ("ATR Move %",),
     "Volume Spike": ("Volume Shock",),
     "Social Engagement": ("Social Engagement", "Social Risk", "Social Mentions"),
@@ -2010,6 +2029,8 @@ def sort_forecast_for_mode(frame: pd.DataFrame, sort_mode: str) -> pd.DataFrame:
             sorted_frame.insert(0, "Rank", range(1, len(sorted_frame) + 1))
         return sorted_frame.reindex(columns=FORECAST_COLUMNS)
     metric = sort_metric_for_mode(frame, sort_mode)
+    if metric == "30D Options Move %":
+        return rank_rows_by_metric_with_fallback(frame, "30D Options Move %", "Projected Move %").reindex(columns=FORECAST_COLUMNS)
     return rank_rows_by_metric(frame, metric).reindex(columns=FORECAST_COLUMNS)
 
 
@@ -2024,10 +2045,50 @@ def rank_rows_by_metric(frame: pd.DataFrame, metric_column: str) -> pd.DataFrame
     return ranked
 
 
+def rank_rows_by_metric_with_fallback(
+    frame: pd.DataFrame,
+    primary_metric: str,
+    fallback_metric: str,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    if primary_metric not in frame:
+        return rank_rows_by_metric(frame, fallback_metric)
+    sortable = frame.copy()
+    primary_values = sortable[primary_metric].map(parse_numeric_value)
+    fallback_values = (
+        sortable[fallback_metric].map(parse_numeric_value)
+        if fallback_metric in sortable
+        else pd.Series(index=sortable.index, dtype=float)
+    )
+    metric_values = primary_values.combine_first(fallback_values)
+    sortable["__metric_missing"] = metric_values.isna()
+    sortable["__metric_value"] = metric_values.fillna(float("-inf"))
+    sort_columns = ["__metric_missing", "__metric_value"]
+    ascending = [True, False]
+    for column in ("Ticker", "Company"):
+        if column in sortable:
+            sort_columns.append(column)
+            ascending.append(True)
+    ranked = (
+        sortable.sort_values(sort_columns, ascending=ascending, kind="mergesort")
+        .drop(columns=["__metric_missing", "__metric_value"])
+        .reset_index(drop=True)
+    )
+    if "Rank" in ranked:
+        ranked["Rank"] = range(1, len(ranked) + 1)
+    else:
+        ranked.insert(0, "Rank", range(1, len(ranked) + 1))
+    return ranked
+
+
 def rank_forecast_rows(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame.reindex(columns=FORECAST_COLUMNS)
     metric = forecast_rank_metric(frame)
+    if metric == "30D Options Move %":
+        ranked = rank_rows_by_metric_with_fallback(frame, "30D Options Move %", "Projected Move %")
+        return ranked.reindex(columns=FORECAST_COLUMNS)
     ranked = rank_rows_by_metric(frame, metric)
     return ranked.reindex(columns=FORECAST_COLUMNS)
 
@@ -3641,8 +3702,60 @@ def empty_options_snapshot(message: str = "") -> dict:
         "expiry": None,
         "days_to_expiry": None,
         "contracts": 0,
+        "call_iv": None,
+        "put_iv": None,
+        "iv_skew_pct": None,
+        "put_call_oi_ratio": None,
         "message": message,
     }
+
+
+def weighted_option_iv(frame: pd.DataFrame, nearest_count: int = 6) -> float | None:
+    if frame.empty or "impliedVolatility" not in frame:
+        return None
+    nearest = frame.nsmallest(min(nearest_count, len(frame)), "distance").copy() if "distance" in frame else frame.copy()
+    nearest = nearest.dropna(subset=["impliedVolatility"])
+    nearest = nearest[(nearest["impliedVolatility"] > 0) & (nearest["impliedVolatility"] < 5)]
+    if nearest.empty:
+        return None
+    weight = pd.Series(1.0, index=nearest.index)
+    for column in ("openInterest", "volume"):
+        if column in nearest:
+            weight += pd.to_numeric(nearest[column], errors="coerce").fillna(0).clip(lower=0)
+    denominator = float(weight.sum())
+    if denominator <= 0:
+        return None
+    return float((nearest["impliedVolatility"] * weight).sum() / denominator)
+
+
+def option_interest_sum(frame: pd.DataFrame) -> float | None:
+    if frame.empty:
+        return None
+    total = 0.0
+    used = False
+    for column in ("openInterest", "volume"):
+        if column in frame:
+            values = pd.to_numeric(frame[column], errors="coerce").fillna(0).clip(lower=0)
+            total += float(values.sum())
+            used = True
+    return total if used else None
+
+
+def short_interest_percent(info: dict) -> float | None:
+    if not isinstance(info, dict):
+        return None
+    for key in ("shortPercentOfFloat", "sharesPercentSharesOut"):
+        value = coerce_float(info.get(key))
+        if value is None:
+            continue
+        if value < 0:
+            continue
+        return value * 100 if value <= 1 else value
+    shares_short = coerce_float(info.get("sharesShort"))
+    float_shares = coerce_float(info.get("floatShares"))
+    if shares_short is not None and float_shares and float_shares > 0:
+        return shares_short / float_shares * 100
+    return None
 
 
 def options_snapshot(
@@ -3686,9 +3799,11 @@ def options_snapshot(
         return empty_options_snapshot(f"Option chain unavailable: {exc}")
 
     contracts = []
-    for side in (getattr(chain, "calls", None), getattr(chain, "puts", None)):
+    for side_name, side in (("call", getattr(chain, "calls", None)), ("put", getattr(chain, "puts", None))):
         if side is not None and not side.empty:
-            contracts.append(side)
+            side_frame = side.copy()
+            side_frame["optionSide"] = side_name
+            contracts.append(side_frame)
     if not contracts:
         return empty_options_snapshot("No option contracts returned")
 
@@ -3711,6 +3826,18 @@ def options_snapshot(
         if column in nearest:
             weight += pd.to_numeric(nearest[column], errors="coerce").fillna(0).clip(lower=0)
     iv = float((nearest["impliedVolatility"] * weight).sum() / weight.sum())
+    calls = options[options["optionSide"].eq("call")].copy()
+    puts = options[options["optionSide"].eq("put")].copy()
+    call_iv = weighted_option_iv(calls)
+    put_iv = weighted_option_iv(puts)
+    iv_skew_pct = (call_iv - put_iv) * 100 if call_iv is not None and put_iv is not None else None
+    call_interest = option_interest_sum(calls)
+    put_interest = option_interest_sum(puts)
+    put_call_oi_ratio = (
+        put_interest / call_interest
+        if put_interest is not None and call_interest not in (None, 0)
+        else None
+    )
     days_to_expiry = max((selected_date - today).days, 1)
     move_pct = iv * math.sqrt(days_to_expiry / 365.0) * 100
     return {
@@ -3719,6 +3846,10 @@ def options_snapshot(
         "expiry": selected_date,
         "days_to_expiry": days_to_expiry,
         "contracts": len(nearest),
+        "call_iv": call_iv,
+        "put_iv": put_iv,
+        "iv_skew_pct": iv_skew_pct,
+        "put_call_oi_ratio": put_call_oi_ratio,
         "message": "",
     }
 
@@ -3730,6 +3861,7 @@ def payload_error(ticker: str, message: str) -> dict:
         "company": ticker,
         "sector": "",
         "market_cap": None,
+        "short_percent": None,
         "earnings_dates": [],
         "targets": {"current": None, "mean": None, "low": None, "high": None},
         "options": empty_options_snapshot(message),
@@ -3778,6 +3910,7 @@ def fetch_ticker_payload(
         )
         sector = info.get("sector") or ""
         market_cap = coerce_float(info.get("marketCap") or info.get("market_cap"))
+        short_pct = short_interest_percent(info)
         targets = extract_targets(yf_ticker, info)
         earnings_dates = extract_earnings_dates(yf_ticker)
         last_price = None
@@ -3813,6 +3946,7 @@ def fetch_ticker_payload(
             "company": company,
             "sector": sector,
             "market_cap": market_cap,
+            "short_percent": short_pct,
             "earnings_dates": earnings_dates,
             "targets": targets,
             "options": option_data,
@@ -4159,6 +4293,102 @@ def direction_bias(
     return "Two-sided"
 
 
+def options_direction_skew(option_data: dict) -> str | None:
+    if not isinstance(option_data, dict):
+        return None
+    iv_skew = coerce_float(option_data.get("iv_skew_pct"))
+    put_call_ratio = coerce_float(option_data.get("put_call_oi_ratio"))
+    if iv_skew is None and put_call_ratio is None:
+        return None
+    bullish = 0
+    bearish = 0
+    if iv_skew is not None:
+        if iv_skew >= 3.0:
+            bullish += 2
+        elif iv_skew <= -3.0:
+            bearish += 2
+    if put_call_ratio is not None:
+        if put_call_ratio >= 1.6:
+            bearish += 1
+        elif put_call_ratio <= 0.7:
+            bullish += 1
+    if bullish and bearish:
+        return "Mixed"
+    if bullish:
+        return "Bullish"
+    if bearish:
+        return "Bearish"
+    return "Neutral"
+
+
+def inferred_direction_skew(
+    momentum_pct: float,
+    news_sentiment: float,
+    social_sentiment: float,
+    social_mentions_count: int,
+    targets: dict[str, float | None],
+    last_price: float | None,
+) -> str:
+    score = 0.0
+    if momentum_pct >= 2.5:
+        score += 1.0
+    elif momentum_pct <= -2.5:
+        score -= 1.0
+    if news_sentiment >= 0.18:
+        score += 1.0
+    elif news_sentiment <= -0.18:
+        score -= 1.0
+    if social_mentions_count:
+        if social_sentiment >= 0.18:
+            score += 0.75
+        elif social_sentiment <= -0.18:
+            score -= 0.75
+    target_mean = targets.get("mean")
+    if target_mean and last_price and last_price > 0:
+        upside = (target_mean / last_price - 1.0) * 100
+        if upside >= 10:
+            score += 1.0
+        elif upside <= -10:
+            score -= 1.0
+    if score >= 1.5:
+        return "Bullish"
+    if score <= -1.5:
+        return "Bearish"
+    if abs(score) >= 0.75:
+        return "Mixed"
+    return "Neutral"
+
+
+def direction_skew_label(
+    option_30d_data: dict,
+    option_data: dict,
+    momentum_pct: float,
+    news_sentiment: float,
+    social_sentiment: float,
+    social_mentions_count: int,
+    targets: dict[str, float | None],
+    last_price: float | None,
+) -> tuple[str, str]:
+    for candidate, source in (
+        (option_30d_data, "30D options call/put IV skew"),
+        (option_data, "nearest-expiry options call/put IV skew"),
+    ):
+        skew = options_direction_skew(candidate)
+        if skew:
+            return skew, source
+    return (
+        inferred_direction_skew(
+            momentum_pct,
+            news_sentiment,
+            social_sentiment,
+            social_mentions_count,
+            targets,
+            last_price,
+        ),
+        "inferred from momentum, news, social, and analyst signals",
+    )
+
+
 def forecast_for_payload(
     payload: dict,
     benchmark_returns: pd.Series,
@@ -4240,6 +4470,19 @@ def forecast_for_payload(
     options_30d_move = coerce_float(option_30d_data.get("move_pct"))
     options_30d_iv = coerce_float(option_30d_data.get("iv"))
     options_30d_iv_pct = options_30d_iv * 100 if options_30d_iv is not None else None
+    short_pct = coerce_float(payload.get("short_percent"))
+    direction_skew, direction_skew_source = direction_skew_label(
+        option_30d_data,
+        option_data,
+        momentum_pct,
+        news_sentiment,
+        social_sentiment,
+        social_mentions_count,
+        payload.get("targets", {}),
+        last_price,
+    )
+    if direction_skew_source.startswith("inferred"):
+        notes.append("Direction skew inferred from price/news/social/analyst signals")
 
     model_move = (
         base_move
@@ -4311,6 +4554,8 @@ def forecast_for_payload(
         "30D Options Move %": None if options_30d_move is None else round(options_30d_move, 2),
         "30D Options IV %": None if options_30d_iv_pct is None else round(options_30d_iv_pct, 2),
         "30D Options Expiry": option_30d_data.get("expiry"),
+        "Short %": None if short_pct is None else round(short_pct, 2),
+        "Direction Skew": direction_skew,
         "20D Hist Move %": None if hist_20_move is None else round(hist_20_move, 2),
         "60D Hist Move %": None if hist_60_move is None else round(hist_60_move, 2),
         "90D Hist Move %": None if hist_90_move is None else round(hist_90_move, 2),
@@ -8646,6 +8891,12 @@ def inject_css() -> None:
                 color: var(--term-green);
             }
 
+            .bias-badge.warn {
+                background: rgba(213, 197, 111, 0.11);
+                border-color: rgba(213, 197, 111, 0.4);
+                color: #e5d77f;
+            }
+
             .risk-band {
                 align-items: center;
                 background: #070c0f;
@@ -9356,60 +9607,93 @@ def badge_tone_from_severity(severity: str) -> str:
 
 
 def render_volatility_summary_cards(
-    top_row: pd.Series | None,
-    macro_context: MacroContext,
-    earnings_catalysts: int,
-    social_mentions_total: int,
-    social_lookback_days: int,
-    avg_projected: float,
+    forecast_df: pd.DataFrame,
     ranked_count: int,
+    scanned_count: int,
 ) -> None:
-    if top_row is None:
-        top_ticker = "N/A"
-        top_company = "No matching forecast rows"
-        top_move = "N/A"
-        top_move_value = 0.0
-    else:
-        top_ticker = str(top_row.get("Ticker", "N/A"))
-        top_company = str(top_row.get("Company") or "Company unavailable")
-        top_move_value = float(top_row.get("Projected Move %", 0.0) or 0.0)
-        top_move = format_move(top_move_value, 1)
+    def best_by_metric(frame: pd.DataFrame, metric: str) -> pd.Series | None:
+        if frame.empty or metric not in frame:
+            return None
+        sorted_frame = sort_descending_by_metric(frame, metric)
+        valid = sorted_frame[sorted_frame[metric].map(parse_numeric_value).notna()]
+        return None if valid.empty else valid.iloc[0]
 
-    macro_severity = severity_level(macro_context.stress_score, high=70, medium=40)
-    top_move_severity = severity_level(top_move_value, high=12, medium=6)
-    avg_move_severity = severity_level(avg_projected, high=10, medium=5)
-    macro_progress = max(0, min(float(macro_context.stress_score), 100))
+    top_30d = best_by_metric(forecast_df, "30D Options Move %")
+    if top_30d is None:
+        top_30d = best_by_metric(forecast_df, "Projected Move %")
+    top_short = best_by_metric(forecast_df, "Short %")
+    if not forecast_df.empty and "Direction Skew" in forecast_df:
+        skew_series = forecast_df["Direction Skew"].astype(str).str.casefold()
+        bullish_rows = forecast_df[skew_series.eq("bullish")]
+        bearish_rows = forecast_df[skew_series.eq("bearish")]
+    else:
+        bullish_rows = pd.DataFrame()
+        bearish_rows = pd.DataFrame()
+    top_bullish = best_by_metric(bullish_rows, "30D Options Move %")
+    if top_bullish is None:
+        top_bullish = best_by_metric(bullish_rows, "Projected Move %")
+    top_bearish = best_by_metric(bearish_rows, "30D Options Move %")
+    if top_bearish is None:
+        top_bearish = best_by_metric(bearish_rows, "Projected Move %")
+
+    top_30d_value = coerce_float(top_30d.get("30D Options Move %")) if top_30d is not None else None
+    if top_30d_value is None and top_30d is not None:
+        top_30d_value = coerce_float(top_30d.get("Projected Move %"))
+    top_short_value = coerce_float(top_short.get("Short %")) if top_short is not None else None
+    top_bullish_move = coerce_float(top_bullish.get("30D Options Move %")) if top_bullish is not None else None
+    if top_bullish_move is None and top_bullish is not None:
+        top_bullish_move = coerce_float(top_bullish.get("Projected Move %"))
+    top_bearish_move = coerce_float(top_bearish.get("30D Options Move %")) if top_bearish is not None else None
+    if top_bearish_move is None and top_bearish is not None:
+        top_bearish_move = coerce_float(top_bearish.get("Projected Move %"))
+    top_move_severity = severity_level(top_30d_value or 0.0, high=12, medium=6)
+    short_severity = severity_level(top_short_value or 0.0, high=20, medium=10)
     cards = [
         {
-            "label": "Top Volatility Ticker",
-            "value": top_ticker,
-            "helper": f"{top_company} | {top_move} projected",
+            "label": "Highest 30D Implied Move",
+            "value": str(top_30d.get("Ticker", "N/A")) if top_30d is not None else "N/A",
+            "helper": (
+                f"{format_move(top_30d_value, 1)} | {top_30d.get('Company', 'Company unavailable')}"
+                if top_30d is not None
+                else "No options move available"
+            ),
             "class": "hot" if top_move_severity in {"high", "medium"} else "neutral",
         },
         {
-            "label": "Macro Stress Score",
-            "value": f"{macro_context.stress_score:.0f}/100",
-            "helper": "Headline and event pressure",
-            "class": "warn" if macro_severity != "neutral" else "neutral",
-            "progress": macro_progress,
+            "label": "Highest Short Interest",
+            "value": str(top_short.get("Ticker", "N/A")) if top_short is not None else "N/A",
+            "helper": (
+                f"{format_percent(top_short_value, 1)} short float | {top_short.get('Company', 'Company unavailable')}"
+                if top_short is not None
+                else "Short float unavailable"
+            ),
+            "class": "hot" if short_severity in {"high", "medium"} else "neutral",
         },
         {
-            "label": "Earnings Catalyst Window",
-            "value": f"{earnings_catalysts:,}",
-            "helper": "Within selected horizon",
+            "label": "Most Bearish Skew",
+            "value": str(top_bearish.get("Ticker", "N/A")) if top_bearish is not None else "N/A",
+            "helper": (
+                f"{format_move(top_bearish_move, 1)} 30D move | Bearish skew"
+                if top_bearish is not None
+                else "No bearish skew detected"
+            ),
+            "class": "warn" if top_bearish is not None else "neutral",
+        },
+        {
+            "label": "Most Bullish Skew",
+            "value": str(top_bullish.get("Ticker", "N/A")) if top_bullish is not None else "N/A",
+            "helper": (
+                f"{format_move(top_bullish_move, 1)} 30D move | Bullish skew"
+                if top_bullish is not None
+                else "No bullish skew detected"
+            ),
+            "class": "hot" if top_bullish is not None else "neutral",
+        },
+        {
+            "label": "Tickers Scanned",
+            "value": f"{scanned_count:,}",
+            "helper": f"{len(forecast_df):,} rows after filters | {ranked_count:,} displayed",
             "class": "neutral",
-        },
-        {
-            "label": "Social Mentions",
-            "value": f"{social_mentions_total:,}",
-            "helper": f"Last {social_lookback_days} day{'s' if social_lookback_days != 1 else ''}",
-            "class": "neutral",
-        },
-        {
-            "label": "Average Move",
-            "value": format_move(avg_projected, 1),
-            "helper": f"Top {ranked_count:,} ranked names",
-            "class": "hot" if avg_move_severity in {"high", "medium"} else "neutral",
         },
     ]
 
@@ -9486,6 +9770,7 @@ FORECAST_PERCENT_COLUMNS = {
     "Options IV %",
     "30D Options IV %",
     "Ann. Realized Vol %",
+    "Short %",
     "Momentum %",
     "Gap Risk %",
     "Backtest Error %",
@@ -9512,6 +9797,8 @@ def direction_bias_tone(value: object) -> str:
         return "good"
     if "downside" in text or "bear" in text or "negative" in text:
         return "bad"
+    if "mixed" in text:
+        return "warn"
     return "neutral"
 
 
@@ -9572,7 +9859,7 @@ def render_forecast_table(frame: pd.DataFrame, columns: list[str]) -> None:
                 cell_class = "ticker-cell"
             elif column in FORECAST_CURRENCY_COLUMNS | FORECAST_MOVE_COLUMNS | FORECAST_PERCENT_COLUMNS | FORECAST_NUMBER_COLUMNS:
                 cell_class = "number-cell"
-            if column == "Direction Bias":
+            if column in {"Direction Bias", "Direction Skew"}:
                 tone = direction_bias_tone(raw_value)
                 value = f"<span class='bias-badge {tone}'>{value}</span>"
                 cells.append(f"<td>{value}</td>")
@@ -12078,6 +12365,7 @@ def forecast_column_config() -> dict:
         "Avg Dollar Volume": st.column_config.NumberColumn(format="$%.0f"),
         "Options IV %": st.column_config.NumberColumn(format="%.2f%%"),
         "30D Options IV %": st.column_config.NumberColumn(format="%.2f%%"),
+        "Short %": st.column_config.NumberColumn(format="%.2f%%"),
         "Volatility Score": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
         "Confidence": st.column_config.ProgressColumn(format="%.0f", min_value=0, max_value=100),
         "Base Move %": st.column_config.NumberColumn(format="%.2f%%"),
@@ -12116,7 +12404,8 @@ def render_volatility_radar() -> None:
         fetch_scheduled_macro_events.clear()
 
     universe_df, universe_status_df = load_symbol_universe(include_etfs)
-    universe_preset = st.sidebar.selectbox("Universe preset", UNIVERSE_PRESETS, index=0)
+    default_universe_index = UNIVERSE_PRESETS.index("All US listed") if "All US listed" in UNIVERSE_PRESETS else 0
+    universe_preset = st.sidebar.selectbox("Universe preset", UNIVERSE_PRESETS, index=default_universe_index)
 
     available_exchanges = sorted(universe_df["Exchange"].dropna().unique().tolist()) if not universe_df.empty else []
     exchange_filters = st.sidebar.multiselect(
@@ -12152,10 +12441,10 @@ def render_volatility_radar() -> None:
     )
     sort_mode = st.sidebar.selectbox(
         "Sort forecasts by",
-        ["Option Move %", "IV Rank / IV Percentile", "ATR %", "Volume Spike", "Social Engagement", "Ticker A-Z"],
+        ["30D Options Move %", "Option Move %", "IV Rank / IV Percentile", "ATR %", "Volume Spike", "Social Engagement", "Ticker A-Z"],
         index=0,
         key="volatility_sort_mode_v1",
-        help="Metric sorting is descending. Option Move % is the market-implied expected magnitude, not direction.",
+        help="Metric sorting is descending. 30D Options Move % is the default monthly implied-move benchmark.",
     )
     show_debug = st.sidebar.checkbox("Show developer diagnostics", value=False)
     random_seed = st.sidebar.number_input("Random seed", min_value=1, max_value=9999, value=42, step=1)
@@ -12189,12 +12478,12 @@ def render_volatility_radar() -> None:
     st.sidebar.caption(f"{candidate_count:,} candidates; scanning {len(tickers):,} symbols this run.")
     scan_limited = candidate_count > len(tickers)
 
-    horizon_days = st.sidebar.slider("Forecast horizon", min_value=1, max_value=7, value=5)
+    horizon_days = st.sidebar.slider("Forecast horizon (model)", min_value=1, max_value=7, value=5)
     lookback_period = st.sidebar.selectbox("Price lookback", ["3mo", "6mo", "1y", "2y"], index=1)
     include_options = st.sidebar.checkbox("Use options implied volatility", value=True)
     st.sidebar.subheader("Volatility Setups")
     show_30d_benchmark = st.sidebar.checkbox(
-        "30D options IV benchmark",
+        "30D implied move benchmark",
         value=True,
         disabled=not include_options,
     )
@@ -12295,7 +12584,8 @@ def render_volatility_radar() -> None:
         [
             {"label": "Universe", "value": universe_preset},
             {"label": "Symbols matched", "value": f"{len(tickers):,}/{candidate_count:,}"},
-            {"label": "Horizon", "value": f"{horizon_days}D"},
+            {"label": "Model horizon", "value": f"{horizon_days}D"},
+            {"label": "Implied window", "value": "30D"},
             {"label": "Options", "value": "On" if include_options else "Off"},
             {"label": "Sort", "value": sort_mode},
             {"label": "Last refreshed", "value": refreshed_clock},
@@ -12305,6 +12595,13 @@ def render_volatility_radar() -> None:
         "<div class='radar-insight'>"
         f"{html.escape(universe_preset)} scan found {len(tickers):,} of {candidate_count:,} "
         f"matching symbols over a {horizon_days}-day horizon. Last refreshed {html.escape(refreshed_clock)}."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div class='radar-insight'>"
+        "30D implied move estimates the market's expected price range over roughly the next month based on options pricing. "
+        "Short % estimates the percentage of float sold short. Direction skew indicates whether the volatility setup leans bullish, bearish, neutral, or mixed."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -12382,12 +12679,6 @@ def render_volatility_radar() -> None:
     scheduled_source_summary = scheduled_report_source_summary(scheduled_statuses)
     factor_df = macro_factor_frame(macro_context)
     ranked_df = forecast_df.head(top_n)
-    top_row = ranked_df.iloc[0] if not ranked_df.empty else None
-    earnings_catalysts = int(
-        ranked_df["Days To Earnings"].between(0, horizon_days).fillna(False).sum()
-    ) if not ranked_df.empty else 0
-    avg_projected = float(ranked_df["Projected Move %"].mean()) if not ranked_df.empty else 0.0
-    social_mentions_total = len(social_mentions)
     social_sort_label = (
         "Sorted by total engagement."
         if any(get_total_reactions(mention) > 0 for mention in social_mentions)
@@ -12395,13 +12686,9 @@ def render_volatility_radar() -> None:
     )
 
     render_volatility_summary_cards(
-        top_row,
-        macro_context,
-        earnings_catalysts,
-        social_mentions_total,
-        social_lookback_days,
-        avg_projected,
+        forecast_df,
         len(ranked_df),
+        len(tickers),
     )
     render_stress_chip_row(macro_context, ranked_df)
     volatility_meta = provider_metadata(
@@ -12489,8 +12776,8 @@ def render_volatility_radar() -> None:
         with left_col:
             with st.container(border=True):
                 render_section_title(
-                    "Highest Projected Volatility",
-                    f"Sorted by {sort_column_used} descending. Option Move % is expected magnitude, not direction.",
+                    "Highest 30D Implied Volatility Setups",
+                    f"Sorted by {sort_column_used} descending. 30D Options Move % is expected magnitude, not direction.",
                 )
                 table_columns = PINNED_FORECAST_COLUMNS + [
                     column
@@ -12503,14 +12790,17 @@ def render_volatility_radar() -> None:
             with st.container(border=True):
                 render_section_title(
                     "Tactical vs Benchmark",
-                    "Projected move compared with options-implied benchmarks.",
+                    "30D implied move compared with model and nearest-expiry options benchmarks.",
                 )
                 if not ranked_df.empty:
-                    chart_columns = ["Projected Move %"]
+                    if show_30d_benchmark and "30D Options Move %" in ranked_df:
+                        chart_columns = ["30D Options Move %"]
+                    else:
+                        chart_columns = []
+                    if "Projected Move %" in ranked_df:
+                        chart_columns.append("Projected Move %")
                     if "Options Move %" in ranked_df:
                         chart_columns.append("Options Move %")
-                    if show_30d_benchmark and "30D Options Move %" in ranked_df:
-                        chart_columns.append("30D Options Move %")
                     chart_df = ranked_df[["Ticker"] + chart_columns].head(10)
                     render_multi_series_chart(
                         chart_df,
