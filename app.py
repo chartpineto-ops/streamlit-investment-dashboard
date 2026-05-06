@@ -8012,13 +8012,17 @@ def inject_css() -> None:
                 height: 2.35rem;
                 justify-content: center;
                 overflow: hidden;
+                position: relative;
                 width: 2.35rem;
             }
 
             .company-logo img {
                 height: 100%;
+                inset: 0;
                 object-fit: cover;
+                position: absolute;
                 width: 100%;
+                z-index: 2;
             }
 
             .company-logo-fallback {
@@ -8026,6 +8030,17 @@ def inject_css() -> None:
                 font-size: 0.82rem;
                 font-weight: 950;
                 letter-spacing: 0;
+            }
+
+            .company-logo .company-logo-fallback {
+                background: transparent;
+                border: 0;
+                border-radius: 0;
+                height: 100%;
+                inset: 0;
+                position: absolute;
+                width: 100%;
+                z-index: 1;
             }
 
             .company-quote-main {
@@ -12267,6 +12282,55 @@ def ticker_initials(ticker: str) -> str:
     return (clean[:2] or "EQ").upper()
 
 
+def logo_secondary_url(logo_url: str) -> str:
+    if not logo_url:
+        return ""
+    try:
+        parsed = urlparse(logo_url)
+    except Exception:
+        return ""
+    domain = ""
+    if parsed.netloc.casefold().endswith("logo.clearbit.com"):
+        domain = parsed.path.strip("/").split("/")[0]
+    elif parsed.netloc:
+        domain = parsed.netloc
+    domain = domain[4:] if domain.startswith("www.") else domain
+    if not domain or "." not in domain:
+        return ""
+    return f"https://www.google.com/s2/favicons?domain={html.escape(domain, quote=True)}&sz=128"
+
+
+def company_logo_markup(symbol: str, logo_url: str | None) -> str:
+    safe_symbol = html.escape(str(symbol or "EQ").upper())
+    initials_html = f"<span class='company-logo-fallback'>{html.escape(ticker_initials(symbol))}</span>"
+    url = str(logo_url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return f"<span class='company-logo'>{initials_html}</span>"
+    primary_url = url
+    secondary = logo_secondary_url(url)
+    try:
+        parsed = urlparse(url)
+        if parsed.netloc.casefold().endswith("logo.clearbit.com") and secondary:
+            # Clearbit can return 404 for some tickers in Streamlit Cloud. Use
+            # the site favicon first, then Clearbit as a secondary attempt.
+            primary_url, secondary = secondary, url
+    except Exception:
+        pass
+    if secondary:
+        onerror = (
+            "if(!this.dataset.fallback){this.dataset.fallback='1';"
+            f"this.src='{secondary}';"
+            "}else{this.style.display='none';}"
+        )
+    else:
+        onerror = "this.style.display='none';"
+    return (
+        f"<span class='company-logo'>{initials_html}"
+        f"<img src='{html.escape(primary_url, quote=True)}' alt='{safe_symbol} logo' loading='lazy' onerror=\"{onerror}\">"
+        "</span>"
+    )
+
+
 def render_company_quote_header(ticker: str) -> dict[str, object]:
     snapshot, status, refreshed_at = fetch_home_stock_snapshot(ticker)
     symbol = str(snapshot.get("Ticker") or ticker).upper()
@@ -12276,11 +12340,7 @@ def render_company_quote_header(ticker: str) -> dict[str, object]:
     tone = quote_tone(day_change_pct)
     change_label = format_percent(day_change_pct, 1, signed=True)
     logo_url = str(snapshot.get("Logo URL") or "")
-    logo_html = (
-        f"<span class='company-logo'><img src='{html.escape(logo_url, quote=True)}' alt='{html.escape(symbol)} logo'></span>"
-        if logo_url.startswith(("http://", "https://"))
-        else f"<span class='company-logo-fallback'>{html.escape(ticker_initials(symbol))}</span>"
-    )
+    logo_html = company_logo_markup(symbol, logo_url)
     st.markdown(
         "<div class='company-quote-header'>"
         f"{logo_html}"
@@ -12599,11 +12659,7 @@ def render_latest_quarter_earnings_card(summary: dict[str, object]) -> None:
         return
     ticker = str(summary.get("ticker") or "").upper()
     logo_url = str(summary.get("logo_url") or "")
-    logo_html = (
-        f"<span class='company-logo'><img src='{html.escape(logo_url, quote=True)}' alt='{html.escape(ticker)} logo'></span>"
-        if logo_url.startswith(("http://", "https://"))
-        else f"<span class='company-logo-fallback'>{html.escape(ticker_initials(ticker))}</span>"
-    )
+    logo_html = company_logo_markup(ticker, logo_url)
     announce = summary.get("announce_date")
     announce_text = f"{announce.month}/{announce.day}/{announce.year}" if isinstance(announce, date) else "N/A"
     cards = [
