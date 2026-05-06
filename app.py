@@ -9956,9 +9956,23 @@ def render_sector_performance_chart(frame: pd.DataFrame) -> None:
     st.altair_chart(base_chart((bars + labels).properties(height=285)), use_container_width=True)
 
 
+def display_table_cell(value: object) -> str:
+    if value is None:
+        return "N/A"
+    try:
+        if pd.isna(value):
+            return "N/A"
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
 def render_dashboard_table(frame: pd.DataFrame, **kwargs) -> None:
     display = frame.copy()
-    display = display.fillna("N/A")
+    # Cloud pandas builds can reject string fill values in nullable numeric
+    # columns. Cast only for display so diagnostic/score tables never crash.
+    display = display.astype("object").where(pd.notna(display), "N/A")
+    display = display.map(display_table_cell)
     height = kwargs.pop("height", min(420, max(130, 42 + (len(display) + 1) * 35)))
     table_styles = [
         {
@@ -10633,12 +10647,20 @@ def waterfall_altair_frame(steps: list[dict[str, object]]) -> pd.DataFrame:
 
 
 WATERFALL_SHORT_LABELS = {
+    "Revenue": "Revenue",
     "Cost of Revenue": "COGS",
+    "Gross Profit": "Gross<br>Profit",
     "Operating Expenses": "OpEx",
-    "Operating Income": "Op. Income",
-    "Interest / Other": "Int. / Other",
-    "Net Income": "Net Income",
-    "Net Loss": "Net Loss",
+    "Operating Income": "Op.<br>Income",
+    "Interest / Other": "Int. /<br>Other",
+    "Net Income": "Net<br>Income",
+    "Net Loss": "Net<br>Loss",
+    "Working Capital": "Working<br>Capital",
+    "Operating CF": "Operating<br>CF",
+    "Free CF": "Free<br>CF",
+    "Investing CF": "Investing<br>CF",
+    "Financing CF": "Financing<br>CF",
+    "Net Change Cash": "Net Change<br>Cash",
 }
 
 
@@ -10662,7 +10684,14 @@ def waterfall_axis_bounds(steps: list[dict[str, object]]) -> tuple[float, float]
     return low - padding, high + padding
 
 
-def render_waterfall_chart(title: str, steps: list[dict[str, object]], *, key: str, height: int = 460) -> bool:
+def render_waterfall_chart(
+    title: str,
+    steps: list[dict[str, object]],
+    *,
+    key: str,
+    height: int = 460,
+    compact_x_axis: bool = False,
+) -> bool:
     clean_steps = [step for step in steps if coerce_float(step.get("value")) is not None]
     if not clean_steps:
         st.info("No waterfall data available.")
@@ -10672,6 +10701,8 @@ def render_waterfall_chart(title: str, steps: list[dict[str, object]], *, key: s
         y_min, y_max = waterfall_axis_bounds(clean_steps)
         labels = [str(step.get("label")) for step in clean_steps]
         short_labels = [WATERFALL_SHORT_LABELS.get(label, label) for label in labels]
+        tick_angle = 0 if compact_x_axis else -10
+        bottom_margin = 112 if compact_x_axis else 108
         values = [coerce_float(step.get("value")) or 0 for step in clean_steps]
         text_values = [format_compact_currency(value, 1) for value in values]
         fig = plotly_module.Figure(
@@ -10695,7 +10726,7 @@ def render_waterfall_chart(title: str, steps: list[dict[str, object]], *, key: s
         )
         plotly_base_layout(fig, max(height, 460))
         fig.update_layout(
-            margin={"l": 78, "r": 44, "t": 76, "b": 108},
+            margin={"l": 78, "r": 44, "t": 76, "b": bottom_margin},
             uniformtext={"mode": "show", "minsize": 10},
         )
         fig.update_yaxes(
@@ -10706,13 +10737,19 @@ def render_waterfall_chart(title: str, steps: list[dict[str, object]], *, key: s
             tickformat="~s",
             automargin=True,
         )
-        fig.update_xaxes(tickangle=-12, automargin=True, tickfont={"size": 12})
+        fig.update_xaxes(
+            tickangle=tick_angle,
+            automargin=True,
+            tickfont={"size": 11 if compact_x_axis else 12},
+            ticklabelposition="outside bottom",
+        )
         st.session_state[f"{key}_debug"] = {
             "Waterfall": title,
             "Y-axis Min": y_min,
             "Y-axis Max": y_max,
             "Text Position": "outside",
             "Labels": ", ".join(short_labels),
+            "X-axis Mode": "compact multiline" if compact_x_axis else "standard",
         }
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=key)
         return True
@@ -11419,16 +11456,24 @@ def render_cash_flow_analysis(
             {"label": "Financing CF", "value": format_compact_currency(latest.get("Financing Cash Flow"), 2), "context": "financing", "tone": quote_tone(latest.get("Financing Cash Flow"))},
         ]
         render_metric_strip(cards, columns=6)
-        chart_cols = st.columns([1.05, 0.95], gap="small")
         chart_count = 0
-        with chart_cols[0]:
-            render_section_title("Cash Flow Bridge", f"Latest period: {latest.get('Period', 'N/A')}")
-            chart_count += int(render_waterfall_chart("Cash flow bridge", cash_flow_waterfall_steps(latest), key=f"cash_waterfall_{key_suffix}"))
-        with chart_cols[1]:
+        render_section_title("Cash Flow Bridge", f"Latest period: {latest.get('Period', 'N/A')}")
+        chart_count += int(
+            render_waterfall_chart(
+                "Cash flow bridge",
+                cash_flow_waterfall_steps(latest),
+                key=f"cash_waterfall_{key_suffix}",
+                height=500,
+                compact_x_axis=True,
+            )
+        )
+        trend_cols = st.columns([1, 1], gap="small")
+        with trend_cols[0]:
             render_section_title("Free Cash Flow Trend", "Operating cash flow, capex, and FCF")
             chart_count += int(render_bar_chart(merged, ["Operating Cash Flow", "Capital Expenditures", "Free Cash Flow"], "FCF Trend", "Amount ($B)", key=f"fcf_trend_{key_suffix}", value_scale=1_000_000_000, height=295))
-        render_section_title("Cash Conversion", "Net income versus operating cash flow and free cash flow")
-        chart_count += int(render_bar_chart(merged, ["Net Income", "Operating Cash Flow", "Free Cash Flow"], "Cash conversion", "Amount ($B)", key=f"cash_conversion_{key_suffix}", value_scale=1_000_000_000, height=250))
+        with trend_cols[1]:
+            render_section_title("Cash Conversion", "Net income versus operating cash flow and free cash flow")
+            chart_count += int(render_bar_chart(merged, ["Net Income", "Operating Cash Flow", "Free Cash Flow"], "Cash conversion", "Amount ($B)", key=f"cash_conversion_{key_suffix}", value_scale=1_000_000_000, height=295))
         if show_raw:
             with st.expander("Normalized Cash Flow Data", expanded=False):
                 render_dashboard_table(format_normalized_history_display(raw, show_change), height=360)
