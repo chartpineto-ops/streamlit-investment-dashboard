@@ -667,6 +667,8 @@ FORECAST_COLUMNS = [
     "Options Move %",
     "Options IV %",
     "Options Expiry",
+    "Implied Move",
+    "Skewed Direction",
     "30D Options Move %",
     "30D Options IV %",
     "30D Options Expiry",
@@ -702,19 +704,12 @@ FORECAST_COLUMNS = [
     "Data Notes",
 ]
 
-PINNED_FORECAST_COLUMNS = ["Rank", "Ticker", "Company"]
+PINNED_FORECAST_COLUMNS = ["Ticker"]
 DEFAULT_FORECAST_DISPLAY_COLUMNS = [
     "Last Price",
-    "30D Options Move %",
-    "30D Options IV %",
-    "30D Options Expiry",
+    "Implied Move",
+    "Skewed Direction",
     "Short %",
-    "Direction Skew",
-    "Projected Move %",
-    "Volatility Score",
-    "Confidence",
-    "Main Drivers",
-    "Data Notes",
 ]
 HISTORICAL_WINDOW_COLUMNS = {
     "20D": "20D Hist Move %",
@@ -1988,6 +1983,10 @@ def sort_descending_by_metric(
 
 
 def forecast_rank_metric(frame: pd.DataFrame) -> str:
+    if "Implied Move" in frame:
+        implied_values = frame["Implied Move"].map(parse_percent_value)
+        if implied_values.notna().any():
+            return "Implied Move"
     if "30D Options Move %" in frame:
         options_30d_values = frame["30D Options Move %"].map(parse_percent_value)
         if options_30d_values.notna().any():
@@ -2000,8 +1999,10 @@ def forecast_rank_metric(frame: pd.DataFrame) -> str:
 
 
 FORECAST_SORT_MODES = {
+    "7D Implied Move": ("Implied Move", "Projected Move %"),
+    "Implied Move": ("Implied Move", "Projected Move %"),
     "30D Options Move %": ("30D Options Move %", "Projected Move %"),
-    "Option Move %": ("30D Options Move %", "Options Move %", "Projected Move %"),
+    "Option Move %": ("Implied Move", "Options Move %", "Projected Move %"),
     "IV Rank / IV Percentile": ("30D Options IV %", "Options IV %"),
     "ATR %": ("ATR Move %",),
     "Volume Spike": ("Volume Shock",),
@@ -2029,6 +2030,8 @@ def sort_forecast_for_mode(frame: pd.DataFrame, sort_mode: str) -> pd.DataFrame:
             sorted_frame.insert(0, "Rank", range(1, len(sorted_frame) + 1))
         return sorted_frame.reindex(columns=FORECAST_COLUMNS)
     metric = sort_metric_for_mode(frame, sort_mode)
+    if metric == "Implied Move":
+        return rank_rows_by_metric_with_fallback(frame, "Implied Move", "Projected Move %").reindex(columns=FORECAST_COLUMNS)
     if metric == "30D Options Move %":
         return rank_rows_by_metric_with_fallback(frame, "30D Options Move %", "Projected Move %").reindex(columns=FORECAST_COLUMNS)
     return rank_rows_by_metric(frame, metric).reindex(columns=FORECAST_COLUMNS)
@@ -2086,6 +2089,9 @@ def rank_forecast_rows(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame.reindex(columns=FORECAST_COLUMNS)
     metric = forecast_rank_metric(frame)
+    if metric == "Implied Move":
+        ranked = rank_rows_by_metric_with_fallback(frame, "Implied Move", "Projected Move %")
+        return ranked.reindex(columns=FORECAST_COLUMNS)
     if metric == "30D Options Move %":
         ranked = rank_rows_by_metric_with_fallback(frame, "30D Options Move %", "Projected Move %")
         return ranked.reindex(columns=FORECAST_COLUMNS)
@@ -3701,6 +3707,7 @@ def empty_options_snapshot(message: str = "") -> dict:
         "move_pct": None,
         "expiry": None,
         "days_to_expiry": None,
+        "horizon_days": None,
         "contracts": 0,
         "call_iv": None,
         "put_iv": None,
@@ -3839,12 +3846,14 @@ def options_snapshot(
         else None
     )
     days_to_expiry = max((selected_date - today).days, 1)
-    move_pct = iv * math.sqrt(days_to_expiry / 365.0) * 100
+    implied_horizon_days = max(int(horizon_days or days_to_expiry), 1)
+    move_pct = iv * math.sqrt(implied_horizon_days / 365.0) * 100
     return {
         "iv": iv,
         "move_pct": move_pct,
         "expiry": selected_date,
         "days_to_expiry": days_to_expiry,
+        "horizon_days": implied_horizon_days,
         "contracts": len(nearest),
         "call_iv": call_iv,
         "put_iv": put_iv,
@@ -3924,7 +3933,7 @@ def fetch_ticker_payload(
             ticker,
             yf_ticker,
             last_price,
-            horizon_days,
+            7,
             include_options,
         )
         option_30d_data = options_snapshot(
@@ -4370,8 +4379,8 @@ def direction_skew_label(
     last_price: float | None,
 ) -> tuple[str, str]:
     for candidate, source in (
+        (option_data, "7D/nearest-expiry options call/put IV skew"),
         (option_30d_data, "30D options call/put IV skew"),
-        (option_data, "nearest-expiry options call/put IV skew"),
     ):
         skew = options_direction_skew(candidate)
         if skew:
@@ -4551,6 +4560,8 @@ def forecast_for_payload(
         "Options Move %": None if options_move is None else round(options_move, 2),
         "Options IV %": None if options_iv_pct is None else round(options_iv_pct, 2),
         "Options Expiry": option_data.get("expiry"),
+        "Implied Move": None if options_move is None else round(options_move, 2),
+        "Skewed Direction": "Neutral" if direction_skew == "Mixed" else direction_skew,
         "30D Options Move %": None if options_30d_move is None else round(options_30d_move, 2),
         "30D Options IV %": None if options_30d_iv_pct is None else round(options_30d_iv_pct, 2),
         "30D Options Expiry": option_30d_data.get("expiry"),
@@ -5391,6 +5402,7 @@ def fetch_home_stock_snapshot(ticker: str) -> tuple[dict, pd.DataFrame, datetime
         snapshot = {
             "Ticker": symbol,
             "Name": symbol,
+            "Logo URL": None,
             "Last Price": last_price,
             "Daily Change %": quote.get("change_pct"),
             "Market Cap": None,
@@ -5456,6 +5468,7 @@ def fetch_home_stock_snapshot(ticker: str) -> tuple[dict, pd.DataFrame, datetime
         snapshot = {
             "Ticker": symbol,
             "Name": info.get("longName") or info.get("shortName") or symbol,
+            "Logo URL": info.get("logo_url") or info.get("logoUrl"),
             "Last Price": last_price,
             "Daily Change %": quote.get("change_pct"),
             "Market Cap": coerce_float(info.get("marketCap") or info.get("market_cap")),
@@ -5474,7 +5487,7 @@ def fetch_home_stock_snapshot(ticker: str) -> tuple[dict, pd.DataFrame, datetime
             "IV Rank": None,
             "Next Earnings": next_company_earnings_date({"earnings_dates": earnings_dates_frame(yf_ticker)}, info),
             "Dividend Yield %": (coerce_float(info.get("dividendYield")) * 100) if coerce_float(info.get("dividendYield")) is not None else None,
-            "Short Interest %": (coerce_float(info.get("shortPercentOfFloat")) * 100) if coerce_float(info.get("shortPercentOfFloat")) is not None else None,
+            "Short Interest %": short_interest_percent(info),
             "Market Status": quote.get("market_status"),
             "Quote Label": quote.get("quote_label"),
             "Provider": (quote.get("provider") or {}).get("source_label", "Yahoo Finance/yfinance") if isinstance(quote.get("provider"), dict) else "Yahoo Finance/yfinance",
@@ -5500,6 +5513,7 @@ def fetch_home_stock_snapshot(ticker: str) -> tuple[dict, pd.DataFrame, datetime
             {
                 "Ticker": symbol,
                 "Name": symbol,
+                "Logo URL": None,
                 "Status": "Error",
                 "Message": str(exc),
             },
@@ -7916,6 +7930,98 @@ def inject_css() -> None:
                 margin: -0.1rem 0 0.45rem 0;
             }
 
+            .company-quote-header {
+                align-items: center;
+                background: linear-gradient(180deg, var(--card-bg-soft) 0%, var(--card-bg) 100%);
+                border: 1px solid var(--term-line-soft);
+                border-radius: 9px;
+                display: flex;
+                gap: 0.72rem;
+                margin: 0.65rem 0 0.72rem 0;
+                padding: 0.62rem 0.74rem;
+            }
+
+            .company-logo,
+            .company-logo-fallback {
+                align-items: center;
+                background: #071014;
+                border: 1px solid var(--term-line);
+                border-radius: 10px;
+                display: inline-flex;
+                flex: 0 0 auto;
+                height: 2.35rem;
+                justify-content: center;
+                overflow: hidden;
+                width: 2.35rem;
+            }
+
+            .company-logo img {
+                height: 100%;
+                object-fit: cover;
+                width: 100%;
+            }
+
+            .company-logo-fallback {
+                color: var(--term-amber);
+                font-size: 0.82rem;
+                font-weight: 950;
+                letter-spacing: 0;
+            }
+
+            .company-quote-main {
+                min-width: 0;
+            }
+
+            .company-quote-line {
+                align-items: baseline;
+                display: flex;
+                gap: 0.48rem;
+                min-width: 0;
+            }
+
+            .company-quote-ticker {
+                color: var(--term-text);
+                font-family: Inter, "Segoe UI", Arial, sans-serif;
+                font-size: 1.18rem;
+                font-weight: 950;
+                line-height: 1.05;
+            }
+
+            .company-quote-change {
+                border-radius: 999px;
+                font-size: 0.72rem;
+                font-weight: 900;
+                line-height: 1;
+                padding: 0.22rem 0.4rem;
+            }
+
+            .company-quote-change.good {
+                background: rgba(73, 214, 155, 0.12);
+                color: var(--term-green);
+            }
+
+            .company-quote-change.bad {
+                background: rgba(239, 111, 123, 0.12);
+                color: var(--term-red);
+            }
+
+            .company-quote-change.neutral {
+                background: rgba(157, 176, 184, 0.1);
+                color: var(--term-muted);
+            }
+
+            .company-quote-name {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.76rem;
+                font-weight: 700;
+                line-height: 1.18;
+                margin-top: 0.12rem;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
             .statement-section {
                 animation: statementFadeIn 420ms ease both;
             }
@@ -8805,13 +8911,13 @@ def inject_css() -> None:
                 border: 1px solid var(--term-line-soft);
                 border-radius: 8px;
                 margin-top: 0.15rem;
-                max-height: 33rem;
+                max-height: 27rem;
                 overflow: auto;
             }
 
             .forecast-table table {
                 border-collapse: collapse;
-                min-width: 720px;
+                min-width: 520px;
                 width: 100%;
             }
 
@@ -9618,9 +9724,9 @@ def render_volatility_summary_cards(
         valid = sorted_frame[sorted_frame[metric].map(parse_numeric_value).notna()]
         return None if valid.empty else valid.iloc[0]
 
-    top_30d = best_by_metric(forecast_df, "30D Options Move %")
-    if top_30d is None:
-        top_30d = best_by_metric(forecast_df, "Projected Move %")
+    top_implied = best_by_metric(forecast_df, "Implied Move")
+    if top_implied is None:
+        top_implied = best_by_metric(forecast_df, "Projected Move %")
     top_short = best_by_metric(forecast_df, "Short %")
     if not forecast_df.empty and "Direction Skew" in forecast_df:
         skew_series = forecast_df["Direction Skew"].astype(str).str.casefold()
@@ -9629,32 +9735,32 @@ def render_volatility_summary_cards(
     else:
         bullish_rows = pd.DataFrame()
         bearish_rows = pd.DataFrame()
-    top_bullish = best_by_metric(bullish_rows, "30D Options Move %")
+    top_bullish = best_by_metric(bullish_rows, "Implied Move")
     if top_bullish is None:
         top_bullish = best_by_metric(bullish_rows, "Projected Move %")
-    top_bearish = best_by_metric(bearish_rows, "30D Options Move %")
+    top_bearish = best_by_metric(bearish_rows, "Implied Move")
     if top_bearish is None:
         top_bearish = best_by_metric(bearish_rows, "Projected Move %")
 
-    top_30d_value = coerce_float(top_30d.get("30D Options Move %")) if top_30d is not None else None
-    if top_30d_value is None and top_30d is not None:
-        top_30d_value = coerce_float(top_30d.get("Projected Move %"))
+    top_implied_value = coerce_float(top_implied.get("Implied Move")) if top_implied is not None else None
+    if top_implied_value is None and top_implied is not None:
+        top_implied_value = coerce_float(top_implied.get("Projected Move %"))
     top_short_value = coerce_float(top_short.get("Short %")) if top_short is not None else None
-    top_bullish_move = coerce_float(top_bullish.get("30D Options Move %")) if top_bullish is not None else None
+    top_bullish_move = coerce_float(top_bullish.get("Implied Move")) if top_bullish is not None else None
     if top_bullish_move is None and top_bullish is not None:
         top_bullish_move = coerce_float(top_bullish.get("Projected Move %"))
-    top_bearish_move = coerce_float(top_bearish.get("30D Options Move %")) if top_bearish is not None else None
+    top_bearish_move = coerce_float(top_bearish.get("Implied Move")) if top_bearish is not None else None
     if top_bearish_move is None and top_bearish is not None:
         top_bearish_move = coerce_float(top_bearish.get("Projected Move %"))
-    top_move_severity = severity_level(top_30d_value or 0.0, high=12, medium=6)
+    top_move_severity = severity_level(top_implied_value or 0.0, high=12, medium=6)
     short_severity = severity_level(top_short_value or 0.0, high=20, medium=10)
     cards = [
         {
-            "label": "Highest 30D Implied Move",
-            "value": str(top_30d.get("Ticker", "N/A")) if top_30d is not None else "N/A",
+            "label": "Highest 7D Implied Move",
+            "value": str(top_implied.get("Ticker", "N/A")) if top_implied is not None else "N/A",
             "helper": (
-                f"{format_move(top_30d_value, 1)} | {top_30d.get('Company', 'Company unavailable')}"
-                if top_30d is not None
+                f"{format_move(top_implied_value, 1)} | {top_implied.get('Company', 'Company unavailable')}"
+                if top_implied is not None
                 else "No options move available"
             ),
             "class": "hot" if top_move_severity in {"high", "medium"} else "neutral",
@@ -9673,7 +9779,7 @@ def render_volatility_summary_cards(
             "label": "Most Bearish Skew",
             "value": str(top_bearish.get("Ticker", "N/A")) if top_bearish is not None else "N/A",
             "helper": (
-                f"{format_move(top_bearish_move, 1)} 30D move | Bearish skew"
+                f"{format_move(top_bearish_move, 1)} 7D move | Bearish skew"
                 if top_bearish is not None
                 else "No bearish skew detected"
             ),
@@ -9683,7 +9789,7 @@ def render_volatility_summary_cards(
             "label": "Most Bullish Skew",
             "value": str(top_bullish.get("Ticker", "N/A")) if top_bullish is not None else "N/A",
             "helper": (
-                f"{format_move(top_bullish_move, 1)} 30D move | Bullish skew"
+                f"{format_move(top_bullish_move, 1)} 7D move | Bullish skew"
                 if top_bullish is not None
                 else "No bullish skew detected"
             ),
@@ -9757,6 +9863,7 @@ def render_stress_chip_row(context: MacroContext, forecast_df: pd.DataFrame) -> 
 
 FORECAST_CURRENCY_COLUMNS = {"Last Price", "Market Cap", "Avg Dollar Volume"}
 FORECAST_MOVE_COLUMNS = {
+    "Implied Move",
     "Projected Move %",
     "Options Move %",
     "30D Options Move %",
@@ -9831,6 +9938,8 @@ def format_forecast_value(column: str, value: object) -> str:
 
 def forecast_display_label(column: str) -> str:
     return {
+        "Implied Move": "7D Implied Move",
+        "Skewed Direction": "Skewed Direction",
         "Options Move %": "Option Move %",
         "Options IV %": "IV Rank / IV %",
         "ATR Move %": "ATR %",
@@ -9859,7 +9968,7 @@ def render_forecast_table(frame: pd.DataFrame, columns: list[str]) -> None:
                 cell_class = "ticker-cell"
             elif column in FORECAST_CURRENCY_COLUMNS | FORECAST_MOVE_COLUMNS | FORECAST_PERCENT_COLUMNS | FORECAST_NUMBER_COLUMNS:
                 cell_class = "number-cell"
-            if column in {"Direction Bias", "Direction Skew"}:
+            if column in {"Direction Bias", "Direction Skew", "Skewed Direction"}:
                 tone = direction_bias_tone(raw_value)
                 value = f"<span class='bias-badge {tone}'>{value}</span>"
                 cells.append(f"<td>{value}</td>")
@@ -11927,6 +12036,44 @@ def render_stock_performance_area_chart(frame: pd.DataFrame, *, height: int = 25
     return True
 
 
+def ticker_initials(ticker: str) -> str:
+    clean = re.sub(r"[^A-Z0-9]", "", normalize_symbol(ticker) or str(ticker or "").upper())
+    return (clean[:2] or "EQ").upper()
+
+
+def render_company_quote_header(ticker: str) -> dict[str, object]:
+    snapshot, status, refreshed_at = fetch_home_stock_snapshot(ticker)
+    symbol = str(snapshot.get("Ticker") or ticker).upper()
+    company_name = str(snapshot.get("Name") or symbol)
+    day_change_pct = coerce_float(snapshot.get("Daily Change %"))
+    tone = quote_tone(day_change_pct)
+    change_label = format_percent(day_change_pct, 1, signed=True)
+    logo_url = str(snapshot.get("Logo URL") or "")
+    logo_html = (
+        f"<span class='company-logo'><img src='{html.escape(logo_url, quote=True)}' alt='{html.escape(symbol)} logo'></span>"
+        if logo_url.startswith(("http://", "https://"))
+        else f"<span class='company-logo-fallback'>{html.escape(ticker_initials(symbol))}</span>"
+    )
+    st.markdown(
+        "<div class='company-quote-header'>"
+        f"{logo_html}"
+        "<div class='company-quote-main'>"
+        "<div class='company-quote-line'>"
+        f"<span class='company-quote-ticker'>{html.escape(symbol)}</span>"
+        f"<span class='company-quote-change {tone}'>{html.escape(change_label)}</span>"
+        "</div>"
+        f"<span class='company-quote-name'>{html.escape(company_name)}</span>"
+        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    return {
+        "snapshot": snapshot,
+        "status_rows": len(status) if isinstance(status, pd.DataFrame) else 0,
+        "refreshed_at": refreshed_at,
+    }
+
+
 def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_suffix: str) -> dict[str, object]:
     with st.container(border=True):
         render_statement_section_title(
@@ -11957,6 +12104,7 @@ def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_s
         trailing_pe = coerce_float(snapshot.get("Trailing PE"))
         forward_pe = coerce_float(snapshot.get("Forward PE"))
         relative_volume = coerce_float(snapshot.get("Relative Volume"))
+        implied_move_7d = coerce_float(snapshot.get("Option Move %"))
 
         row_cols = st.columns([1.25, 1], gap="small")
         chart_rendered = False
@@ -11980,6 +12128,7 @@ def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_s
                     {"label": "Rel Volume", "value": format_number(relative_volume, 2), "context": "vs average", "tone": "hot" if relative_volume is not None and relative_volume >= 1.5 else "neutral"},
                     {"label": "Trailing P/E", "value": format_number(trailing_pe, 2), "context": "valuation"},
                     {"label": "Forward P/E", "value": format_number(forward_pe, 2), "context": "estimate"},
+                    {"label": "7D Implied Move", "value": format_move(implied_move_7d, 1), "context": "options IV"},
                     {"label": "1M Return", "value": format_percent(one_month_return, 2, signed=True), "context": "momentum", "tone": quote_tone(one_month_return)},
                 ]
             )
@@ -11996,6 +12145,7 @@ def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_s
             "range_position_pct": range_debug.get("position_pct"),
             "range_clamped": range_debug.get("clamped"),
             "range_missing": range_debug.get("missing"),
+            "implied_move_7d": implied_move_7d,
         }
 
 
@@ -12039,6 +12189,8 @@ def render_three_statement_analysis_dashboard() -> None:
             unsafe_allow_html=True,
         )
         return
+
+    header_debug = render_company_quote_header(ticker)
 
     with st.spinner(f"Fetching financial statements for {ticker}..."):
         payload = fetch_company_financials(ticker, statement_period, periods_to_show, date.today().year)
@@ -12141,9 +12293,12 @@ def render_three_statement_analysis_dashboard() -> None:
                 {"Metric": "Periods displayed", "Value": len(selected_periods)},
                 {"Metric": "Provider used", "Value": "Yahoo Finance/yfinance"},
                 {"Metric": "Cache TTL", "Value": "6 hours"},
+                {"Metric": "Company header status rows", "Value": header_debug.get("status_rows", 0)},
+                {"Metric": "Company header refreshed", "Value": header_debug.get("refreshed_at", eastern_now()).strftime("%I:%M:%S %p ET").lstrip("0") if isinstance(header_debug.get("refreshed_at"), datetime) else "N/A"},
                 {"Metric": "Animation triggered", "Value": str(section_animate)},
                 {"Metric": "Stock context chart rendered", "Value": str(stock_context_debug.get("chart_rendered", False))},
                 {"Metric": "Stock context provider", "Value": stock_context_debug.get("provider", "N/A")},
+                {"Metric": "7D implied move", "Value": format_move(stock_context_debug.get("implied_move_7d"), 1)},
                 {"Metric": "Current price", "Value": format_currency(stock_context_debug.get("current_price"), 2)},
                 {"Metric": "52-week low", "Value": format_currency(stock_context_debug.get("range_low"), 2)},
                 {"Metric": "52-week midpoint", "Value": format_currency(stock_context_debug.get("range_midpoint"), 2)},
@@ -12326,22 +12481,8 @@ def available_forecast_display_columns(
     realized_windows: list[str],
     show_backtest: bool,
 ) -> list[str]:
-    excluded = set(PINNED_FORECAST_COLUMNS)
-    if not show_30d_benchmark:
-        excluded.update(BENCHMARK_30D_COLUMNS)
-    enabled_history_columns = {
-        HISTORICAL_WINDOW_COLUMNS[window]
-        for window in realized_windows
-        if window in HISTORICAL_WINDOW_COLUMNS
-    }
-    excluded.update(
-        column
-        for column in HISTORICAL_WINDOW_COLUMNS.values()
-        if column not in enabled_history_columns
-    )
-    if not show_backtest:
-        excluded.update(BACKTEST_COLUMNS)
-    return [column for column in FORECAST_COLUMNS if column not in excluded]
+    _ = (show_30d_benchmark, realized_windows, show_backtest)
+    return [column for column in DEFAULT_FORECAST_DISPLAY_COLUMNS if column in FORECAST_COLUMNS]
 
 
 def default_feed_text() -> str:
@@ -12350,6 +12491,7 @@ def default_feed_text() -> str:
 
 def forecast_column_config() -> dict:
     move_columns = [
+        "Implied Move",
         "Projected Move %",
         "Options Move %",
         "30D Options Move %",
@@ -12439,12 +12581,14 @@ def render_volatility_radar() -> None:
             "want the first alphabetical symbols."
         ),
     )
+    if st.session_state.get("volatility_sort_mode_v1") == "30D Options Move %":
+        st.session_state["volatility_sort_mode_v1"] = "7D Implied Move"
     sort_mode = st.sidebar.selectbox(
         "Sort forecasts by",
-        ["30D Options Move %", "Option Move %", "IV Rank / IV Percentile", "ATR %", "Volume Spike", "Social Engagement", "Ticker A-Z"],
+        ["7D Implied Move", "Option Move %", "IV Rank / IV Percentile", "ATR %", "Volume Spike", "Social Engagement", "Ticker A-Z"],
         index=0,
         key="volatility_sort_mode_v1",
-        help="Metric sorting is descending. 30D Options Move % is the default monthly implied-move benchmark.",
+        help="Metric sorting is descending. 7D Implied Move is the default short-window options benchmark.",
     )
     show_debug = st.sidebar.checkbox("Show developer diagnostics", value=False)
     random_seed = st.sidebar.number_input("Random seed", min_value=1, max_value=9999, value=42, step=1)
@@ -12478,13 +12622,13 @@ def render_volatility_radar() -> None:
     st.sidebar.caption(f"{candidate_count:,} candidates; scanning {len(tickers):,} symbols this run.")
     scan_limited = candidate_count > len(tickers)
 
-    horizon_days = st.sidebar.slider("Forecast horizon (model)", min_value=1, max_value=7, value=5)
+    horizon_days = st.sidebar.slider("Forecast horizon (model / implied)", min_value=1, max_value=7, value=7)
     lookback_period = st.sidebar.selectbox("Price lookback", ["3mo", "6mo", "1y", "2y"], index=1)
     include_options = st.sidebar.checkbox("Use options implied volatility", value=True)
     st.sidebar.subheader("Volatility Setups")
     show_30d_benchmark = st.sidebar.checkbox(
-        "30D implied move benchmark",
-        value=True,
+        "Compare 30D benchmark",
+        value=False,
         disabled=not include_options,
     )
     if not include_options:
@@ -12507,9 +12651,10 @@ def render_volatility_radar() -> None:
         if column in available_table_columns
     ]
     forecast_display_columns = st.sidebar.multiselect(
-        "Highest Projected Volatility columns",
+        "Volatility table columns",
         available_table_columns,
         default=default_table_columns,
+        key="volatility_compact_columns_v1",
     )
     size_filters = st.sidebar.multiselect(
         "Market cap filter",
@@ -12585,7 +12730,7 @@ def render_volatility_radar() -> None:
             {"label": "Universe", "value": universe_preset},
             {"label": "Symbols matched", "value": f"{len(tickers):,}/{candidate_count:,}"},
             {"label": "Model horizon", "value": f"{horizon_days}D"},
-            {"label": "Implied window", "value": "30D"},
+            {"label": "Implied window", "value": "7D"},
             {"label": "Options", "value": "On" if include_options else "Off"},
             {"label": "Sort", "value": sort_mode},
             {"label": "Last refreshed", "value": refreshed_clock},
@@ -12600,8 +12745,8 @@ def render_volatility_radar() -> None:
     )
     st.markdown(
         "<div class='radar-insight'>"
-        "30D implied move estimates the market's expected price range over roughly the next month based on options pricing. "
-        "Short % estimates the percentage of float sold short. Direction skew indicates whether the volatility setup leans bullish, bearish, neutral, or mixed."
+        "7D implied move estimates the market's expected price range over roughly the next week based on options pricing. "
+        "Short % estimates the percentage of float sold short. Skewed direction indicates whether the volatility setup leans bullish, bearish, neutral, or mixed."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -12776,8 +12921,8 @@ def render_volatility_radar() -> None:
         with left_col:
             with st.container(border=True):
                 render_section_title(
-                    "Highest 30D Implied Volatility Setups",
-                    f"Sorted by {sort_column_used} descending. 30D Options Move % is expected magnitude, not direction.",
+                    "Highest 7D Implied Volatility Setups",
+                    f"Sorted by {sort_column_used} descending. 7D implied move is expected magnitude, not direction.",
                 )
                 table_columns = PINNED_FORECAST_COLUMNS + [
                     column
@@ -12790,17 +12935,14 @@ def render_volatility_radar() -> None:
             with st.container(border=True):
                 render_section_title(
                     "Tactical vs Benchmark",
-                    "30D implied move compared with model and nearest-expiry options benchmarks.",
+                    "7D implied move compared with model and optional 30D benchmark.",
                 )
                 if not ranked_df.empty:
-                    if show_30d_benchmark and "30D Options Move %" in ranked_df:
-                        chart_columns = ["30D Options Move %"]
-                    else:
-                        chart_columns = []
+                    chart_columns = ["Implied Move"] if "Implied Move" in ranked_df else []
                     if "Projected Move %" in ranked_df:
                         chart_columns.append("Projected Move %")
-                    if "Options Move %" in ranked_df:
-                        chart_columns.append("Options Move %")
+                    if show_30d_benchmark and "30D Options Move %" in ranked_df:
+                        chart_columns.append("30D Options Move %")
                     chart_df = ranked_df[["Ticker"] + chart_columns].head(10)
                     render_multi_series_chart(
                         chart_df,
