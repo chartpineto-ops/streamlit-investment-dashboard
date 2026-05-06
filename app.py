@@ -8307,8 +8307,8 @@ def inject_css() -> None:
                 background: #101d22;
                 border: 1px solid var(--term-line-soft);
                 border-radius: 999px;
-                height: 0.78rem;
-                margin-top: 1.55rem;
+                height: 0.62rem;
+                margin-top: 1.38rem;
                 overflow: visible;
                 position: relative;
             }
@@ -8324,47 +8324,66 @@ def inject_css() -> None:
                 align-items: center;
                 display: flex;
                 flex-direction: column;
-                gap: 0.1rem;
+                gap: 0.18rem;
                 left: var(--marker-pct);
                 position: absolute;
-                top: -1.42rem;
-                transform: translateX(var(--marker-shift));
+                top: -1.22rem;
+                transform: translateX(-50%);
                 width: max-content;
                 z-index: 2;
             }
 
             .stock-range-current-label {
-                background: #d7e7e9;
-                border: 1px solid rgba(215, 231, 233, 0.7);
+                background: #0b171c;
+                border: 1px solid rgba(154, 223, 255, 0.42);
                 border-radius: 999px;
-                color: #071014;
+                color: var(--term-text);
                 font-family: Consolas, "Lucida Console", "Courier New", monospace;
-                font-size: 0.58rem;
+                font-size: 0.56rem;
                 font-weight: 900;
                 line-height: 1;
-                padding: 0.2rem 0.38rem;
+                padding: 0.17rem 0.34rem;
                 white-space: nowrap;
             }
 
             .stock-range-pin {
-                background: #e4eef0;
-                border: 2px solid #071014;
+                background: var(--term-text);
+                border: 1px solid #071014;
                 border-radius: 999px;
-                box-shadow: 0 0 0 2px rgba(94, 199, 232, 0.4);
-                height: 1.02rem;
-                width: 1rem;
+                box-shadow: 0 0 0 2px rgba(94, 199, 232, 0.32);
+                height: 0.44rem;
+                width: 0.44rem;
             }
 
             .stock-range-tick {
-                background: #e4eef0;
+                background: var(--term-text);
                 border-radius: 999px;
-                height: 1.25rem;
+                height: 1.0rem;
                 left: var(--marker-pct);
                 position: absolute;
-                top: -0.24rem;
+                top: 50%;
                 transform: translateX(-50%);
-                width: 0.14rem;
+                width: 0.1rem;
                 z-index: 1;
+            }
+
+            .stock-range-current.edge-left {
+                left: 0.16rem;
+                transform: translateX(0);
+            }
+
+            .stock-range-current.edge-left .stock-range-pin {
+                transform: translateX(calc(var(--marker-pct) - 0.16rem));
+            }
+
+            .stock-range-current.edge-right {
+                left: auto;
+                right: 0.16rem;
+                transform: translateX(0);
+            }
+
+            .stock-range-current.edge-right .stock-range-pin {
+                transform: translateX(calc(var(--marker-pct) - 100% + 0.16rem));
             }
 
             .stock-range-labels {
@@ -8383,17 +8402,6 @@ def inject_css() -> None:
 
             .stock-range-labels span:nth-child(3) {
                 text-align: right;
-            }
-
-            .stock-range-sub {
-                color: var(--term-muted);
-                display: block;
-                font-family: Consolas, "Lucida Console", "Courier New", monospace;
-                font-size: 0.58rem;
-                font-weight: 800;
-                margin-top: 0.18rem;
-                text-align: center;
-                text-transform: uppercase;
             }
 
             @keyframes statementFadeIn {
@@ -11940,10 +11948,10 @@ def render_stock_stat_grid(items: list[dict[str, object]]) -> None:
 
 def range_marker_shift(position: float) -> str:
     if position <= 8:
-        return "0%"
+        return "edge-left"
     if position >= 92:
-        return "-100%"
-    return "-50%"
+        return "edge-right"
+    return "center"
 
 
 def render_stock_range_graphic(label: str, value: float | None, low: float | None, high: float | None, *, ticker: str = "") -> dict[str, object]:
@@ -11962,7 +11970,7 @@ def render_stock_range_graphic(label: str, value: float | None, low: float | Non
     raw_position = (float(value) - float(low)) / (float(high) - float(low)) * 100
     clamped = raw_position != position
     midpoint = (float(low) + float(high)) / 2
-    marker_shift = range_marker_shift(position)
+    marker_class = range_marker_shift(position)
     ticker_label = normalize_symbol(ticker)
     marker_label = f"{ticker_label} {format_currency(value, 2)}".strip()
     st.markdown(
@@ -11971,10 +11979,10 @@ def render_stock_range_graphic(label: str, value: float | None, low: float | Non
         f"<span>{html.escape(label)}</span>"
         f"<span>{html.escape(format_percent(position, 1))} of range</span>"
         "</div>"
-        f"<div class='stock-range-track' style='--marker-pct: {position:.2f}%; --marker-shift: {marker_shift};'>"
+        f"<div class='stock-range-track' style='--marker-pct: {position:.2f}%;'>"
         "<div class='stock-range-fill'></div>"
         "<div class='stock-range-tick'></div>"
-        "<div class='stock-range-current'>"
+        f"<div class='stock-range-current {marker_class}'>"
         f"<span class='stock-range-current-label'>{html.escape(marker_label)}</span>"
         "<span class='stock-range-pin'></span>"
         "</div>"
@@ -11984,7 +11992,6 @@ def render_stock_range_graphic(label: str, value: float | None, low: float | Non
         f"<span>{html.escape(format_currency(midpoint, 2))}</span>"
         f"<span>{html.escape(format_currency(high, 2))}</span>"
         "</div>"
-        f"<span class='stock-range-sub'>{html.escape(marker_label)} | {html.escape(format_percent(position, 1))} of 52W range</span>"
         "</div>",
         unsafe_allow_html=True,
     )
