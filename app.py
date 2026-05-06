@@ -3708,6 +3708,9 @@ def empty_options_snapshot(message: str = "") -> dict:
         "expiry": None,
         "days_to_expiry": None,
         "horizon_days": None,
+        "atm_strike": None,
+        "atm_call_iv": None,
+        "atm_put_iv": None,
         "contracts": 0,
         "call_iv": None,
         "put_iv": None,
@@ -3765,6 +3768,30 @@ def short_interest_percent(info: dict) -> float | None:
     return None
 
 
+def company_logo_url(info: dict) -> str | None:
+    if not isinstance(info, dict):
+        return None
+    for key in ("logo_url", "logoUrl", "logoURL"):
+        value = str(info.get(key) or "").strip()
+        if value.startswith(("http://", "https://")):
+            return value
+    website = str(
+        info.get("website")
+        or info.get("websiteUrl")
+        or info.get("irWebsite")
+        or info.get("companyOfficersWebsite")
+        or ""
+    ).strip()
+    if not website:
+        return None
+    parsed = urlparse(website if "://" in website else f"https://{website}")
+    domain = (parsed.netloc or parsed.path).split("/")[0].strip().lower()
+    domain = domain[4:] if domain.startswith("www.") else domain
+    if not domain or "." not in domain:
+        return None
+    return f"https://logo.clearbit.com/{domain}"
+
+
 def options_snapshot(
     ticker: str,
     yf_ticker: yf.Ticker,
@@ -3793,12 +3820,10 @@ def options_snapshot(
         return empty_options_snapshot("No future options expirations")
 
     parsed_expirations.sort(key=lambda item: item[0])
-    selected_date, selected_expiration = parsed_expirations[-1]
-    for expiration_date, expiration in parsed_expirations:
-        if expiration_date >= target_date:
-            selected_date = expiration_date
-            selected_expiration = expiration
-            break
+    selected_date, selected_expiration = min(
+        parsed_expirations,
+        key=lambda item: (abs((item[0] - target_date).days), item[0]),
+    )
 
     try:
         chain = yf_ticker.option_chain(selected_expiration)
@@ -3827,14 +3852,33 @@ def options_snapshot(
         return empty_options_snapshot("No usable implied volatility")
 
     options["distance"] = (options["strike"] - last_price).abs()
-    nearest = options.nsmallest(min(8, len(options)), "distance").copy()
-    weight = pd.Series(1.0, index=nearest.index)
-    for column in ("openInterest", "volume"):
-        if column in nearest:
-            weight += pd.to_numeric(nearest[column], errors="coerce").fillna(0).clip(lower=0)
-    iv = float((nearest["impliedVolatility"] * weight).sum() / weight.sum())
     calls = options[options["optionSide"].eq("call")].copy()
     puts = options[options["optionSide"].eq("put")].copy()
+    nearest_call = calls.nsmallest(1, "distance") if not calls.empty else pd.DataFrame()
+    nearest_put = puts.nsmallest(1, "distance") if not puts.empty else pd.DataFrame()
+    atm_call_iv = coerce_float(nearest_call.iloc[0].get("impliedVolatility")) if not nearest_call.empty else None
+    atm_put_iv = coerce_float(nearest_put.iloc[0].get("impliedVolatility")) if not nearest_put.empty else None
+    atm_strikes = [
+        value
+        for value in (
+            coerce_float(nearest_call.iloc[0].get("strike")) if not nearest_call.empty else None,
+            coerce_float(nearest_put.iloc[0].get("strike")) if not nearest_put.empty else None,
+        )
+        if value is not None
+    ]
+    atm_strike = sum(atm_strikes) / len(atm_strikes) if atm_strikes else None
+    atm_iv_values = [value for value in (atm_call_iv, atm_put_iv) if value is not None and 0 < value < 5]
+    if atm_iv_values:
+        iv = float(sum(atm_iv_values) / len(atm_iv_values))
+        nearest_contract_count = len(atm_iv_values)
+    else:
+        nearest = options.nsmallest(min(8, len(options)), "distance").copy()
+        weight = pd.Series(1.0, index=nearest.index)
+        for column in ("openInterest", "volume"):
+            if column in nearest:
+                weight += pd.to_numeric(nearest[column], errors="coerce").fillna(0).clip(lower=0)
+        iv = float((nearest["impliedVolatility"] * weight).sum() / weight.sum())
+        nearest_contract_count = len(nearest)
     call_iv = weighted_option_iv(calls)
     put_iv = weighted_option_iv(puts)
     iv_skew_pct = (call_iv - put_iv) * 100 if call_iv is not None and put_iv is not None else None
@@ -3846,15 +3890,18 @@ def options_snapshot(
         else None
     )
     days_to_expiry = max((selected_date - today).days, 1)
-    implied_horizon_days = max(int(horizon_days or days_to_expiry), 1)
-    move_pct = iv * math.sqrt(implied_horizon_days / 365.0) * 100
+    requested_horizon_days = max(int(horizon_days or days_to_expiry), 1)
+    move_pct = iv * math.sqrt(days_to_expiry / 365.0) * 100
     return {
         "iv": iv,
         "move_pct": move_pct,
         "expiry": selected_date,
         "days_to_expiry": days_to_expiry,
-        "horizon_days": implied_horizon_days,
-        "contracts": len(nearest),
+        "horizon_days": requested_horizon_days,
+        "atm_strike": atm_strike,
+        "atm_call_iv": atm_call_iv,
+        "atm_put_iv": atm_put_iv,
+        "contracts": nearest_contract_count,
         "call_iv": call_iv,
         "put_iv": put_iv,
         "iv_skew_pct": iv_skew_pct,
@@ -5404,6 +5451,7 @@ def fetch_home_stock_snapshot(ticker: str) -> tuple[dict, pd.DataFrame, datetime
             "Name": symbol,
             "Logo URL": None,
             "Last Price": last_price,
+            "Previous Close": quote.get("previous_close"),
             "Daily Change %": quote.get("change_pct"),
             "Market Cap": None,
             "Volume": volume,
@@ -5417,8 +5465,12 @@ def fetch_home_stock_snapshot(ticker: str) -> tuple[dict, pd.DataFrame, datetime
             "Analyst Rating": "N/A",
             "Avg Target": None,
             "Option Move %": None,
+            "7D Implied Move %": None,
             "IV %": None,
+            "7D IV %": None,
             "IV Rank": None,
+            "Options Expiry Used": None,
+            "ATM Strike Used": None,
             "Next Earnings": None,
             "Dividend Yield %": None,
             "Short Interest %": None,
@@ -5468,8 +5520,9 @@ def fetch_home_stock_snapshot(ticker: str) -> tuple[dict, pd.DataFrame, datetime
         snapshot = {
             "Ticker": symbol,
             "Name": info.get("longName") or info.get("shortName") or symbol,
-            "Logo URL": info.get("logo_url") or info.get("logoUrl"),
+            "Logo URL": company_logo_url(info),
             "Last Price": last_price,
+            "Previous Close": quote.get("previous_close") or coerce_float(info.get("previousClose") or info.get("regularMarketPreviousClose")),
             "Daily Change %": quote.get("change_pct"),
             "Market Cap": coerce_float(info.get("marketCap") or info.get("market_cap")),
             "Volume": volume,
@@ -5483,8 +5536,15 @@ def fetch_home_stock_snapshot(ticker: str) -> tuple[dict, pd.DataFrame, datetime
             "Analyst Rating": str(info.get("recommendationKey") or "N/A").replace("_", " ").title(),
             "Avg Target": coerce_float(info.get("targetMeanPrice")),
             "Option Move %": coerce_float(option_snapshot.get("move_pct")),
+            "7D Implied Move %": coerce_float(option_snapshot.get("move_pct")),
             "IV %": (coerce_float(option_snapshot.get("iv")) * 100) if coerce_float(option_snapshot.get("iv")) is not None else None,
+            "7D IV %": (coerce_float(option_snapshot.get("iv")) * 100) if coerce_float(option_snapshot.get("iv")) is not None else None,
             "IV Rank": None,
+            "Options Expiry Used": option_snapshot.get("expiry"),
+            "Options Days To Expiry": option_snapshot.get("days_to_expiry"),
+            "ATM Strike Used": option_snapshot.get("atm_strike"),
+            "ATM Call IV %": (coerce_float(option_snapshot.get("atm_call_iv")) * 100) if coerce_float(option_snapshot.get("atm_call_iv")) is not None else None,
+            "ATM Put IV %": (coerce_float(option_snapshot.get("atm_put_iv")) * 100) if coerce_float(option_snapshot.get("atm_put_iv")) is not None else None,
             "Next Earnings": next_company_earnings_date({"earnings_dates": earnings_dates_frame(yf_ticker)}, info),
             "Dividend Yield %": (coerce_float(info.get("dividendYield")) * 100) if coerce_float(info.get("dividendYield")) is not None else None,
             "Short Interest %": short_interest_percent(info),
@@ -8022,6 +8082,154 @@ def inject_css() -> None:
                 white-space: nowrap;
             }
 
+            .company-quote-price {
+                color: var(--term-text);
+                display: block;
+                font-family: Consolas, "Lucida Console", "Courier New", monospace;
+                font-size: 0.78rem;
+                font-weight: 900;
+                line-height: 1.12;
+                margin-top: 0.14rem;
+            }
+
+            .entry-signal-card,
+            .latest-earnings-card {
+                background: linear-gradient(180deg, var(--card-bg-soft) 0%, var(--card-bg) 100%);
+                border: 1px solid var(--term-line-soft);
+                border-radius: 9px;
+                margin: 0.55rem 0 0.72rem 0;
+                padding: 0.66rem 0.76rem;
+            }
+
+            .entry-signal-top,
+            .latest-earnings-top {
+                align-items: flex-start;
+                display: flex;
+                gap: 0.65rem;
+                justify-content: space-between;
+            }
+
+            .entry-signal-label,
+            .latest-earnings-title {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.62rem;
+                font-weight: 950;
+                text-transform: uppercase;
+            }
+
+            .entry-signal-value {
+                color: var(--term-text);
+                display: block;
+                font-family: Inter, "Segoe UI", Arial, sans-serif;
+                font-size: 1rem;
+                font-weight: 950;
+                margin-top: 0.14rem;
+            }
+
+            .entry-signal-pill,
+            .earnings-badge {
+                border-radius: 999px;
+                font-size: 0.62rem;
+                font-weight: 950;
+                padding: 0.2rem 0.42rem;
+                text-transform: uppercase;
+                white-space: nowrap;
+            }
+
+            .entry-signal-pill.good,
+            .earnings-badge.good {
+                background: rgba(73, 214, 155, 0.12);
+                border: 1px solid rgba(73, 214, 155, 0.38);
+                color: var(--term-green);
+            }
+
+            .entry-signal-pill.bad,
+            .earnings-badge.bad {
+                background: rgba(239, 111, 123, 0.12);
+                border: 1px solid rgba(239, 111, 123, 0.38);
+                color: var(--term-red);
+            }
+
+            .entry-signal-pill.warn,
+            .earnings-badge.warn {
+                background: rgba(213, 197, 111, 0.12);
+                border: 1px solid rgba(213, 197, 111, 0.38);
+                color: #e6d36f;
+            }
+
+            .entry-signal-pill.neutral,
+            .earnings-badge.neutral {
+                background: rgba(157, 176, 184, 0.1);
+                border: 1px solid rgba(157, 176, 184, 0.28);
+                color: var(--term-muted);
+            }
+
+            .entry-signal-rationale {
+                color: var(--term-muted);
+                font-size: 0.72rem;
+                font-weight: 700;
+                line-height: 1.35;
+                margin: 0.42rem 0 0 0;
+            }
+
+            .entry-signal-metrics,
+            .latest-earnings-grid {
+                display: grid;
+                gap: 0.42rem;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                margin-top: 0.52rem;
+            }
+
+            .entry-signal-metric,
+            .latest-earnings-metric {
+                background: #071014;
+                border: 1px solid var(--term-line-soft);
+                border-radius: 7px;
+                padding: 0.45rem 0.5rem;
+            }
+
+            .entry-signal-metric span,
+            .latest-earnings-metric span {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.56rem;
+                font-weight: 900;
+                text-transform: uppercase;
+            }
+
+            .entry-signal-metric strong,
+            .latest-earnings-metric strong {
+                color: var(--term-text);
+                display: block;
+                font-family: Consolas, "Lucida Console", "Courier New", monospace;
+                font-size: 0.76rem;
+                font-weight: 900;
+                margin-top: 0.1rem;
+            }
+
+            .latest-earnings-headerline {
+                align-items: center;
+                display: flex;
+                gap: 0.5rem;
+                justify-content: flex-end;
+            }
+
+            .latest-earnings-subtitle {
+                color: var(--term-muted);
+                font-size: 0.68rem;
+                font-weight: 800;
+                margin-top: 0.12rem;
+            }
+
+            .earnings-compare-row {
+                color: var(--term-muted);
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.28rem;
+                margin-top: 0.3rem;
+            }
+
             .statement-section {
                 animation: statementFadeIn 420ms ease both;
             }
@@ -8402,6 +8610,17 @@ def inject_css() -> None:
 
             .stock-range-labels span:nth-child(3) {
                 text-align: right;
+            }
+
+            .stock-range-labels small {
+                color: var(--term-muted);
+                display: block;
+                font-family: Inter, "Segoe UI", Arial, sans-serif;
+                font-size: 0.46rem;
+                font-weight: 900;
+                letter-spacing: 0.02em;
+                line-height: 1.05;
+                text-transform: uppercase;
             }
 
             @keyframes statementFadeIn {
@@ -11947,9 +12166,9 @@ def render_stock_stat_grid(items: list[dict[str, object]]) -> None:
 
 
 def range_marker_shift(position: float) -> str:
-    if position <= 8:
+    if position <= 10:
         return "edge-left"
-    if position >= 92:
+    if position >= 90:
         return "edge-right"
     return "center"
 
@@ -11988,9 +12207,9 @@ def render_stock_range_graphic(label: str, value: float | None, low: float | Non
         "</div>"
         "</div>"
         "<div class='stock-range-labels'>"
-        f"<span>{html.escape(format_currency(low, 2))}</span>"
-        f"<span>{html.escape(format_currency(midpoint, 2))}</span>"
-        f"<span>{html.escape(format_currency(high, 2))}</span>"
+        f"<span><small>52W Low</small>{html.escape(format_currency(low, 2))}</span>"
+        f"<span><small>Midpoint</small>{html.escape(format_currency(midpoint, 2))}</span>"
+        f"<span><small>52W High</small>{html.escape(format_currency(high, 2))}</span>"
         "</div>"
         "</div>",
         unsafe_allow_html=True,
@@ -12053,6 +12272,7 @@ def render_company_quote_header(ticker: str) -> dict[str, object]:
     symbol = str(snapshot.get("Ticker") or ticker).upper()
     company_name = str(snapshot.get("Name") or symbol)
     day_change_pct = coerce_float(snapshot.get("Daily Change %"))
+    last_price = coerce_float(snapshot.get("Last Price"))
     tone = quote_tone(day_change_pct)
     change_label = format_percent(day_change_pct, 1, signed=True)
     logo_url = str(snapshot.get("Logo URL") or "")
@@ -12070,6 +12290,7 @@ def render_company_quote_header(ticker: str) -> dict[str, object]:
         f"<span class='company-quote-change {tone}'>{html.escape(change_label)}</span>"
         "</div>"
         f"<span class='company-quote-name'>{html.escape(company_name)}</span>"
+        f"<span class='company-quote-price'>{html.escape(format_currency(last_price, 2))}</span>"
         "</div>"
         "</div>",
         unsafe_allow_html=True,
@@ -12078,10 +12299,486 @@ def render_company_quote_header(ticker: str) -> dict[str, object]:
         "snapshot": snapshot,
         "status_rows": len(status) if isinstance(status, pd.DataFrame) else 0,
         "refreshed_at": refreshed_at,
+        "status": status,
     }
 
 
-def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_suffix: str) -> dict[str, object]:
+def history_close_series(history: pd.DataFrame) -> pd.Series:
+    if not isinstance(history, pd.DataFrame) or history.empty or "Close" not in history:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(history["Close"], errors="coerce").dropna()
+
+
+def rsi_from_history(history: pd.DataFrame, period: int = 14) -> float | None:
+    close = history_close_series(history)
+    if len(close) <= period:
+        return None
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(period).mean()
+    loss = (-delta.clip(upper=0)).rolling(period).mean()
+    rs = gain / loss.replace(0, pd.NA)
+    rsi = 100 - (100 / (1 + rs))
+    return coerce_float(rsi.dropna().iloc[-1]) if not rsi.dropna().empty else None
+
+
+def latest_moving_average(history: pd.DataFrame, window: int) -> float | None:
+    close = history_close_series(history)
+    if len(close) < window:
+        return None
+    return coerce_float(close.tail(window).mean())
+
+
+def entry_quality_context(ticker: str, snapshot: dict, history: pd.DataFrame) -> dict[str, object]:
+    symbol = normalize_symbol(ticker) or str(ticker or "").upper()
+    last_price = coerce_float(snapshot.get("Last Price"))
+    low_52w = coerce_float(snapshot.get("52W Low"))
+    high_52w = coerce_float(snapshot.get("52W High"))
+    range_pct = range_position(last_price, low_52w, high_52w)
+    rsi = rsi_from_history(history)
+    sma_50 = latest_moving_average(history, 50)
+    sma_200 = latest_moving_average(history, 200)
+    revenue_growth = coerce_float(snapshot.get("Revenue Growth %"))
+    avg_target = coerce_float(snapshot.get("Avg Target"))
+    analyst_upside = safe_ratio(avg_target - last_price, last_price, 100) if avg_target is not None and last_price not in (None, 0) else None
+    one_month_return = trailing_return_from_history(history, 21)
+    implied_move = coerce_float(snapshot.get("7D Implied Move %") or snapshot.get("Option Move %"))
+
+    score = 0
+    factors: list[dict[str, str]] = []
+    key_metric_count = 0
+    if range_pct is not None:
+        key_metric_count += 1
+        if range_pct < 65:
+            score += 2
+            factors.append({"label": "52W Range", "value": format_percent(range_pct, 1), "tone": "good"})
+        elif range_pct < 85:
+            score += 1
+            factors.append({"label": "52W Range", "value": format_percent(range_pct, 1), "tone": "neutral"})
+        elif range_pct > 90:
+            score -= 2
+            factors.append({"label": "52W Range", "value": format_percent(range_pct, 1), "tone": "bad"})
+        else:
+            factors.append({"label": "52W Range", "value": format_percent(range_pct, 1), "tone": "warn"})
+    if rsi is not None:
+        key_metric_count += 1
+        if rsi < 30:
+            score += 2
+        elif rsi <= 60:
+            score += 1
+        elif rsi > 70:
+            score -= 2
+        factors.append({"label": "RSI", "value": format_number(rsi, 1), "tone": "bad" if rsi > 70 else "good" if rsi < 60 else "warn"})
+    for label, average in (("50D SMA", sma_50), ("200D SMA", sma_200)):
+        if average is None or last_price is None:
+            continue
+        key_metric_count += 1
+        is_above = last_price > average
+        score += 1 if is_above else -1
+        factors.append({"label": label, "value": "Above" if is_above else "Below", "tone": "good" if is_above else "bad"})
+    if revenue_growth is not None:
+        score += 1 if revenue_growth > 0 else -1
+        factors.append({"label": "Rev Growth", "value": format_percent(revenue_growth, 1, signed=True), "tone": quote_tone(revenue_growth)})
+    if analyst_upside is not None:
+        score += 1 if analyst_upside > 5 else -1 if analyst_upside < 0 else 0
+        factors.append({"label": "Analyst Upside", "value": format_percent(analyst_upside, 1, signed=True), "tone": quote_tone(analyst_upside)})
+    if one_month_return is not None:
+        if 0 < one_month_return < 25:
+            score += 1
+        elif one_month_return > 35:
+            score -= 1
+        factors.append({"label": "1M Momentum", "value": format_percent(one_month_return, 1, signed=True), "tone": quote_tone(one_month_return)})
+    if implied_move is not None:
+        if implied_move > 20 and (one_month_return is None or one_month_return <= 0):
+            score -= 1
+        factors.append({"label": "7D Move", "value": format_move(implied_move, 1), "tone": "warn" if implied_move > 15 else "neutral"})
+
+    if key_metric_count < 2:
+        label = "Insufficient Data"
+        tone = "neutral"
+        rationale = f"{symbol} does not have enough price-range, RSI, or moving-average data for a reliable setup signal."
+    elif score >= 4:
+        label = "Strong Entry"
+        tone = "good"
+        rationale = f"{symbol} has a favorable setup across available range, trend, and momentum checks."
+    elif score >= 2:
+        label = "Watchlist Entry"
+        tone = "good"
+        rationale = f"{symbol} has several supportive setup signals, but not enough confirmation for the strongest dashboard signal."
+    elif score <= -4:
+        label = "Avoid / Weak Setup"
+        tone = "bad"
+        rationale = f"{symbol} has multiple unfavorable setup signals across available price and trend checks."
+    elif score <= -2:
+        label = "Stretched / Wait for Pullback"
+        tone = "bad"
+        rationale = f"{symbol} appears extended or technically weaker on the available setup checks."
+    else:
+        label = "Neutral / Mixed Setup"
+        tone = "warn"
+        rationale = f"{symbol} has a mixed setup across the available range, trend, and momentum signals."
+    return {
+        "label": label,
+        "tone": tone,
+        "score": score,
+        "rationale": rationale,
+        "metrics": factors[:8],
+        "rsi": rsi,
+        "sma_50": sma_50,
+        "sma_200": sma_200,
+        "analyst_upside": analyst_upside,
+        "range_pct": range_pct,
+    }
+
+
+def render_entry_quality_signal(ticker: str, snapshot: dict, history: pd.DataFrame) -> dict[str, object]:
+    context = entry_quality_context(ticker, snapshot, history)
+    metric_html = "".join(
+        "<div class='entry-signal-metric'>"
+        f"<span>{html.escape(str(item.get('label', '')))}</span>"
+        f"<strong>{html.escape(str(item.get('value', 'N/A')))}</strong>"
+        "</div>"
+        for item in context.get("metrics", [])
+    )
+    st.markdown(
+        "<div class='entry-signal-card'>"
+        "<div class='entry-signal-top'>"
+        "<div>"
+        "<span class='entry-signal-label'>Entry Quality Signal</span>"
+        f"<span class='entry-signal-value'>{html.escape(str(context.get('label', 'N/A')))}</span>"
+        "</div>"
+        f"<span class='entry-signal-pill {html.escape(str(context.get('tone', 'neutral')))}'>Dashboard signal</span>"
+        "</div>"
+        f"<p class='entry-signal-rationale'>{html.escape(str(context.get('rationale', '')))} This is not personalized investment advice.</p>"
+        f"<div class='entry-signal-metrics'>{metric_html}</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    return context
+
+
+def render_company_options_metrics(snapshot: dict) -> None:
+    expiry = snapshot.get("Options Expiry Used")
+    expiry_text = expiry.strftime("%Y-%m-%d") if isinstance(expiry, date) else str(expiry or "N/A")
+    render_metric_strip(
+        [
+            {"label": "7D IV", "value": format_percent(snapshot.get("7D IV %"), 1), "context": "ATM annualized"},
+            {"label": "7D Implied Move", "value": format_move(snapshot.get("7D Implied Move %") or snapshot.get("Option Move %"), 1), "context": "expiry-adjusted"},
+            {"label": "Expiry Used", "value": expiry_text, "context": f"{snapshot.get('Options Days To Expiry') or 'N/A'} days"},
+            {"label": "ATM Strike", "value": format_currency(snapshot.get("ATM Strike Used"), 2), "context": "nearest strike"},
+        ],
+        columns=4,
+    )
+
+
+def earnings_badge(delta: float | None, pct: float | None, *, unit: str) -> str:
+    if delta is None:
+        return "<span class='earnings-badge neutral'>Estimate unavailable</span>"
+    if abs(delta) < 1e-9:
+        return "<span class='earnings-badge neutral'>In line</span>"
+    tone = "good" if delta > 0 else "bad"
+    verb = "Beat" if delta > 0 else "Missed"
+    if unit == "eps":
+        amount = format_currency(abs(delta), 2)
+    else:
+        amount = format_compact_currency(abs(delta), 2)
+    pct_text = f" ({format_percent(abs(pct), 1)})" if pct is not None else ""
+    return f"<span class='earnings-badge {tone}'>{verb} by {html.escape(amount)}{html.escape(pct_text)}</span>"
+
+
+def yoy_badge(delta: float | None, pct: float | None, *, unit: str) -> str:
+    if delta is None:
+        return "<span class='earnings-badge neutral'>Prior-year unavailable</span>"
+    if abs(delta) < 1e-9:
+        return "<span class='earnings-badge neutral'>Flat YoY</span>"
+    tone = "good" if delta > 0 else "bad"
+    verb = "Up YoY" if delta > 0 else "Down YoY"
+    amount = format_currency(abs(delta), 2) if unit == "eps" else format_compact_currency(abs(delta), 2)
+    pct_text = f" ({format_percent(abs(pct), 1)})" if pct is not None else ""
+    return f"<span class='earnings-badge {tone}'>{verb} {html.escape(amount)}{html.escape(pct_text)}</span>"
+
+
+def latest_past_earnings_date(payload: dict) -> date | None:
+    frame = payload.get("earnings_dates", pd.DataFrame())
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return None
+    working = frame.copy()
+    if "Earnings Date" not in working.columns:
+        working = working.reset_index().rename(columns={"index": "Earnings Date"})
+    date_col = "Earnings Date" if "Earnings Date" in working.columns else working.columns[0]
+    parsed = pd.to_datetime(working[date_col], errors="coerce", utc=True).dt.tz_convert(None)
+    past = parsed[parsed <= pd.Timestamp.now()]
+    if past.empty:
+        return None
+    return past.max().date()
+
+
+def expectation_row_for_period(earnings_expectations: pd.DataFrame, period: pd.Timestamp | None) -> pd.Series:
+    if period is None or not isinstance(earnings_expectations, pd.DataFrame) or earnings_expectations.empty:
+        return pd.Series(dtype=object)
+    quarter_label = f"{period.year} Q{period.quarter}"
+    if "Quarter" in earnings_expectations:
+        matched = earnings_expectations[earnings_expectations["Quarter"].astype(str).eq(quarter_label)]
+        if not matched.empty:
+            return matched.iloc[0]
+    return pd.Series(dtype=object)
+
+
+def prior_year_period_row(frame: pd.DataFrame, latest_period: pd.Timestamp | None) -> pd.Series:
+    if frame.empty or latest_period is None or "Period Date" not in frame:
+        return pd.Series(dtype=object)
+    ordered = frame.sort_values("Period Date").reset_index(drop=True)
+    dates = pd.to_datetime(ordered["Period Date"], errors="coerce")
+    same_quarter = ordered[(dates.dt.year == latest_period.year - 1) & (dates.dt.quarter == latest_period.quarter)]
+    if not same_quarter.empty:
+        return same_quarter.iloc[-1]
+    latest_matches = ordered[dates.eq(latest_period)]
+    if not latest_matches.empty:
+        latest_index = int(latest_matches.index[-1])
+        if latest_index >= 4:
+            return ordered.iloc[latest_index - 4]
+    return pd.Series(dtype=object)
+
+
+def latest_quarter_earnings_summary(ticker: str, income: pd.DataFrame, payload: dict, snapshot: dict) -> dict[str, object]:
+    if income.empty:
+        return {"available": False}
+    ordered = income.sort_values("Period Date")
+    latest = ordered.iloc[-1]
+    period_date = pd.Timestamp(latest.get("Period Date")) if latest.get("Period Date") is not None else None
+    expectation = expectation_row_for_period(payload.get("earnings_expectations", pd.DataFrame()), period_date)
+    prior = prior_year_period_row(ordered, period_date)
+    revenue = coerce_float(latest.get("Revenue"))
+    eps = coerce_float(latest.get("EPS"))
+    consensus_eps = coerce_float(expectation.get("EPS Estimate")) if not expectation.empty else None
+    reported_eps = coerce_float(expectation.get("Reported EPS")) if not expectation.empty else None
+    eps_actual = reported_eps if reported_eps is not None else eps
+    consensus_revenue = None
+    prior_revenue = coerce_float(prior.get("Revenue")) if not prior.empty else None
+    prior_eps = coerce_float(prior.get("EPS")) if not prior.empty else None
+    eps_surprise = eps_actual - consensus_eps if eps_actual is not None and consensus_eps is not None else None
+    eps_surprise_pct = safe_ratio(eps_surprise, abs(consensus_eps), 100) if eps_surprise is not None and consensus_eps not in (None, 0) else None
+    revenue_surprise = revenue - consensus_revenue if revenue is not None and consensus_revenue is not None else None
+    revenue_surprise_pct = safe_ratio(revenue_surprise, consensus_revenue, 100) if revenue_surprise is not None and consensus_revenue not in (None, 0) else None
+    eps_yoy = eps_actual - prior_eps if eps_actual is not None and prior_eps is not None else None
+    eps_yoy_pct = safe_ratio(eps_yoy, abs(prior_eps), 100) if eps_yoy is not None and prior_eps not in (None, 0) else None
+    revenue_yoy = revenue - prior_revenue if revenue is not None and prior_revenue is not None else None
+    revenue_yoy_pct = safe_ratio(revenue_yoy, prior_revenue, 100) if revenue_yoy is not None and prior_revenue not in (None, 0) else None
+    announce_date = None
+    if not expectation.empty:
+        announce_date = parse_date(expectation.get("Report Date"))
+    announce_date = announce_date or latest_past_earnings_date(payload) or (period_date.date() if isinstance(period_date, pd.Timestamp) else None)
+    return {
+        "available": True,
+        "ticker": normalize_symbol(ticker),
+        "company_name": snapshot.get("Name") or ticker,
+        "logo_url": snapshot.get("Logo URL"),
+        "period": latest.get("Period"),
+        "period_date": period_date,
+        "announce_date": announce_date,
+        "revenue": revenue,
+        "eps_normalized": eps_actual,
+        "eps_gaap": eps,
+        "consensus_eps": consensus_eps,
+        "consensus_revenue": consensus_revenue,
+        "revenue_surprise": revenue_surprise,
+        "revenue_surprise_pct": revenue_surprise_pct,
+        "eps_surprise": eps_surprise,
+        "eps_surprise_pct": eps_surprise_pct,
+        "prior_year_revenue": prior_revenue,
+        "prior_year_eps": prior_eps,
+        "revenue_yoy": revenue_yoy,
+        "revenue_yoy_pct": revenue_yoy_pct,
+        "eps_yoy": eps_yoy,
+        "eps_yoy_pct": eps_yoy_pct,
+    }
+
+
+def render_latest_quarter_earnings_card(summary: dict[str, object]) -> None:
+    if not summary.get("available"):
+        st.info("Latest quarter earnings data is unavailable for this ticker.")
+        return
+    ticker = str(summary.get("ticker") or "").upper()
+    logo_url = str(summary.get("logo_url") or "")
+    logo_html = (
+        f"<span class='company-logo'><img src='{html.escape(logo_url, quote=True)}' alt='{html.escape(ticker)} logo'></span>"
+        if logo_url.startswith(("http://", "https://"))
+        else f"<span class='company-logo-fallback'>{html.escape(ticker_initials(ticker))}</span>"
+    )
+    announce = summary.get("announce_date")
+    announce_text = f"{announce.month}/{announce.day}/{announce.year}" if isinstance(announce, date) else "N/A"
+    cards = [
+        {
+            "label": "Announce Date",
+            "value": announce_text,
+            "rows": ["<span class='earnings-badge neutral'>Reported period</span>"],
+        },
+        {
+            "label": "EPS Normalized",
+            "value": format_currency(summary.get("eps_normalized"), 2),
+            "rows": [
+                earnings_badge(summary.get("eps_surprise"), summary.get("eps_surprise_pct"), unit="eps"),
+                yoy_badge(summary.get("eps_yoy"), summary.get("eps_yoy_pct"), unit="eps"),
+            ],
+        },
+        {
+            "label": "EPS GAAP",
+            "value": format_currency(summary.get("eps_gaap"), 2),
+            "rows": [
+                "<span class='earnings-badge neutral'>GAAP estimate unavailable</span>",
+            ],
+        },
+        {
+            "label": "Revenue",
+            "value": format_compact_currency(summary.get("revenue"), 2),
+            "rows": [
+                earnings_badge(summary.get("revenue_surprise"), summary.get("revenue_surprise_pct"), unit="revenue"),
+                yoy_badge(summary.get("revenue_yoy"), summary.get("revenue_yoy_pct"), unit="revenue"),
+            ],
+        },
+    ]
+    card_html = []
+    for card in cards:
+        rows = "".join(card.get("rows", []))
+        card_html.append(
+            "<div class='latest-earnings-metric'>"
+            f"<span>{html.escape(card['label'])}</span>"
+            f"<strong>{html.escape(card['value'])}</strong>"
+            f"<div class='earnings-compare-row'>{rows}</div>"
+            "</div>"
+        )
+    st.markdown(
+        "<div class='latest-earnings-card'>"
+        "<div class='latest-earnings-top'>"
+        "<div>"
+        "<span class='latest-earnings-title'>Latest Quarter's Earnings</span>"
+        f"<div class='latest-earnings-subtitle'>{html.escape(str(summary.get('period') or 'Latest reported quarter'))}</div>"
+        "</div>"
+        f"<div class='latest-earnings-headerline'>{logo_html}<strong>{html.escape(ticker)}</strong></div>"
+        "</div>"
+        f"<div class='latest-earnings-grid'>{''.join(card_html)}</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def quarterly_actuals_consensus_frame(income: pd.DataFrame, earnings_expectations: pd.DataFrame) -> pd.DataFrame:
+    if income.empty:
+        return pd.DataFrame()
+    frame = income[["Period", "Period Date", "Revenue", "EPS"]].copy()
+    frame["Analyst Consensus Revenue"] = pd.NA
+    frame["Analyst Consensus EPS"] = pd.NA
+    if isinstance(earnings_expectations, pd.DataFrame) and not earnings_expectations.empty and "Quarter" in earnings_expectations:
+        lookup = earnings_expectations.drop_duplicates("Quarter").set_index("Quarter")
+        for index, row in frame.iterrows():
+            quarter = str(row.get("Period"))
+            if quarter in lookup.index:
+                frame.loc[index, "Analyst Consensus EPS"] = coerce_float(lookup.loc[quarter].get("EPS Estimate"))
+    frame["Revenue Surprise %"] = frame.apply(
+        lambda row: safe_ratio(
+            coerce_float(row.get("Revenue")) - coerce_float(row.get("Analyst Consensus Revenue"))
+            if coerce_float(row.get("Revenue")) is not None and coerce_float(row.get("Analyst Consensus Revenue")) is not None
+            else None,
+            coerce_float(row.get("Analyst Consensus Revenue")),
+            100,
+        ),
+        axis=1,
+    )
+    frame["EPS Surprise %"] = frame.apply(
+        lambda row: safe_ratio(
+            coerce_float(row.get("EPS")) - coerce_float(row.get("Analyst Consensus EPS"))
+            if coerce_float(row.get("EPS")) is not None and coerce_float(row.get("Analyst Consensus EPS")) is not None
+            else None,
+            abs(coerce_float(row.get("Analyst Consensus EPS"))) if coerce_float(row.get("Analyst Consensus EPS")) not in (None, 0) else None,
+            100,
+        ),
+        axis=1,
+    )
+    return frame.sort_values("Period Date")
+
+
+def render_actuals_consensus_chart(frame: pd.DataFrame, actual_col: str, consensus_col: str, title: str, y_title: str, *, key: str, value_scale: float = 1.0, height: int = 260) -> bool:
+    if frame.empty or actual_col not in frame or "Period" not in frame:
+        st.info("Quarterly actuals data is unavailable.")
+        return False
+    plotly_module = plotly_go()
+    actual = pd.to_numeric(frame[actual_col], errors="coerce") / value_scale
+    consensus = pd.to_numeric(frame[consensus_col], errors="coerce") / value_scale if consensus_col in frame else pd.Series(dtype=float)
+    if plotly_module is not None:
+        fig = plotly_module.Figure()
+        fig.add_trace(
+            plotly_module.Bar(
+                x=frame["Period"],
+                y=actual,
+                name=actual_col,
+                marker={"color": "#5ec7e8"},
+                hovertemplate=f"{actual_col}<br>%{{x}}<br>%{{y:,.2f}}<extra></extra>",
+            )
+        )
+        if consensus.notna().any():
+            fig.add_trace(
+                plotly_module.Scatter(
+                    x=frame["Period"],
+                    y=consensus,
+                    mode="lines+markers",
+                    name=consensus_col,
+                    line={"color": "#e6d36f", "width": 2.5},
+                    marker={"size": 8},
+                    hovertemplate=f"{consensus_col}<br>%{{x}}<br>%{{y:,.2f}}<extra></extra>",
+                )
+            )
+        plotly_base_layout(fig, height)
+        fig.update_layout(barmode="group")
+        fig.update_yaxes(title=y_title, gridcolor="#19313a", zerolinecolor="#23424d")
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=key)
+    else:
+        render_bar_chart(frame.rename(columns={actual_col: title}), [title], title, y_title, key=key, value_scale=value_scale, height=height)
+    if not consensus.notna().any():
+        st.caption("Consensus data unavailable.")
+    return True
+
+
+def render_quarterly_actuals_consensus_section(ticker: str, quarterly_frame: pd.DataFrame, payload: dict, *, key_suffix: str, meta_caption: str) -> dict[str, object]:
+    with st.container(border=True):
+        render_section_title("Quarterly Actuals vs Analyst Consensus", "Reported revenue and EPS with consensus overlays where available.")
+        st.caption(meta_caption)
+        frame = quarterly_actuals_consensus_frame(quarterly_frame, payload.get("earnings_expectations", pd.DataFrame()))
+        if frame.empty:
+            st.info("Quarterly revenue and EPS data is unavailable.")
+            return {"charts": 0, "revenue_consensus_available": False, "eps_consensus_available": False}
+        latest = frame.iloc[-1]
+        render_metric_strip(
+            [
+                {"label": "Revenue Surprise", "value": format_percent(latest.get("Revenue Surprise %"), 1, signed=True), "context": "latest quarter", "tone": quote_tone(latest.get("Revenue Surprise %"))},
+                {"label": "EPS Surprise", "value": format_percent(latest.get("EPS Surprise %"), 1, signed=True), "context": "latest quarter", "tone": quote_tone(latest.get("EPS Surprise %"))},
+                {"label": "Actual Revenue", "value": format_compact_currency(latest.get("Revenue"), 2), "context": str(latest.get("Period") or "latest")},
+                {"label": "Actual EPS", "value": format_currency(latest.get("EPS"), 2), "context": str(latest.get("Period") or "latest")},
+            ],
+            columns=4,
+        )
+        cols = st.columns(2, gap="small")
+        chart_count = 0
+        with cols[0]:
+            chart_count += int(render_actuals_consensus_chart(frame, "Revenue", "Analyst Consensus Revenue", "Quarterly Revenue", "Revenue ($B)", key=f"quarterly_revenue_consensus_{key_suffix}", value_scale=1_000_000_000))
+        with cols[1]:
+            chart_count += int(render_actuals_consensus_chart(frame, "EPS", "Analyst Consensus EPS", "Quarterly EPS", "EPS ($)", key=f"quarterly_eps_consensus_{key_suffix}", value_scale=1.0))
+        return {
+            "charts": chart_count,
+            "revenue_consensus_available": pd.to_numeric(frame.get("Analyst Consensus Revenue", pd.Series(dtype=float)), errors="coerce").notna().any(),
+            "eps_consensus_available": pd.to_numeric(frame.get("Analyst Consensus EPS", pd.Series(dtype=float)), errors="coerce").notna().any(),
+            "frame": frame,
+        }
+
+
+def render_stock_performance_statistics_row(
+    ticker: str,
+    *,
+    animate: bool,
+    key_suffix: str,
+    snapshot: dict | None = None,
+    stock_status: pd.DataFrame | None = None,
+    refreshed_at: datetime | None = None,
+    performance_history: pd.DataFrame | None = None,
+) -> dict[str, object]:
     with st.container(border=True):
         render_statement_section_title(
             "Stock Performance & Statistics",
@@ -12090,8 +12787,10 @@ def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_s
             delay=1,
         )
         quote = fetch_quote_snapshot(ticker)
-        snapshot, stock_status, refreshed_at = fetch_home_stock_snapshot(ticker)
-        performance_history = fetch_performance_history(ticker, "1Y")
+        if snapshot is None or stock_status is None or refreshed_at is None:
+            snapshot, stock_status, refreshed_at = fetch_home_stock_snapshot(ticker)
+        if performance_history is None:
+            performance_history = fetch_performance_history(ticker, "1Y")
         performance_df = performance_frame(performance_history)
         performance_stats = performance_summary(performance_df)
 
@@ -12111,7 +12810,7 @@ def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_s
         trailing_pe = coerce_float(snapshot.get("Trailing PE"))
         forward_pe = coerce_float(snapshot.get("Forward PE"))
         relative_volume = coerce_float(snapshot.get("Relative Volume"))
-        implied_move_7d = coerce_float(snapshot.get("Option Move %"))
+        implied_move_7d = coerce_float(snapshot.get("7D Implied Move %") or snapshot.get("Option Move %"))
 
         row_cols = st.columns([1.25, 1], gap="small")
         chart_rendered = False
@@ -12153,6 +12852,9 @@ def render_stock_performance_statistics_row(ticker: str, *, animate: bool, key_s
             "range_clamped": range_debug.get("clamped"),
             "range_missing": range_debug.get("missing"),
             "implied_move_7d": implied_move_7d,
+            "seven_day_iv": snapshot.get("7D IV %"),
+            "options_expiry_used": snapshot.get("Options Expiry Used"),
+            "atm_strike_used": snapshot.get("ATM Strike Used"),
         }
 
 
@@ -12173,7 +12875,7 @@ def render_three_statement_analysis_dashboard() -> None:
         ticker_input = st.text_input("Ticker", placeholder="Enter ticker", key="three_statement_ticker_input")
     ticker = normalize_symbol(ticker_input)
     with control_cols[1]:
-        statement_period = st.selectbox("Statement period", ["Annual", "Quarterly"], index=0, key="three_statement_period")
+        statement_period = st.selectbox("Statement period", ["Quarterly", "Annual"], index=0, key="three_statement_period")
     with control_cols[2]:
         periods_to_show = int(st.selectbox("Periods", [4, 8, 12, 16], index=1, key="three_statement_periods"))
     with control_cols[3]:
@@ -12188,6 +12890,9 @@ def render_three_statement_analysis_dashboard() -> None:
 
     if refresh_clicked:
         fetch_company_financials.clear()
+        fetch_home_stock_snapshot.clear()
+        fetch_quote_snapshot.clear()
+        fetch_performance_history.clear()
         st.session_state["three_statement_last_manual_refresh"] = eastern_now()
 
     if not ticker:
@@ -12198,6 +12903,12 @@ def render_three_statement_analysis_dashboard() -> None:
         return
 
     header_debug = render_company_quote_header(ticker)
+    stock_snapshot = header_debug.get("snapshot", {}) if isinstance(header_debug.get("snapshot"), dict) else {}
+    stock_status = header_debug.get("status") if isinstance(header_debug.get("status"), pd.DataFrame) else None
+    stock_refreshed_at = header_debug.get("refreshed_at") if isinstance(header_debug.get("refreshed_at"), datetime) else eastern_now()
+    performance_history = fetch_performance_history(ticker, "1Y")
+    entry_debug = render_entry_quality_signal(ticker, stock_snapshot, performance_history)
+    render_company_options_metrics(stock_snapshot)
 
     with st.spinner(f"Fetching financial statements for {ticker}..."):
         payload = fetch_company_financials(ticker, statement_period, periods_to_show, date.today().year)
@@ -12220,6 +12931,13 @@ def render_three_statement_analysis_dashboard() -> None:
     income_frame, income_raw = normalize_statement_history(income_statement, INCOME_SANKEY_FIELDS, selected_periods, quarterly, "Revenue")
     balance_frame, balance_raw = normalize_statement_history(balance_statement, BALANCE_SANKEY_FIELDS, selected_periods, quarterly, "Total Assets")
     cash_frame, cash_raw = normalize_statement_history(cash_statement, CASH_FLOW_SANKEY_FIELDS, selected_periods, quarterly, "Operating Cash Flow")
+    quarterly_income_statement = payload.get("quarterly_income", pd.DataFrame())
+    quarterly_periods = sorted(statement_period_options([quarterly_income_statement]))[-max(4, min(periods_to_show, 12)):]
+    quarterly_income_frame, quarterly_income_raw = (
+        normalize_statement_history(quarterly_income_statement, INCOME_SANKEY_FIELDS, quarterly_periods, True, "Revenue")
+        if quarterly_periods
+        else (pd.DataFrame(), pd.DataFrame())
+    )
 
     refreshed_at = payload.get("financials_refreshed") or eastern_now()
     financial_meta = provider_metadata(
@@ -12241,6 +12959,16 @@ def render_three_statement_analysis_dashboard() -> None:
     st.session_state["three_statement_last_signature"] = signature
     section_animate = bool(animate_charts and animation_triggered)
     key_suffix = safe_ui_key(signature)
+
+    latest_quarter_debug = latest_quarter_earnings_summary(ticker, quarterly_income_frame, payload, stock_snapshot)
+    render_latest_quarter_earnings_card(latest_quarter_debug)
+    consensus_debug = render_quarterly_actuals_consensus_section(
+        ticker,
+        quarterly_income_frame,
+        payload,
+        key_suffix=key_suffix,
+        meta_caption=f"{ticker} | Quarterly actuals | " + freshness_caption(financial_meta, "Yahoo Finance/yfinance"),
+    )
 
     income_debug = render_income_statement_analysis(
         ticker,
@@ -12279,6 +13007,10 @@ def render_three_statement_analysis_dashboard() -> None:
         ticker,
         animate=section_animate,
         key_suffix=key_suffix,
+        snapshot=stock_snapshot,
+        stock_status=stock_status,
+        refreshed_at=stock_refreshed_at,
+        performance_history=performance_history,
     )
     cash_for_insights = cash_debug.get("merged") if isinstance(cash_debug.get("merged"), pd.DataFrame) else cash_frame
     insights = render_three_statement_insights(
@@ -12288,6 +13020,43 @@ def render_three_statement_analysis_dashboard() -> None:
         animate=section_animate,
         meta_caption=meta_caption,
     )
+
+    with st.expander("Data validation", expanded=False):
+        validation_rows = [
+            {"Metric": "ticker", "Value": ticker},
+            {"Metric": "company_name", "Value": stock_snapshot.get("Name", "N/A")},
+            {"Metric": "last_price", "Value": format_currency(stock_snapshot.get("Last Price"), 2)},
+            {"Metric": "previous_close", "Value": format_currency(stock_snapshot.get("Previous Close"), 2)},
+            {"Metric": "daily_change_pct", "Value": format_percent(stock_snapshot.get("Daily Change %"), 2, signed=True)},
+            {"Metric": "52w_low", "Value": format_currency(stock_context_debug.get("range_low"), 2)},
+            {"Metric": "52w_high", "Value": format_currency(stock_context_debug.get("range_high"), 2)},
+            {"Metric": "range_position", "Value": format_percent(stock_context_debug.get("range_position_pct"), 2)},
+            {"Metric": "range_percent", "Value": format_percent(stock_context_debug.get("range_position_pct"), 2)},
+            {"Metric": "logo_url", "Value": stock_snapshot.get("Logo URL") or "N/A"},
+            {"Metric": "options_expiry_used", "Value": str(stock_snapshot.get("Options Expiry Used") or "N/A")},
+            {"Metric": "atm_strike_used", "Value": format_currency(stock_snapshot.get("ATM Strike Used"), 2)},
+            {"Metric": "seven_day_iv", "Value": format_percent(stock_snapshot.get("7D IV %"), 2)},
+            {"Metric": "seven_day_implied_move", "Value": format_move(stock_snapshot.get("7D Implied Move %") or stock_snapshot.get("Option Move %"), 2)},
+            {"Metric": "entry_signal", "Value": entry_debug.get("label", "N/A")},
+            {"Metric": "entry_signal_score", "Value": entry_debug.get("score", "N/A")},
+            {"Metric": "rsi", "Value": format_number(entry_debug.get("rsi"), 2)},
+            {"Metric": "sma_50", "Value": format_currency(entry_debug.get("sma_50"), 2)},
+            {"Metric": "sma_200", "Value": format_currency(entry_debug.get("sma_200"), 2)},
+            {"Metric": "financial_view_selected", "Value": statement_period},
+            {"Metric": "latest_quarter_announce_date", "Value": str(latest_quarter_debug.get("announce_date") or "N/A")},
+            {"Metric": "latest_quarter_revenue", "Value": format_compact_currency(latest_quarter_debug.get("revenue"), 2)},
+            {"Metric": "latest_quarter_eps_normalized", "Value": format_currency(latest_quarter_debug.get("eps_normalized"), 2)},
+            {"Metric": "latest_quarter_eps_gaap", "Value": format_currency(latest_quarter_debug.get("eps_gaap"), 2)},
+            {"Metric": "latest_quarter_consensus_revenue", "Value": format_compact_currency(latest_quarter_debug.get("consensus_revenue"), 2)},
+            {"Metric": "latest_quarter_consensus_eps", "Value": format_currency(latest_quarter_debug.get("consensus_eps"), 2)},
+            {"Metric": "latest_quarter_revenue_surprise_pct", "Value": format_percent(latest_quarter_debug.get("revenue_surprise_pct"), 2, signed=True)},
+            {"Metric": "latest_quarter_eps_surprise_pct", "Value": format_percent(latest_quarter_debug.get("eps_surprise_pct"), 2, signed=True)},
+            {"Metric": "latest_quarter_prior_year_revenue", "Value": format_compact_currency(latest_quarter_debug.get("prior_year_revenue"), 2)},
+            {"Metric": "latest_quarter_prior_year_eps", "Value": format_currency(latest_quarter_debug.get("prior_year_eps"), 2)},
+            {"Metric": "latest_quarter_revenue_yoy_pct", "Value": format_percent(latest_quarter_debug.get("revenue_yoy_pct"), 2, signed=True)},
+            {"Metric": "latest_quarter_eps_yoy_pct", "Value": format_percent(latest_quarter_debug.get("eps_yoy_pct"), 2, signed=True)},
+        ]
+        render_dashboard_table(pd.DataFrame(validation_rows), height=380)
 
     if show_debug:
         with st.expander("Company analysis debug", expanded=False):
