@@ -8043,6 +8043,14 @@ def inject_css() -> None:
                 z-index: 1;
             }
 
+            .company-logo.has-image .company-logo-fallback {
+                display: none;
+            }
+
+            .company-logo.has-image.logo-failed .company-logo-fallback {
+                display: inline-flex;
+            }
+
             .company-quote-main {
                 min-width: 0;
             }
@@ -12320,12 +12328,12 @@ def company_logo_markup(symbol: str, logo_url: str | None) -> str:
         onerror = (
             "if(!this.dataset.fallback){this.dataset.fallback='1';"
             f"this.src='{secondary}';"
-            "}else{this.style.display='none';}"
+            "}else{this.style.display='none';this.parentElement.classList.add('logo-failed');}"
         )
     else:
-        onerror = "this.style.display='none';"
+        onerror = "this.style.display='none';this.parentElement.classList.add('logo-failed');"
     return (
-        f"<span class='company-logo'>{initials_html}"
+        f"<span class='company-logo has-image'>{initials_html}"
         f"<img src='{html.escape(primary_url, quote=True)}' alt='{safe_symbol} logo' loading='lazy' onerror=\"{onerror}\">"
         "</span>"
     )
