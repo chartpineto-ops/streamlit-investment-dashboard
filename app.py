@@ -111,6 +111,7 @@ PROVIDER_HIERARCHY = {
     "Competitive Analysis": ["Yahoo Finance/yfinance peer quotes, fundamentals, analyst fields, and price history", "Cached/empty state"],
     "Company Analysis": ["Yahoo Finance/yfinance financial statement matrices", "Cached/empty state"],
     "Analyst Expectations": ["Yahoo Finance/yfinance analyst estimates and public news links", "Clean empty state"],
+    "Earnings Calendar": ["Yahoo Finance/yfinance earnings dates, estimates, options chains", "Shared RSS/social feeds for discussion ranking", "Cached/empty state"],
     "Volatility Radar": ["Yahoo Finance/yfinance price history and option chains", "Cached/empty state"],
     "Sector Performance": ["Yahoo Finance/yfinance sector ETF quotes", "Cached last successful Streamlit data"],
     "News Headlines": ["Reputable RSS/API and official feeds", "Yahoo Finance only after relevance filters", "Cached last successful feed set"],
@@ -132,6 +133,9 @@ HOME_MARKET_SYMBOLS = (
     {"label": "VIX", "symbol": "^VIX", "type": "index"},
     {"label": "10Y Treasury", "symbol": "^TNX", "type": "yield"},
 )
+
+EARNINGS_SESSIONS = ("Before Open", "After Close", "During Market", "Time Not Supplied")
+PRIMARY_EARNINGS_SESSIONS = ("Before Open", "After Close")
 
 COMPETITIVE_PERIOD_OPTIONS = ["1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"]
 
@@ -3589,6 +3593,7 @@ def clear_live_data_caches(include_slow: bool = True) -> None:
         fetch_feeds,
         fetch_market_macro_headlines,
         fetch_social_mentions,
+        fetch_weekly_earnings_releases,
     ]
     slow_functions = [
         fetch_company_financials,
@@ -8253,6 +8258,234 @@ def inject_css() -> None:
                 margin-top: 0.3rem;
             }
 
+            .earnings-filter-card {
+                background: linear-gradient(180deg, #0d1b20 0%, #0a1519 100%);
+                border: 1px solid var(--term-line-soft);
+                border-radius: 8px;
+                margin: 0.45rem 0 0.65rem 0;
+                padding: 0.7rem 0.78rem;
+            }
+
+            .earnings-summary-strip {
+                display: grid;
+                gap: 0.5rem;
+                grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+                margin: 0.45rem 0 0.7rem 0;
+            }
+
+            .earnings-summary-card {
+                background: #071014;
+                border: 1px solid var(--term-line-soft);
+                border-left: 3px solid var(--term-amber);
+                border-radius: 7px;
+                min-width: 0;
+                padding: 0.55rem 0.62rem;
+            }
+
+            .earnings-summary-card span {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.62rem;
+                font-weight: 900;
+                text-transform: uppercase;
+                white-space: nowrap;
+            }
+
+            .earnings-summary-card strong {
+                color: var(--term-text);
+                display: block;
+                font-family: Consolas, "Lucida Console", "Courier New", monospace;
+                font-size: 1rem;
+                line-height: 1.12;
+                margin-top: 0.18rem;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .earnings-calendar-grid {
+                display: grid;
+                gap: 0.55rem;
+                grid-template-columns: repeat(5, minmax(0, 1fr));
+                margin: 0.35rem 0 0.75rem 0;
+            }
+
+            .earnings-day-panel {
+                background: linear-gradient(180deg, #0c171b 0%, #081115 100%);
+                border: 1px solid var(--term-line-soft);
+                border-radius: 8px;
+                min-width: 0;
+                overflow: hidden;
+            }
+
+            .earnings-day-head {
+                background: #10212a;
+                border-bottom: 1px solid var(--term-line-soft);
+                padding: 0.5rem 0.55rem;
+            }
+
+            .earnings-day-name {
+                color: var(--term-text);
+                display: block;
+                font-size: 0.74rem;
+                font-weight: 950;
+                line-height: 1.05;
+                text-transform: uppercase;
+            }
+
+            .earnings-day-date {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.62rem;
+                font-weight: 800;
+                margin-top: 0.12rem;
+            }
+
+            .earnings-session {
+                padding: 0.48rem;
+            }
+
+            .earnings-session + .earnings-session {
+                border-top: 1px solid rgba(25, 49, 58, 0.68);
+            }
+
+            .earnings-session-title {
+                align-items: center;
+                color: var(--term-muted);
+                display: flex;
+                font-size: 0.58rem;
+                font-weight: 950;
+                justify-content: space-between;
+                letter-spacing: 0.03em;
+                margin-bottom: 0.35rem;
+                text-transform: uppercase;
+            }
+
+            .earnings-card {
+                background: #071014;
+                border: 1px solid var(--term-line-soft);
+                border-left: 3px solid var(--term-amber);
+                border-radius: 7px;
+                margin-bottom: 0.45rem;
+                min-width: 0;
+                padding: 0.48rem;
+            }
+
+            .earnings-card:last-child {
+                margin-bottom: 0;
+            }
+
+            .earnings-card-top {
+                align-items: center;
+                display: grid;
+                gap: 0.45rem;
+                grid-template-columns: auto minmax(0, 1fr);
+            }
+
+            .earnings-card .company-logo {
+                border-radius: 9px;
+                height: 2.05rem;
+                width: 2.05rem;
+            }
+
+            .earnings-card-ticker {
+                color: var(--term-text);
+                display: block;
+                font-family: Consolas, "Lucida Console", "Courier New", monospace;
+                font-size: 0.9rem;
+                font-weight: 950;
+                line-height: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .earnings-card-name {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.58rem;
+                font-weight: 800;
+                margin-top: 0.13rem;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .earnings-card-metrics {
+                display: grid;
+                gap: 0.28rem;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                margin-top: 0.42rem;
+            }
+
+            .earnings-metric-pill {
+                background: #0b171c;
+                border: 1px solid rgba(25, 49, 58, 0.88);
+                border-radius: 5px;
+                min-width: 0;
+                padding: 0.27rem 0.32rem;
+            }
+
+            .earnings-metric-pill span {
+                color: var(--term-muted);
+                display: block;
+                font-size: 0.48rem;
+                font-weight: 950;
+                line-height: 1;
+                text-transform: uppercase;
+                white-space: nowrap;
+            }
+
+            .earnings-metric-pill strong {
+                color: var(--term-text);
+                display: block;
+                font-family: Consolas, "Lucida Console", "Courier New", monospace;
+                font-size: 0.67rem;
+                line-height: 1.08;
+                margin-top: 0.14rem;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .earnings-metric-pill.good strong {
+                color: var(--term-green);
+            }
+
+            .earnings-metric-pill.bad strong {
+                color: var(--term-red);
+            }
+
+            .earnings-card-foot {
+                align-items: center;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.3rem;
+                margin-top: 0.42rem;
+            }
+
+            .earnings-mini-badge {
+                background: rgba(94, 199, 232, 0.08);
+                border: 1px solid var(--term-line);
+                border-radius: 999px;
+                color: var(--term-muted);
+                font-size: 0.52rem;
+                font-weight: 950;
+                line-height: 1;
+                padding: 0.23rem 0.32rem;
+                text-transform: uppercase;
+            }
+
+            .earnings-empty {
+                background: rgba(94, 199, 232, 0.08);
+                border: 1px solid var(--term-line-soft);
+                border-radius: 7px;
+                color: var(--term-muted);
+                font-size: 0.62rem;
+                font-weight: 800;
+                padding: 0.48rem;
+            }
+
             .statement-section {
                 animation: statementFadeIn 420ms ease both;
             }
@@ -9583,6 +9816,10 @@ def inject_css() -> None:
 
                 .home-aligned-card {
                     min-height: 0;
+                }
+
+                .earnings-calendar-grid {
+                    grid-template-columns: 1fr;
                 }
 
                 .headline {
@@ -14425,6 +14662,587 @@ def render_volatility_radar() -> None:
         )
 
 
+def week_monday(value: date | datetime | pd.Timestamp | None = None) -> date:
+    base = value.date() if isinstance(value, (datetime, pd.Timestamp)) else value
+    base = base or date.today()
+    return base - timedelta(days=base.weekday())
+
+
+def parse_earnings_datetime(value: object) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, pd.Timestamp):
+        if pd.isna(value):
+            return None
+        timestamp = value
+    else:
+        timestamp = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(timestamp):
+        parsed_date = parse_date(value)
+        if parsed_date:
+            return datetime.combine(parsed_date, datetime.min.time()).replace(tzinfo=EASTERN)
+        return None
+    if isinstance(timestamp, pd.Timestamp):
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize(timezone.utc)
+        return timestamp.tz_convert(EASTERN).to_pydatetime()
+    return None
+
+
+def earnings_session_for_datetime(value: datetime | None) -> str:
+    if value is None:
+        return "Time Not Supplied"
+    if value.hour == 0 and value.minute == 0:
+        return "Time Not Supplied"
+    minutes = value.hour * 60 + value.minute
+    if minutes < 9 * 60 + 30:
+        return "Before Open"
+    if minutes >= 16 * 60:
+        return "After Close"
+    return "During Market"
+
+
+def earnings_date_rows(frame: pd.DataFrame) -> list[dict[str, object]]:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return []
+    working = frame.copy()
+    if "Earnings Date" not in working.columns:
+        working = working.reset_index().rename(columns={"index": "Earnings Date"})
+    column_lookup = {normalize_statement_label(column): column for column in working.columns}
+    date_col = column_lookup.get("earningsdate") or "Earnings Date"
+    eps_est_col = column_lookup.get("epsestimate") or column_lookup.get("epsest")
+    eps_actual_col = column_lookup.get("reportedeps") or column_lookup.get("actualeps")
+    surprise_col = column_lookup.get("surprisepercent") or column_lookup.get("surprise")
+    rows = []
+    for _, row in working.iterrows():
+        event_dt = parse_earnings_datetime(row.get(date_col))
+        if event_dt is None:
+            continue
+        eps_estimate = coerce_float(row.get(eps_est_col)) if eps_est_col else None
+        eps_actual = coerce_float(row.get(eps_actual_col)) if eps_actual_col else None
+        eps_surprise_pct = coerce_float(row.get(surprise_col)) if surprise_col else None
+        if eps_surprise_pct is not None and abs(eps_surprise_pct) <= 1:
+            eps_surprise_pct *= 100
+        rows.append(
+            {
+                "datetime": event_dt,
+                "date": event_dt.date(),
+                "session": earnings_session_for_datetime(event_dt),
+                "eps_estimate": eps_estimate,
+                "eps_actual": eps_actual,
+                "eps_surprise_pct": eps_surprise_pct,
+            }
+        )
+    return rows
+
+
+def estimate_frame_average(frame: pd.DataFrame, preferred_periods: Sequence[str] = ("0q", "+1q", "0y")) -> float | None:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return None
+    for period in preferred_periods:
+        for column in ("avg", "Average", "mean", "Mean"):
+            value = estimate_value(frame, period, column)
+            if value is not None:
+                return value
+    numeric_columns = [column for column in frame.columns if normalize_statement_label(column) in {"avg", "average", "mean"}]
+    for column in numeric_columns:
+        values = pd.to_numeric(frame[column], errors="coerce").dropna()
+        if not values.empty:
+            return coerce_float(values.iloc[0])
+    return None
+
+
+def fetch_single_earnings_release(ticker: str, week_start: date, week_end: date) -> dict[str, object] | None:
+    symbol = normalize_symbol(ticker)
+    if not symbol or yf is None:
+        return None
+    try:
+        yf_ticker = make_yf_ticker(symbol)
+        earnings_frame = earnings_dates_frame(yf_ticker)
+        event_rows = [
+            row
+            for row in earnings_date_rows(earnings_frame)
+            if week_start <= row["date"] <= week_end
+        ]
+        if not event_rows:
+            return None
+        event_rows.sort(key=lambda row: row["datetime"] or datetime.max.replace(tzinfo=EASTERN))
+        event = event_rows[0]
+        info: dict = {}
+        try:
+            fast_info = getattr(yf_ticker, "fast_info", {}) or {}
+            info.update(dict(fast_info))
+        except Exception:
+            pass
+        try:
+            full_info = yf_ticker.get_info()
+            if isinstance(full_info, dict):
+                info.update(full_info)
+        except Exception:
+            pass
+        company = info.get("shortName") or info.get("longName") or info.get("displayName") or symbol
+        last_price = coerce_float(
+            info.get("lastPrice")
+            or info.get("last_price")
+            or info.get("currentPrice")
+            or info.get("regularMarketPrice")
+        )
+        previous_close = coerce_float(info.get("previousClose") or info.get("regularMarketPreviousClose"))
+        if last_price is None:
+            try:
+                history = yf_ticker.history(period="5d", interval="1d", auto_adjust=False, actions=False, raise_errors=False)
+                close = pd.to_numeric(history.get("Close", pd.Series(dtype=float)), errors="coerce").dropna()
+                if not close.empty:
+                    last_price = coerce_float(close.iloc[-1])
+                    if len(close) > 1 and previous_close is None:
+                        previous_close = coerce_float(close.iloc[-2])
+            except Exception:
+                pass
+        daily_change_pct = safe_ratio(last_price - previous_close, previous_close, 100) if last_price is not None and previous_close not in (None, 0) else None
+        option_data = options_snapshot(symbol, yf_ticker, last_price, 7, True)
+        earnings_estimate = get_estimate_frame(yf_ticker, "get_earnings_estimate", "earnings_estimate")
+        revenue_estimate = get_estimate_frame(yf_ticker, "get_revenue_estimate", "revenue_estimate")
+        eps_estimate = event.get("eps_estimate") or estimate_frame_average(earnings_estimate)
+        revenue_est = estimate_frame_average(revenue_estimate)
+        eps_actual = coerce_float(event.get("eps_actual"))
+        eps_surprise_pct = coerce_float(event.get("eps_surprise_pct"))
+        if eps_surprise_pct is None and eps_actual is not None and eps_estimate not in (None, 0):
+            eps_surprise_pct = (eps_actual - eps_estimate) / abs(eps_estimate) * 100
+        return {
+            "Ticker": symbol,
+            "Company": company,
+            "Earnings Date": event["date"],
+            "Earnings DateTime": event["datetime"],
+            "Session": event["session"],
+            "Sector": info.get("sector") or "Unknown",
+            "Market Cap": coerce_float(info.get("marketCap") or info.get("market_cap")),
+            "Last Price": last_price,
+            "Daily Change %": daily_change_pct,
+            "Logo URL": company_logo_url(info),
+            "7D IV %": (coerce_float(option_data.get("iv")) * 100) if coerce_float(option_data.get("iv")) is not None else None,
+            "7D Implied Move %": coerce_float(option_data.get("move_pct")),
+            "Options Expiry Used": option_data.get("expiry"),
+            "Options Contracts": coerce_float(option_data.get("contracts")),
+            "Short %": short_interest_percent(info),
+            "Revenue Estimate": revenue_est,
+            "EPS Estimate": eps_estimate,
+            "Actual Revenue": None,
+            "Actual EPS": eps_actual,
+            "Revenue Surprise %": None,
+            "EPS Surprise %": eps_surprise_pct,
+            "Reported": bool(eps_actual is not None or event["date"] < date.today()),
+            "Data Notes": option_data.get("message", ""),
+        }
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_weekly_earnings_releases(tickers: tuple[str, ...], week_start_iso: str, week_end_iso: str) -> tuple[list[dict[str, object]], list[dict[str, object]], datetime]:
+    week_start = parse_date(week_start_iso) or week_monday()
+    week_end = parse_date(week_end_iso) or (week_start + timedelta(days=4))
+    if yf is None:
+        return [], [{"source": "Yahoo Finance/yfinance", "status": "Error", "message": yfinance_unavailable_message(), "rows": 0}], eastern_now()
+    rows: list[dict[str, object]] = []
+    statuses: list[dict[str, object]] = []
+    clean_tickers = tuple(dict.fromkeys(normalize_symbol(ticker) for ticker in tickers if normalize_symbol(ticker)))
+    if not clean_tickers:
+        return [], [], eastern_now()
+    with ThreadPoolExecutor(max_workers=min(8, len(clean_tickers))) as executor:
+        futures = {executor.submit(fetch_single_earnings_release, ticker, week_start, week_end): ticker for ticker in clean_tickers}
+        for future in as_completed(futures):
+            ticker = futures[future]
+            try:
+                row = future.result()
+            except Exception as exc:
+                statuses.append({"source": ticker, "status": "Error", "message": str(exc), "rows": 0})
+                continue
+            if row:
+                rows.append(row)
+                statuses.append({"source": ticker, "status": "OK", "message": "", "rows": 1})
+            else:
+                statuses.append({"source": ticker, "status": "No weekly earnings", "message": "", "rows": 0})
+    rows.sort(key=lambda row: (row.get("Earnings Date") or date.max, row.get("Session") or "", row.get("Ticker") or ""))
+    return rows, statuses, eastern_now()
+
+
+def percentile_score(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.notna().sum() <= 1:
+        return pd.Series([100.0 if pd.notna(value) and value > 0 else 0.0 for value in numeric], index=series.index)
+    return numeric.fillna(0).rank(pct=True, method="average") * 100
+
+
+def attach_anticipation_scores(
+    rows: list[dict[str, object]],
+    articles: Iterable[Article],
+    social_mentions: Iterable[SocialMention],
+) -> pd.DataFrame:
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    news_counts: Counter[str] = Counter()
+    for article in articles:
+        for ticker in article.mentions:
+            news_counts[ticker] += 1
+    social_counts: Counter[str] = Counter()
+    social_engagement: Counter[str] = Counter()
+    for mention in social_mentions:
+        for ticker in mention.mentions:
+            social_counts[ticker] += 1
+            social_engagement[ticker] += get_total_reactions(mention)
+    frame["News Mentions"] = frame["Ticker"].map(lambda ticker: int(news_counts.get(str(ticker), 0)))
+    frame["Social Mentions"] = frame["Ticker"].map(lambda ticker: int(social_counts.get(str(ticker), 0)))
+    frame["Social Engagement"] = frame["Ticker"].map(lambda ticker: int(social_engagement.get(str(ticker), 0)))
+    frame["Social Discussion"] = frame["Social Mentions"] + (frame["Social Engagement"].map(lambda value: math.log1p(max(value, 0))))
+    frame["Social Score"] = percentile_score(frame["Social Discussion"])
+    frame["News Score"] = percentile_score(frame["News Mentions"])
+    frame["Implied Move Score"] = percentile_score(frame.get("7D Implied Move %", pd.Series(dtype=float)))
+    frame["Options Activity Score"] = percentile_score(frame.get("Options Contracts", pd.Series(dtype=float)))
+    frame["Short Interest Score"] = percentile_score(frame.get("Short %", pd.Series(dtype=float)))
+    frame["Market Cap Score"] = percentile_score(frame.get("Market Cap", pd.Series(dtype=float)))
+    frame["Anticipation Score"] = (
+        0.40 * frame["Social Score"]
+        + 0.30 * frame["News Score"]
+        + 0.15 * frame["Implied Move Score"]
+        + 0.10 * frame["Options Activity Score"]
+        + 0.05 * frame["Short Interest Score"]
+    ).round(1)
+    return frame.sort_values(["Anticipation Score", "7D Implied Move %", "Market Cap", "Ticker"], ascending=[False, False, False, True], na_position="last")
+
+
+def earnings_surprise_tone(value: object) -> str:
+    number = coerce_float(value)
+    if number is None or abs(number) < 0.05:
+        return "neutral"
+    return "good" if number > 0 else "bad"
+
+
+def earnings_metric(label: str, value: str, tone: str = "neutral") -> str:
+    return (
+        f"<div class='earnings-metric-pill {html.escape(tone)}'>"
+        f"<span>{html.escape(label)}</span>"
+        f"<strong>{html.escape(value)}</strong>"
+        "</div>"
+    )
+
+
+def render_earnings_card(row: pd.Series) -> str:
+    ticker = str(row.get("Ticker") or "N/A")
+    logo_html = company_logo_markup(ticker, row.get("Logo URL"))
+    company = str(row.get("Company") or ticker)
+    actual_revenue = coerce_float(row.get("Actual Revenue"))
+    actual_eps = coerce_float(row.get("Actual EPS"))
+    revenue_surprise = coerce_float(row.get("Revenue Surprise %"))
+    eps_surprise = coerce_float(row.get("EPS Surprise %"))
+    metric_html = "".join(
+        [
+            earnings_metric("7D Move", format_move(row.get("7D Implied Move %"), 1)),
+            earnings_metric("Rev Est", format_compact_currency(row.get("Revenue Estimate"), 1)),
+            earnings_metric("EPS Est", format_currency(row.get("EPS Estimate"), 2)),
+            earnings_metric("Act Rev", format_compact_currency(actual_revenue, 1) if actual_revenue is not None else "-"),
+            earnings_metric("Act EPS", format_currency(actual_eps, 2) if actual_eps is not None else "-", earnings_surprise_tone(eps_surprise)),
+            earnings_metric("Score", format_number(row.get("Anticipation Score"), 0)),
+        ]
+    )
+    surprise_badges = []
+    if revenue_surprise is not None:
+        surprise_badges.append(f"<span class='earnings-mini-badge'>{html.escape('Rev ' + format_percent(revenue_surprise, 1, signed=True))}</span>")
+    if eps_surprise is not None:
+        surprise_badges.append(f"<span class='earnings-mini-badge'>{html.escape('EPS ' + format_percent(eps_surprise, 1, signed=True))}</span>")
+    if not surprise_badges:
+        surprise_badges.append("<span class='earnings-mini-badge'>Actuals pending</span>")
+    expiry = row.get("Options Expiry Used")
+    expiry_text = expiry.strftime("%Y-%m-%d") if isinstance(expiry, date) else str(expiry or "IV N/A")
+    surprise_badges.append(f"<span class='earnings-mini-badge'>{html.escape(expiry_text)}</span>")
+    return (
+        "<article class='earnings-card'>"
+        "<div class='earnings-card-top'>"
+        f"{logo_html}"
+        "<div>"
+        f"<span class='earnings-card-ticker'>{html.escape(ticker)}</span>"
+        f"<span class='earnings-card-name'>{html.escape(company)}</span>"
+        "</div>"
+        "</div>"
+        f"<div class='earnings-card-metrics'>{metric_html}</div>"
+        f"<div class='earnings-card-foot'>{''.join(surprise_badges)}</div>"
+        "</article>"
+    )
+
+
+def render_earnings_summary(frame: pd.DataFrame, week_start: date) -> None:
+    if frame.empty:
+        st.info("No earnings releases were found for the selected filters.")
+        return
+    before_count = int(frame["Session"].eq("Before Open").sum()) if "Session" in frame else 0
+    after_count = int(frame["Session"].eq("After Close").sum()) if "Session" in frame else 0
+    top_names = ", ".join(frame.head(5)["Ticker"].astype(str).tolist())
+    highest_move = pd.to_numeric(frame.get("7D Implied Move %", pd.Series(dtype=float)), errors="coerce").max()
+    avg_top_move = pd.to_numeric(frame.head(10).get("7D Implied Move %", pd.Series(dtype=float)), errors="coerce").mean()
+    week_label = f"{calendar.month_abbr[week_start.month]} {week_start.day}, {week_start.year}"
+    cards = [
+        ("Week Of", week_label),
+        ("Total Names", f"{len(frame):,}"),
+        ("Before Open", f"{before_count:,}"),
+        ("After Close", f"{after_count:,}"),
+        ("Top Anticipated", top_names or "N/A"),
+        ("Highest 7D Move", format_move(highest_move, 1)),
+        ("Avg Top 10 Move", format_move(avg_top_move, 1)),
+    ]
+    st.markdown(
+        "<div class='earnings-summary-strip'>"
+        + "".join(
+            f"<div class='earnings-summary-card'><span>{html.escape(label)}</span><strong>{html.escape(value)}</strong></div>"
+            for label, value in cards
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_weekly_earnings_grid(frame: pd.DataFrame, week_start: date, session_filter: str, cards_per_session: int) -> None:
+    days = [week_start + timedelta(days=offset) for offset in range(5)]
+    sessions = list(PRIMARY_EARNINGS_SESSIONS)
+    if session_filter not in {"All", "Before Open", "After Close"}:
+        sessions = [session_filter]
+    elif session_filter in PRIMARY_EARNINGS_SESSIONS:
+        sessions = [session_filter]
+    html_days = []
+    for day in days:
+        day_rows = frame[frame["Earnings Date"].eq(day)] if not frame.empty and "Earnings Date" in frame else pd.DataFrame()
+        day_sessions = list(sessions)
+        if session_filter == "All" and not day_rows.empty and "Session" in day_rows:
+            for optional_session in ("During Market", "Time Not Supplied"):
+                if day_rows["Session"].eq(optional_session).any() and optional_session not in day_sessions:
+                    day_sessions.append(optional_session)
+        session_html = []
+        for session in day_sessions:
+            subset = day_rows[day_rows["Session"].eq(session)] if not day_rows.empty and "Session" in day_rows else pd.DataFrame()
+            total_in_session = len(subset)
+            if not subset.empty and "Anticipation Score" in subset:
+                visible_subset = subset.sort_values("Anticipation Score", ascending=False, na_position="last").head(cards_per_session)
+            else:
+                visible_subset = subset.head(0)
+            cards = "".join(render_earnings_card(row) for _, row in visible_subset.iterrows())
+            if total_in_session > len(visible_subset):
+                cards += f"<div class='earnings-empty'>+{total_in_session - len(visible_subset):,} more names. Increase Cards/session to show more.</div>"
+            if not cards:
+                cards = "<div class='earnings-empty'>No names in this bucket.</div>"
+            session_html.append(
+                "<div class='earnings-session'>"
+                f"<div class='earnings-session-title'><span>{html.escape(session)}</span><span>{total_in_session}</span></div>"
+                f"{cards}"
+                "</div>"
+            )
+        html_days.append(
+            "<section class='earnings-day-panel'>"
+            "<div class='earnings-day-head'>"
+            f"<span class='earnings-day-name'>{calendar.day_name[day.weekday()]}</span>"
+            f"<span class='earnings-day-date'>{html.escape(day.strftime('%b %d'))}</span>"
+            "</div>"
+            f"{''.join(session_html)}"
+            "</section>"
+        )
+    st.markdown("<div class='earnings-calendar-grid'>" + "".join(html_days) + "</div>", unsafe_allow_html=True)
+
+
+def filter_earnings_frame(
+    frame: pd.DataFrame,
+    session_filter: str,
+    minimum_score: float,
+    sector_filter: list[str],
+    ticker_query: str,
+    only_most_discussed: bool,
+    show_reported: bool,
+    upcoming_only: bool,
+    sort_mode: str,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    filtered = frame.copy()
+    if session_filter != "All":
+        filtered = filtered[filtered["Session"].eq(session_filter)]
+    if minimum_score > 0:
+        filtered = filtered[pd.to_numeric(filtered["Anticipation Score"], errors="coerce").fillna(0) >= minimum_score]
+    if sector_filter and "Sector" in filtered:
+        filtered = filtered[filtered["Sector"].isin(sector_filter)]
+    query = normalize_symbol(ticker_query)
+    if query:
+        filtered = filtered[filtered["Ticker"].astype(str).str.contains(re.escape(query), case=False, na=False)]
+    if not show_reported and "Reported" in filtered:
+        filtered = filtered[~filtered["Reported"].fillna(False)]
+    if upcoming_only:
+        filtered = filtered[pd.to_datetime(filtered["Earnings Date"], errors="coerce").dt.date >= date.today()]
+    if only_most_discussed and not filtered.empty:
+        threshold = max(35.0, float(pd.to_numeric(filtered["Anticipation Score"], errors="coerce").median() or 0))
+        most_discussed = filtered[pd.to_numeric(filtered["Anticipation Score"], errors="coerce").fillna(0) >= threshold]
+        if not most_discussed.empty:
+            filtered = most_discussed
+    sort_map = {
+        "Anticipation Score": ("Anticipation Score", False),
+        "Highest 7D implied move": ("7D Implied Move %", False),
+        "Largest market cap": ("Market Cap", False),
+        "Highest short interest": ("Short %", False),
+        "Alphabetical": ("Ticker", True),
+    }
+    column, ascending = sort_map.get(sort_mode, ("Anticipation Score", False))
+    if column in filtered:
+        filtered = filtered.sort_values(column, ascending=ascending, na_position="last", kind="mergesort")
+    return filtered.reset_index(drop=True)
+
+
+def render_earnings_calendar_tab() -> None:
+    st.sidebar.header("Earnings")
+    st.title("Earnings")
+    st.markdown(
+        "<div class='statement-page-subtitle'>Most anticipated earnings releases by week, ranked from social, news, options, and short-interest signals.</div>",
+        unsafe_allow_html=True,
+    )
+    if "earnings_week_start" not in st.session_state:
+        st.session_state["earnings_week_start"] = week_monday()
+    with st.container(border=True):
+        nav_cols = st.columns([0.5, 1.15, 0.5, 0.95, 0.9, 0.9], gap="small")
+        with nav_cols[0]:
+            if st.button("Prev", use_container_width=True, key="earnings_prev_week"):
+                st.session_state["earnings_week_start"] = st.session_state["earnings_week_start"] - timedelta(days=7)
+        with nav_cols[1]:
+            selected_week = st.date_input("Week of", value=st.session_state["earnings_week_start"], key="earnings_week_input")
+            week_start = week_monday(selected_week)
+            st.session_state["earnings_week_start"] = week_start
+        with nav_cols[2]:
+            if st.button("Next", use_container_width=True, key="earnings_next_week"):
+                st.session_state["earnings_week_start"] = st.session_state["earnings_week_start"] + timedelta(days=7)
+                week_start = st.session_state["earnings_week_start"]
+        with nav_cols[3]:
+            session_filter = st.selectbox("Session", ["All", "Before Open", "After Close", "During Market", "Time Not Supplied"], key="earnings_session_filter")
+        with nav_cols[4]:
+            sort_mode = st.selectbox("Sort", ["Anticipation Score", "Highest 7D implied move", "Largest market cap", "Highest short interest", "Alphabetical"], key="earnings_sort_mode")
+        with nav_cols[5]:
+            refresh_clicked = st.button("Refresh", use_container_width=True, key="earnings_refresh")
+        if refresh_clicked:
+            fetch_weekly_earnings_releases.clear()
+            fetch_market_macro_headlines.clear()
+            fetch_social_mentions.clear()
+
+        filter_cols = st.columns([0.9, 0.9, 1.15, 0.8, 0.8, 0.8], gap="small")
+        with filter_cols[0]:
+            universe_preset = st.selectbox("Universe", ["All major indexes", "S&P 500", "Nasdaq-100", "All US listed", "Custom list"], key="earnings_universe")
+        with filter_cols[1]:
+            max_scan = st.slider("Scan size", 25, 200, 80, 25, key="earnings_scan_size")
+        with filter_cols[2]:
+            ticker_search = st.text_input("Ticker search", placeholder="Optional ticker", key="earnings_ticker_search")
+        with filter_cols[3]:
+            minimum_score = st.slider("Min score", 0, 100, 0, 5, key="earnings_min_score")
+        with filter_cols[4]:
+            cards_per_session = st.slider("Cards/session", 2, 12, 5, 1, key="earnings_cards_per_session")
+        with filter_cols[5]:
+            include_stocktwits = st.toggle("Stocktwits", value=False, key="earnings_stocktwits")
+        toggle_cols = st.columns([0.8, 0.8, 0.8, 1.6], gap="small")
+        with toggle_cols[0]:
+            only_most_discussed = st.toggle("Most discussed", value=True, key="earnings_only_most_discussed")
+        with toggle_cols[1]:
+            show_reported = st.toggle("Reported", value=True, key="earnings_show_reported")
+        with toggle_cols[2]:
+            upcoming_only = st.toggle("Upcoming only", value=False, key="earnings_upcoming_only")
+        with toggle_cols[3]:
+            st.caption("Before Open = pre-market releases. After Close = post-close releases. 7D move uses annualized ATM IV adjusted by sqrt(days/365).")
+
+    universe_df, universe_status = load_symbol_universe(False)
+    custom_tickers = parse_watchlist(ticker_search) if ticker_search else []
+    scan_universe = select_scan_universe(
+        universe_df,
+        universe_preset,
+        [],
+        [],
+        "",
+        custom_tickers,
+        "Broad universe sample",
+        int(max_scan),
+        42,
+    )
+    tickers = tuple(scan_universe["Ticker"].dropna().astype(str).tolist())
+    week_end = week_start + timedelta(days=4)
+    with st.spinner("Building weekly earnings calendar from earnings dates, headlines, social mentions, and options data..."):
+        articles, headline_statuses, headline_refreshed, headline_stats = fetch_market_macro_headlines(MARKET_MACRO_FEEDS, tickers)
+        social_mentions, social_statuses = fetch_social_mentions(
+            parse_feed_lines(default_social_feed_text()),
+            tickers,
+            True,
+            include_stocktwits,
+            min(40, len(tickers)),
+        )
+        rows, earnings_statuses, earnings_refreshed = fetch_weekly_earnings_releases(tickers, week_start.isoformat(), week_end.isoformat())
+        earnings_df = attach_anticipation_scores(rows, articles, social_mentions)
+    sector_options = sorted(earnings_df["Sector"].dropna().astype(str).unique().tolist()) if not earnings_df.empty and "Sector" in earnings_df else []
+    sector_filter = st.multiselect("Sector filter", sector_options, default=[], key="earnings_sector_filter") if sector_options else []
+    filtered = filter_earnings_frame(
+        earnings_df,
+        session_filter,
+        float(minimum_score),
+        sector_filter,
+        ticker_search,
+        only_most_discussed,
+        show_reported,
+        upcoming_only,
+        sort_mode,
+    )
+    render_earnings_summary(filtered, week_start)
+    st.caption(
+        f"Source: Yahoo Finance/yfinance earnings dates and options | Headlines: {', '.join(headline_stats.get('sources', [])) or 'RSS/API feeds'} | "
+        f"Last refreshed: {earnings_refreshed.strftime('%I:%M:%S %p ET').lstrip('0')}"
+    )
+    render_weekly_earnings_grid(filtered, week_start, session_filter, int(cards_per_session))
+
+    with st.expander("Expanded earnings detail", expanded=False):
+        if filtered.empty:
+            st.info("No earnings rows match the current filters.")
+        else:
+            detail_cols = [
+                "Ticker",
+                "Company",
+                "Earnings Date",
+                "Session",
+                "Anticipation Score",
+                "7D Implied Move %",
+                "Revenue Estimate",
+                "EPS Estimate",
+                "Actual Revenue",
+                "Actual EPS",
+                "News Mentions",
+                "Social Mentions",
+                "Short %",
+            ]
+            detail = filtered[[column for column in detail_cols if column in filtered]].copy()
+            render_dashboard_table(detail, height=table_height_for_rows(detail, max_height=360))
+            selected_ticker = st.selectbox("Open ticker in Company Analysis", filtered["Ticker"].astype(str).unique().tolist(), key="earnings_open_ticker")
+            if st.button("Open Company Analysis", key="earnings_open_company_analysis"):
+                st.session_state["three_statement_ticker_input"] = selected_ticker
+                st.session_state["main_tab"] = "Company Analysis"
+                st.rerun()
+
+    with st.expander("Data validation", expanded=False):
+        validation_rows = [
+            {"Metric": "selected_week", "Value": f"{week_start} to {week_end}"},
+            {"Metric": "number_of_earnings_names", "Value": f"{len(filtered):,}"},
+            {"Metric": "number_before_open", "Value": f"{int(filtered['Session'].eq('Before Open').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
+            {"Metric": "number_after_close", "Value": f"{int(filtered['Session'].eq('After Close').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
+            {"Metric": "number_time_unknown", "Value": f"{int(filtered['Session'].eq('Time Not Supplied').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
+            {"Metric": "ranking_formula_used", "Value": "0.40 social + 0.30 news + 0.15 implied move + 0.10 options activity + 0.05 short interest"},
+            {"Metric": "data_sources_used", "Value": "Yahoo Finance/yfinance, shared RSS/API headlines, social RSS/Stocktwits optional"},
+            {"Metric": "tickers_loaded", "Value": f"{len(tickers):,}"},
+            {"Metric": "top_anticipated_tickers", "Value": ", ".join(filtered.head(5)["Ticker"].astype(str).tolist()) if not filtered.empty else "N/A"},
+            {"Metric": "missing_logo_count", "Value": f"{int(filtered['Logo URL'].isna().sum()) if not filtered.empty and 'Logo URL' in filtered else 0:,}"},
+            {"Metric": "missing_iv_count", "Value": f"{int(pd.to_numeric(filtered.get('7D Implied Move %', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
+            {"Metric": "missing_revenue_estimate_count", "Value": f"{int(pd.to_numeric(filtered.get('Revenue Estimate', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
+            {"Metric": "missing_eps_estimate_count", "Value": f"{int(pd.to_numeric(filtered.get('EPS Estimate', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
+            {"Metric": "missing_actual_results_count", "Value": f"{int(pd.to_numeric(filtered.get('Actual EPS', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
+            {"Metric": "headline_rows", "Value": f"{len(articles):,}"},
+            {"Metric": "social_rows", "Value": f"{len(social_mentions):,}"},
+            {"Metric": "earnings_source_status_rows", "Value": f"{len(earnings_statuses):,}"},
+        ]
+        render_dashboard_table(pd.DataFrame(validation_rows), height=420)
+
+
 def render_home_dashboard() -> None:
     st.sidebar.header("Home")
     refresh_requested = st.sidebar.button("Refresh home data", use_container_width=True)
@@ -16549,7 +17367,7 @@ def main() -> None:
     inject_css()
     refresh_config = render_global_refresh_controls()
     st.sidebar.divider()
-    page_options = ["Home", "Volatility Radar", "Company Analysis", "Competitive Analysis"]
+    page_options = ["Home", "Volatility Radar", "Earnings", "Company Analysis", "Competitive Analysis"]
     if st.session_state.get("main_tab") == "3-Statement Analysis":
         st.session_state["main_tab"] = "Company Analysis"
     if st.session_state.get("main_tab") == "Stock Due Diligence":
@@ -16567,6 +17385,8 @@ def main() -> None:
 
     if page == "Home":
         render_home_dashboard()
+    elif page == "Earnings":
+        render_earnings_calendar_tab()
     elif page == "Competitive Analysis":
         render_competitive_analysis_tab()
     elif page == "Company Analysis":
