@@ -8520,7 +8520,7 @@ def inject_css() -> None:
                 border: 1px solid var(--term-line-soft);
                 border-radius: 8px;
                 margin-top: 0.48rem;
-                padding: 0.52rem 0.58rem;
+                padding: 0.6rem 0.68rem 0.58rem 0.68rem;
             }
 
             .stock-graphic-top {
@@ -8539,7 +8539,7 @@ def inject_css() -> None:
                 border: 1px solid var(--term-line-soft);
                 border-radius: 999px;
                 height: 0.62rem;
-                margin-top: 1.38rem;
+                margin-top: 1.3rem;
                 overflow: visible;
                 position: relative;
             }
@@ -9161,8 +9161,10 @@ def inject_css() -> None:
                 border: 1px solid var(--term-line-soft);
                 border-radius: 8px;
                 margin-top: 0.15rem;
-                max-height: 27rem;
+                max-height: 25rem;
                 overflow: auto;
+                scrollbar-color: var(--term-line) transparent;
+                scrollbar-width: thin;
             }
 
             .forecast-table table {
@@ -9183,7 +9185,7 @@ def inject_css() -> None:
                 text-align: left;
                 text-transform: uppercase;
                 top: 0;
-                z-index: 1;
+                z-index: 2;
             }
 
             .forecast-table td {
@@ -9193,7 +9195,7 @@ def inject_css() -> None:
                 font-family: Inter, "Segoe UI", Arial, sans-serif;
                 font-size: 0.73rem;
                 font-weight: 650;
-                padding: 0.46rem 0.55rem;
+                padding: 0.42rem 0.55rem;
                 vertical-align: middle;
                 white-space: nowrap;
             }
@@ -10446,6 +10448,7 @@ def render_multi_series_chart(
     if chart_frame.empty:
         st.info("No chart data available.")
         return
+    chart_frame["Label"] = chart_frame["Value"].map(lambda value: "" if pd.isna(value) else f"{float(value):+,.1f}" if float(value) < 0 else f"{float(value):,.1f}")
     encoding = dict(
         x=alt.X(f"{index_column}:N", title=None, axis=alt.Axis(labelAngle=0)),
         y=alt.Y("Value:Q", title=y_title),
@@ -10461,13 +10464,40 @@ def render_multi_series_chart(
         ],
     )
     if chart_type == "line":
-        chart = alt.Chart(chart_frame).mark_line(point=True, strokeWidth=2).encode(**encoding)
+        line = alt.Chart(chart_frame).mark_line(point=True, strokeWidth=2).encode(**encoding)
+        latest = chart_frame.groupby("Series", as_index=False).tail(1)
+        labels = (
+            alt.Chart(latest)
+            .mark_text(align="left", dx=7, color="#d7e7e9", fontSize=10, fontWeight=800)
+            .encode(
+                x=alt.X(f"{index_column}:N", title=None),
+                y=alt.Y("Value:Q"),
+                text="Label:N",
+                color=alt.Color(
+                    "Series:N",
+                    scale=alt.Scale(range=["#5ec7e8", "#49d69b", "#9bdcf3", "#ef6f7b", "#d5c56f"]),
+                    legend=None,
+                ),
+            )
+        )
+        chart = line + labels
     else:
-        chart = (
+        bars = (
             alt.Chart(chart_frame)
             .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
             .encode(**encoding, xOffset=alt.XOffset("Series:N"))
         )
+        labels = (
+            alt.Chart(chart_frame)
+            .mark_text(dy=-6, color="#d7e7e9", fontSize=10, fontWeight=800)
+            .encode(
+                x=alt.X(f"{index_column}:N", title=None),
+                y=alt.Y("Value:Q"),
+                xOffset=alt.XOffset("Series:N"),
+                text="Label:N",
+            )
+        )
+        chart = bars + labels
     st.altair_chart(base_chart(chart.properties(height=height)), use_container_width=True)
 
 
@@ -11262,6 +11292,31 @@ def plotly_base_layout(fig, height: int) -> None:
     )
 
 
+def chart_value_label(value: object, y_title: str = "") -> str:
+    number = coerce_float(value)
+    if number is None:
+        return ""
+    title = str(y_title or "").casefold()
+    if "eps" in title:
+        return format_currency(number, 2)
+    if "%" in str(y_title) or any(term in title for term in ("margin", "move", "return", "yield", "ratio")):
+        return format_percent(number, 1, signed=number != 0)
+    if "$" in str(y_title) or any(term in title for term in ("amount", "revenue", "cash", "income", "debt", "asset", "liabilit")):
+        return format_compact_currency(number, 1)
+    return format_number(number, 1)
+
+
+def padded_axis_range(values: list[float]) -> list[float] | None:
+    clean = [float(value) for value in values if value is not None and not pd.isna(value)]
+    if not clean:
+        return None
+    low = min(0.0, min(clean))
+    high = max(0.0, max(clean))
+    span = max(high - low, max(abs(low), abs(high)) * 0.2, 1e-9)
+    pad = span * 0.14
+    return [low - pad, high + pad]
+
+
 def waterfall_altair_frame(steps: list[dict[str, object]]) -> pd.DataFrame:
     rows = []
     running = 0.0
@@ -11437,19 +11492,43 @@ def render_line_chart(frame: pd.DataFrame, columns: list[str], title: str, y_tit
         ordered = frame.sort_values("Period Date") if "Period Date" in frame else frame
         fig = plotly_module.Figure()
         colors = ["#5ec7e8", "#49d69b", "#9bdcf3", "#ef6f7b", "#d5c56f", "#a7b4ff"]
+        scaled_values: list[float] = []
         for index, column in enumerate(available):
+            raw_y = pd.to_numeric(ordered[column], errors="coerce")
+            plot_y = raw_y / value_scale
+            scaled_values.extend([float(item) for item in plot_y.dropna().tolist()])
             fig.add_trace(
                 plotly_module.Scatter(
                     x=ordered["Period"],
-                    y=pd.to_numeric(ordered[column], errors="coerce") / value_scale,
+                    y=plot_y,
                     mode="lines+markers",
                     name=column,
                     line={"color": colors[index % len(colors)], "width": 2},
                     hovertemplate=f"{column}<br>%{{x}}<br>%{{y:,.2f}}<extra></extra>",
                 )
             )
+            latest_index = raw_y.dropna().index[-1] if raw_y.notna().any() else None
+            if latest_index is not None:
+                latest_period = ordered.loc[latest_index, "Period"]
+                latest_raw = raw_y.loc[latest_index]
+                latest_plot = plot_y.loc[latest_index]
+                fig.add_trace(
+                    plotly_module.Scatter(
+                        x=[latest_period],
+                        y=[latest_plot],
+                        mode="text",
+                        text=[chart_value_label(latest_raw, y_title)],
+                        textposition="top center",
+                        textfont={"color": colors[index % len(colors)], "size": 10, "family": "Inter, Segoe UI, Arial"},
+                        showlegend=False,
+                        hoverinfo="skip",
+                        cliponaxis=False,
+                    )
+                )
         plotly_base_layout(fig, height)
-        fig.update_yaxes(title=y_title, gridcolor="#19313a", zerolinecolor="#23424d")
+        axis_range = padded_axis_range(scaled_values)
+        fig.update_yaxes(title=y_title, gridcolor="#19313a", zerolinecolor="#23424d", range=axis_range, automargin=True)
+        fig.update_xaxes(automargin=True)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=key)
         return True
     render_multi_series_chart(frame, "Period", available, "line", y_title, value_scale=value_scale, height=height)
@@ -11466,19 +11545,33 @@ def render_bar_chart(frame: pd.DataFrame, columns: list[str], title: str, y_titl
         ordered = frame.sort_values("Period Date") if "Period Date" in frame else frame
         fig = plotly_module.Figure()
         colors = ["#5ec7e8", "#49d69b", "#9bdcf3", "#ef6f7b", "#d5c56f", "#a7b4ff", "#92aab2"]
+        scaled_values: list[float] = []
         for index, column in enumerate(available):
+            raw_y = pd.to_numeric(ordered[column], errors="coerce")
+            plot_y = raw_y / value_scale
+            scaled_values.extend([float(item) for item in plot_y.dropna().tolist()])
             fig.add_trace(
                 plotly_module.Bar(
                     x=ordered["Period"],
-                    y=pd.to_numeric(ordered[column], errors="coerce") / value_scale,
+                    y=plot_y,
                     name=column,
                     marker={"color": colors[index % len(colors)]},
+                    text=[chart_value_label(item, y_title) for item in raw_y],
+                    textposition="inside" if stacked else "outside",
+                    textfont={"color": "#d7e7e9", "size": 10},
+                    cliponaxis=False,
                     hovertemplate=f"{column}<br>%{{x}}<br>%{{y:,.2f}}<extra></extra>",
                 )
             )
         plotly_base_layout(fig, height)
-        fig.update_layout(barmode="stack" if stacked else "group")
-        fig.update_yaxes(title=y_title, gridcolor="#19313a", zerolinecolor="#23424d")
+        fig.update_layout(
+            barmode="stack" if stacked else "group",
+            uniformtext={"mode": "hide", "minsize": 8},
+            margin={"l": 54, "r": 24, "t": 42, "b": 48},
+        )
+        axis_range = None if stacked else padded_axis_range(scaled_values)
+        fig.update_yaxes(title=y_title, gridcolor="#19313a", zerolinecolor="#23424d", range=axis_range, automargin=True)
+        fig.update_xaxes(automargin=True)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=key)
         return True
     render_multi_series_chart(frame, "Period", available, "bar", y_title, value_scale=value_scale, height=height)
@@ -12766,7 +12859,9 @@ def render_actuals_consensus_chart(frame: pd.DataFrame, actual_col: str, consens
         return False
     plotly_module = plotly_go()
     actual = pd.to_numeric(frame[actual_col], errors="coerce") / value_scale
+    actual_raw = pd.to_numeric(frame[actual_col], errors="coerce")
     consensus = pd.to_numeric(frame[consensus_col], errors="coerce") / value_scale if consensus_col in frame else pd.Series(dtype=float)
+    consensus_raw = pd.to_numeric(frame[consensus_col], errors="coerce") if consensus_col in frame else pd.Series(dtype=float)
     if plotly_module is not None:
         fig = plotly_module.Figure()
         fig.add_trace(
@@ -12775,6 +12870,10 @@ def render_actuals_consensus_chart(frame: pd.DataFrame, actual_col: str, consens
                 y=actual,
                 name=actual_col,
                 marker={"color": "#5ec7e8"},
+                text=[chart_value_label(item, y_title) for item in actual_raw],
+                textposition="outside",
+                textfont={"color": "#d7e7e9", "size": 10},
+                cliponaxis=False,
                 hovertemplate=f"{actual_col}<br>%{{x}}<br>%{{y:,.2f}}<extra></extra>",
             )
         )
@@ -12787,12 +12886,18 @@ def render_actuals_consensus_chart(frame: pd.DataFrame, actual_col: str, consens
                     name=consensus_col,
                     line={"color": "#e6d36f", "width": 2.5},
                     marker={"size": 8},
+                    text=[chart_value_label(item, y_title) for item in consensus_raw],
+                    textposition="top center",
+                    textfont={"color": "#e6d36f", "size": 10},
                     hovertemplate=f"{consensus_col}<br>%{{x}}<br>%{{y:,.2f}}<extra></extra>",
+                    cliponaxis=False,
                 )
             )
         plotly_base_layout(fig, height)
-        fig.update_layout(barmode="group")
-        fig.update_yaxes(title=y_title, gridcolor="#19313a", zerolinecolor="#23424d")
+        scaled_values = [float(item) for item in pd.concat([actual, consensus], ignore_index=True).dropna().tolist()]
+        fig.update_layout(barmode="group", margin={"l": 54, "r": 24, "t": 46, "b": 42})
+        fig.update_yaxes(title=y_title, gridcolor="#19313a", zerolinecolor="#23424d", range=padded_axis_range(scaled_values), automargin=True)
+        fig.update_xaxes(automargin=True)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True}, key=key)
     else:
         render_bar_chart(frame.rename(columns={actual_col: title}), [title], title, y_title, key=key, value_scale=value_scale, height=height)
@@ -12842,6 +12947,7 @@ def render_stock_performance_statistics_row(
     stock_status: pd.DataFrame | None = None,
     refreshed_at: datetime | None = None,
     performance_history: pd.DataFrame | None = None,
+    show_range: bool = True,
 ) -> dict[str, object]:
     with st.container(border=True):
         render_statement_section_title(
@@ -12902,7 +13008,26 @@ def render_stock_performance_statistics_row(
                     {"label": "1M Return", "value": format_percent(one_month_return, 2, signed=True), "context": "momentum", "tone": quote_tone(one_month_return)},
                 ]
             )
-            range_debug = render_stock_range_graphic("52W Price Position", last_price, low_52w, high_52w, ticker=ticker)
+            if show_range:
+                range_debug = render_stock_range_graphic("52W Price Position", last_price, low_52w, high_52w, ticker=ticker)
+            else:
+                position = range_position(last_price, low_52w, high_52w)
+                midpoint = (float(low_52w) + float(high_52w)) / 2 if low_52w is not None and high_52w is not None else None
+                raw_position = (
+                    (float(last_price) - float(low_52w)) / (float(high_52w) - float(low_52w)) * 100
+                    if last_price is not None and low_52w is not None and high_52w is not None and high_52w != low_52w
+                    else None
+                )
+                range_debug = {
+                    "current_price": last_price,
+                    "low": low_52w,
+                    "midpoint": midpoint,
+                    "high": high_52w,
+                    "position_pct": position,
+                    "raw_position_pct": raw_position,
+                    "clamped": raw_position is not None and position is not None and raw_position != position,
+                    "missing": position is None,
+                }
 
         return {
             "chart_rendered": chart_rendered,
@@ -12973,6 +13098,13 @@ def render_three_statement_analysis_dashboard() -> None:
     performance_history = fetch_performance_history(ticker, "1Y")
     entry_debug = render_entry_quality_signal(ticker, stock_snapshot, performance_history)
     render_company_options_metrics(stock_snapshot)
+    top_range_debug = render_stock_range_graphic(
+        "52W Price Position",
+        coerce_float(stock_snapshot.get("Last Price")),
+        coerce_float(stock_snapshot.get("52W Low")),
+        coerce_float(stock_snapshot.get("52W High")),
+        ticker=ticker,
+    )
 
     with st.spinner(f"Fetching financial statements for {ticker}..."):
         payload = fetch_company_financials(ticker, statement_period, periods_to_show, date.today().year)
@@ -13075,6 +13207,7 @@ def render_three_statement_analysis_dashboard() -> None:
         stock_status=stock_status,
         refreshed_at=stock_refreshed_at,
         performance_history=performance_history,
+        show_range=False,
     )
     cash_for_insights = cash_debug.get("merged") if isinstance(cash_debug.get("merged"), pd.DataFrame) else cash_frame
     insights = render_three_statement_insights(
@@ -13092,10 +13225,10 @@ def render_three_statement_analysis_dashboard() -> None:
             {"Metric": "last_price", "Value": format_currency(stock_snapshot.get("Last Price"), 2)},
             {"Metric": "previous_close", "Value": format_currency(stock_snapshot.get("Previous Close"), 2)},
             {"Metric": "daily_change_pct", "Value": format_percent(stock_snapshot.get("Daily Change %"), 2, signed=True)},
-            {"Metric": "52w_low", "Value": format_currency(stock_context_debug.get("range_low"), 2)},
-            {"Metric": "52w_high", "Value": format_currency(stock_context_debug.get("range_high"), 2)},
-            {"Metric": "range_position", "Value": format_percent(stock_context_debug.get("range_position_pct"), 2)},
-            {"Metric": "range_percent", "Value": format_percent(stock_context_debug.get("range_position_pct"), 2)},
+            {"Metric": "52w_low", "Value": format_currency(top_range_debug.get("low"), 2)},
+            {"Metric": "52w_high", "Value": format_currency(top_range_debug.get("high"), 2)},
+            {"Metric": "range_position", "Value": format_percent(top_range_debug.get("position_pct"), 2)},
+            {"Metric": "range_percent", "Value": format_percent(top_range_debug.get("position_pct"), 2)},
             {"Metric": "logo_url", "Value": stock_snapshot.get("Logo URL") or "N/A"},
             {"Metric": "options_expiry_used", "Value": str(stock_snapshot.get("Options Expiry Used") or "N/A")},
             {"Metric": "atm_strike_used", "Value": format_currency(stock_snapshot.get("ATM Strike Used"), 2)},
@@ -13510,6 +13643,28 @@ def render_volatility_radar() -> None:
         step=1_000_000.0,
         format="%.0f",
     )
+    min_implied_move = st.sidebar.slider(
+        "Minimum implied move",
+        min_value=0.0,
+        max_value=100.0,
+        value=0.0,
+        step=0.5,
+        help="Filters the compact table by 7D implied move percentage.",
+    )
+    min_short_pct = st.sidebar.slider(
+        "Minimum short %",
+        min_value=0.0,
+        max_value=80.0,
+        value=0.0,
+        step=0.5,
+        help="Filters by short interest as a percentage of float when available.",
+    )
+    skew_direction_filter = st.sidebar.multiselect(
+        "Skewed direction",
+        ["BULLISH", "BEARISH", "NEUTRAL", "MIXED"],
+        default=["BULLISH", "BEARISH", "NEUTRAL", "MIXED"],
+        help="Direction skew is options-derived when possible, otherwise inferred from price/news/social signals.",
+    )
 
     enable_social = st.sidebar.checkbox("Include social mention signals", value=True)
     social_lookback_days = st.sidebar.slider(
@@ -13650,6 +13805,13 @@ def render_volatility_radar() -> None:
             social_lookback_days,
             horizon_days,
         )
+        raw_forecast_count = len(forecast_df)
+        implied_metric = (
+            pd.to_numeric(forecast_df["Implied Move"], errors="coerce")
+            if "Implied Move" in forecast_df
+            else pd.Series([pd.NA] * len(forecast_df), index=forecast_df.index, dtype="Float64")
+        )
+        missing_options_count = int(implied_metric.isna().sum()) if not forecast_df.empty else 0
         forecast_df = apply_forecast_filters(
             forecast_df,
             size_filters,
@@ -13657,6 +13819,27 @@ def render_volatility_radar() -> None:
             min_price,
             min_dollar_volume,
         )
+        if not forecast_df.empty and min_implied_move > 0:
+            implied_metric = (
+                pd.to_numeric(forecast_df["Implied Move"], errors="coerce")
+                if "Implied Move" in forecast_df
+                else pd.Series([pd.NA] * len(forecast_df), index=forecast_df.index, dtype="Float64")
+            )
+            forecast_df = forecast_df[
+                implied_metric.fillna(-1) >= float(min_implied_move)
+            ]
+        if not forecast_df.empty and min_short_pct > 0:
+            short_metric = (
+                pd.to_numeric(forecast_df["Short %"], errors="coerce")
+                if "Short %" in forecast_df
+                else pd.Series([pd.NA] * len(forecast_df), index=forecast_df.index, dtype="Float64")
+            )
+            forecast_df = forecast_df[
+                short_metric.fillna(-1) >= float(min_short_pct)
+            ]
+        if not forecast_df.empty and skew_direction_filter and len(skew_direction_filter) < 4 and "Skewed Direction" in forecast_df:
+            allowed_skews = {str(item).casefold() for item in skew_direction_filter}
+            forecast_df = forecast_df[forecast_df["Skewed Direction"].astype(str).str.casefold().isin(allowed_skews)]
         sort_column_used = sort_metric_for_mode(forecast_df, sort_mode) if not forecast_df.empty else "N/A"
         forecast_df = sort_forecast_for_mode(forecast_df, sort_mode)
 
@@ -13714,6 +13897,26 @@ def render_volatility_radar() -> None:
         + " | "
         + freshness_caption(scheduled_meta, "Official calendars")
     )
+
+    with st.expander("Data validation", expanded=False):
+        validation_rows = [
+            {"Metric": "selected_expiry_window", "Value": "7D nearest available options expiry"},
+            {
+                "Metric": "implied_move_formula_used",
+                "Value": "Annualized ATM IV x sqrt(days_to_expiry / 365)",
+            },
+            {"Metric": "number_of_candidates_loaded", "Value": f"{candidate_count:,}"},
+            {"Metric": "number_of_tickers_scanned", "Value": f"{len(tickers):,}"},
+            {"Metric": "raw_forecast_rows", "Value": f"{raw_forecast_count:,}"},
+            {"Metric": "number_of_tickers_after_filters", "Value": f"{len(forecast_df):,}"},
+            {"Metric": "rows_displayed", "Value": f"{len(ranked_df):,}"},
+            {"Metric": "missing_options_count", "Value": f"{missing_options_count:,}"},
+            {"Metric": "minimum_implied_move_filter", "Value": format_move(min_implied_move, 1)},
+            {"Metric": "minimum_short_filter", "Value": format_percent(min_short_pct, 1)},
+            {"Metric": "skew_filter", "Value": ", ".join(skew_direction_filter) if skew_direction_filter else "None"},
+            {"Metric": "sort_column_used", "Value": sort_column_used},
+        ]
+        render_dashboard_table(pd.DataFrame(validation_rows), height=360)
 
     if show_debug:
         with st.expander("Developer diagnostics", expanded=False):
