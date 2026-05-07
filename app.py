@@ -158,6 +158,7 @@ EARNINGS_FILTER_DEFAULTS = {
     "earnings_sector_filter": [],
     "earnings_expanded_buckets": [],
 }
+EARNINGS_DISPLAY_ENRICH_LIMIT = 50
 
 COMPETITIVE_PERIOD_OPTIONS = ["1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"]
 
@@ -15252,22 +15253,75 @@ def earnings_candidate_tickers(
     return tuple(cleaned[:cap])
 
 
-def fetch_single_earnings_release(ticker: str, week_start: date, week_end: date) -> dict[str, object] | None:
+def earnings_event_from_calendar_hint(calendar_hint: dict[str, object] | None, week_start: date, week_end: date) -> dict[str, object] | None:
+    if not calendar_hint:
+        return None
+    event_date = parse_date(calendar_hint.get("Earnings Date"))
+    if event_date is None or not (week_start <= event_date <= week_end):
+        return None
+    event_dt = parse_earnings_datetime(calendar_hint.get("Earnings DateTime"))
+    if event_dt is None:
+        event_dt = datetime.combine(event_date, datetime.min.time()).replace(tzinfo=EASTERN)
+    return {
+        "datetime": event_dt,
+        "date": event_date,
+        "session": str(calendar_hint.get("Session") or earnings_session_for_datetime(event_dt)),
+        "eps_estimate": coerce_float(calendar_hint.get("EPS Estimate")),
+        "eps_actual": coerce_float(calendar_hint.get("Actual EPS")),
+        "eps_surprise_pct": coerce_float(calendar_hint.get("EPS Surprise %")),
+    }
+
+
+def latest_reported_statement_revenue(yf_ticker: yf.Ticker, event_date: date | None) -> float | None:
+    try:
+        income = get_statement(yf_ticker, ("quarterly_income_stmt", "quarterly_financials"))
+    except Exception:
+        income = pd.DataFrame()
+    revenue_series = statement_series(income, ("Total Revenue", "Revenue", "Operating Revenue"))
+    if revenue_series.empty:
+        return None
+    clean = revenue_series.dropna()
+    if clean.empty:
+        return None
+    if event_date is not None:
+        try:
+            dated = clean.copy()
+            dated.index = pd.to_datetime(dated.index, errors="coerce")
+            dated = dated[~pd.isna(dated.index)].sort_index()
+            cutoff = pd.Timestamp(event_date)
+            candidates = dated[dated.index <= cutoff]
+            if candidates.empty:
+                candidates = dated
+            return coerce_float(candidates.iloc[-1])
+        except Exception:
+            pass
+    return coerce_float(clean.iloc[-1])
+
+
+def fetch_single_earnings_release(
+    ticker: str,
+    week_start: date,
+    week_end: date,
+    calendar_hint: dict[str, object] | None = None,
+) -> dict[str, object] | None:
     symbol = normalize_symbol(ticker)
     if not symbol or yf is None:
         return None
     try:
         yf_ticker = make_yf_ticker(symbol)
-        earnings_frame = earnings_dates_frame(yf_ticker)
-        event_rows = [
-            row
-            for row in earnings_date_rows(earnings_frame)
-            if week_start <= row["date"] <= week_end
-        ]
-        if not event_rows:
-            return None
-        event_rows.sort(key=lambda row: row["datetime"] or datetime.max.replace(tzinfo=EASTERN))
-        event = event_rows[0]
+        event_rows: list[dict[str, object]] = []
+        event = earnings_event_from_calendar_hint(calendar_hint, week_start, week_end)
+        if event is None:
+            earnings_frame = earnings_dates_frame(yf_ticker)
+            event_rows = [
+                row
+                for row in earnings_date_rows(earnings_frame)
+                if week_start <= row["date"] <= week_end
+            ]
+            if not event_rows:
+                return None
+            event_rows.sort(key=lambda row: row["datetime"] or datetime.max.replace(tzinfo=EASTERN))
+            event = event_rows[0]
         info: dict = {}
         try:
             fast_info = getattr(yf_ticker, "fast_info", {}) or {}
@@ -15302,12 +15356,22 @@ def fetch_single_earnings_release(ticker: str, week_start: date, week_end: date)
         option_data = options_snapshot(symbol, yf_ticker, last_price, 7, True)
         earnings_estimate = get_estimate_frame(yf_ticker, "get_earnings_estimate", "earnings_estimate")
         revenue_estimate = get_estimate_frame(yf_ticker, "get_revenue_estimate", "revenue_estimate")
-        eps_estimate = event.get("eps_estimate") or estimate_frame_average(earnings_estimate)
-        revenue_est = estimate_frame_average(revenue_estimate)
+        eps_estimate = event.get("eps_estimate") or coerce_float((calendar_hint or {}).get("EPS Estimate")) or estimate_frame_average(earnings_estimate)
+        revenue_est = coerce_float((calendar_hint or {}).get("Revenue Estimate")) or estimate_frame_average(revenue_estimate)
         eps_actual = coerce_float(event.get("eps_actual"))
+        actual_revenue = coerce_float((calendar_hint or {}).get("Actual Revenue"))
+        is_reported = bool(eps_actual is not None or actual_revenue is not None or event["date"] < date.today())
+        if actual_revenue is None and is_reported:
+            actual_revenue = latest_reported_statement_revenue(yf_ticker, event.get("date"))
         eps_surprise_pct = coerce_float(event.get("eps_surprise_pct"))
         if eps_surprise_pct is None and eps_actual is not None and eps_estimate not in (None, 0):
             eps_surprise_pct = (eps_actual - eps_estimate) / abs(eps_estimate) * 100
+        revenue_surprise_pct = earnings_surprise_percent(actual_revenue, revenue_est)
+        note_parts = [str(option_data.get("message", "") or "").strip()]
+        if event_rows:
+            note_parts.append("yfinance earnings dates")
+        elif calendar_hint:
+            note_parts.append("calendar fallback enriched with yfinance quote/options")
         return {
             "Ticker": symbol,
             "Company": company,
@@ -15326,12 +15390,12 @@ def fetch_single_earnings_release(ticker: str, week_start: date, week_end: date)
             "Short %": short_interest_percent(info),
             "Revenue Estimate": revenue_est,
             "EPS Estimate": eps_estimate,
-            "Actual Revenue": None,
+            "Actual Revenue": actual_revenue,
             "Actual EPS": eps_actual,
-            "Revenue Surprise %": None,
+            "Revenue Surprise %": revenue_surprise_pct,
             "EPS Surprise %": eps_surprise_pct,
-            "Reported": bool(eps_actual is not None or event["date"] < date.today()),
-            "Data Notes": option_data.get("message", ""),
+            "Reported": is_reported,
+            "Data Notes": "; ".join(dict.fromkeys(part for part in note_parts if part)),
         }
     except Exception:
         return None
@@ -15348,11 +15412,12 @@ def fetch_weekly_earnings_releases(tickers: tuple[str, ...], week_start_iso: str
     clean_tickers = tuple(
         dict.fromkeys(
             normalize_symbol(ticker)
-            for ticker in tuple(tickers) + tuple(calendar_by_symbol.keys())
+            for ticker in tuple(calendar_by_symbol.keys()) + tuple(tickers)
             if normalize_symbol(ticker)
         )
     )
-    enrichment_tickers = clean_tickers[:16]
+    enrichment_cap = min(16, len(clean_tickers))
+    enrichment_tickers = clean_tickers[:enrichment_cap]
     if yf is None:
         statuses.append({"source": "Yahoo Finance/yfinance", "status": "Error", "message": yfinance_unavailable_message(), "rows": 0})
         return calendar_rows, statuses, eastern_now()
@@ -15369,7 +15434,10 @@ def fetch_weekly_earnings_releases(tickers: tuple[str, ...], week_start_iso: str
             }
         )
     with ThreadPoolExecutor(max_workers=min(8, len(enrichment_tickers))) as executor:
-        futures = {executor.submit(fetch_single_earnings_release, ticker, week_start, week_end): ticker for ticker in enrichment_tickers}
+        futures = {
+            executor.submit(fetch_single_earnings_release, ticker, week_start, week_end, calendar_by_symbol.get(ticker)): ticker
+            for ticker in enrichment_tickers
+        }
         for future in as_completed(futures):
             ticker = futures[future]
             try:
@@ -15798,6 +15866,166 @@ def earnings_bucket_options(frame: pd.DataFrame, week_start: date, session_filte
     return labels
 
 
+def earnings_visible_rows_for_grid(
+    frame: pd.DataFrame,
+    week_start: date,
+    session_filter: str,
+    cards_per_session: int,
+    show_time_not_supplied: bool,
+    expanded_buckets: list[str] | tuple[str, ...] = (),
+) -> pd.DataFrame:
+    if frame.empty or "Earnings Date" not in frame or "Session" not in frame:
+        return frame.head(0)
+    days = [week_start + timedelta(days=offset) for offset in range(5)]
+    sessions = list(PRIMARY_EARNINGS_SESSIONS)
+    if session_filter not in {"All", "Before Open", "After Close"}:
+        sessions = [session_filter]
+    elif session_filter in PRIMARY_EARNINGS_SESSIONS:
+        sessions = [session_filter]
+    expanded_set = set(expanded_buckets or [])
+    show_unknown = show_time_not_supplied or session_filter == "Time Not Supplied"
+    visible_indexes: list[object] = []
+    for day in days:
+        day_rows = frame[frame["Earnings Date"].eq(day)]
+        if day_rows.empty:
+            continue
+        day_sessions = list(sessions)
+        if session_filter == "All":
+            if day_rows["Session"].eq("During Market").any():
+                day_sessions.append("During Market")
+            if show_unknown and day_rows["Session"].eq("Time Not Supplied").any():
+                day_sessions.append("Time Not Supplied")
+        for session in day_sessions:
+            subset = day_rows[day_rows["Session"].eq(session)]
+            if subset.empty:
+                continue
+            bucket_label = earnings_bucket_label(day, session, len(subset))
+            sorted_subset = sort_earnings_cards(subset)
+            if bucket_label not in expanded_set:
+                sorted_subset = sorted_subset.head(cards_per_session)
+            visible_indexes.extend(sorted_subset.index.tolist())
+    if not visible_indexes:
+        return frame.head(0)
+    return frame.loc[list(dict.fromkeys(visible_indexes))]
+
+
+def earnings_hint_from_row(row: pd.Series) -> tuple:
+    event_date = parse_date(row.get("Earnings Date"))
+    event_dt = row.get("Earnings DateTime")
+    event_dt_text = event_dt.isoformat() if isinstance(event_dt, (datetime, pd.Timestamp)) else str(event_dt or "")
+    return (
+        str(row.get("Ticker") or ""),
+        event_date.isoformat() if event_date else "",
+        event_dt_text,
+        str(row.get("Session") or ""),
+        str(row.get("Company") or ""),
+        coerce_float(row.get("Revenue Estimate")),
+        coerce_float(row.get("EPS Estimate")),
+        coerce_float(row.get("Actual Revenue")),
+        coerce_float(row.get("Actual EPS")),
+        coerce_float(row.get("Revenue Surprise %")),
+        coerce_float(row.get("EPS Surprise %")),
+    )
+
+
+def row_from_earnings_hint(hint: tuple) -> dict[str, object]:
+    return {
+        "Ticker": hint[0],
+        "Earnings Date": parse_date(hint[1]),
+        "Earnings DateTime": parse_earnings_datetime(hint[2]),
+        "Session": hint[3],
+        "Company": hint[4],
+        "Revenue Estimate": hint[5],
+        "EPS Estimate": hint[6],
+        "Actual Revenue": hint[7],
+        "Actual EPS": hint[8],
+        "Revenue Surprise %": hint[9],
+        "EPS Surprise %": hint[10],
+    }
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_visible_earnings_enrichment(
+    hints: tuple[tuple, ...],
+    week_start_iso: str,
+    week_end_iso: str,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    if yf is None or not hints:
+        return [], [{"source": "Visible yfinance enrichment", "status": "Skipped", "message": yfinance_unavailable_message(), "rows": 0}]
+    week_start = parse_date(week_start_iso) or week_monday()
+    week_end = parse_date(week_end_iso) or (week_start + timedelta(days=4))
+    rows: list[dict[str, object]] = []
+    statuses: list[dict[str, object]] = []
+    hint_rows = [row_from_earnings_hint(hint) for hint in hints[:EARNINGS_DISPLAY_ENRICH_LIMIT]]
+    with ThreadPoolExecutor(max_workers=min(8, len(hint_rows))) as executor:
+        futures = {
+            executor.submit(fetch_single_earnings_release, str(hint.get("Ticker")), week_start, week_end, hint): hint
+            for hint in hint_rows
+            if hint.get("Ticker")
+        }
+        for future in as_completed(futures):
+            hint = futures[future]
+            ticker = str(hint.get("Ticker"))
+            try:
+                row = future.result()
+            except Exception as exc:
+                statuses.append({"source": ticker, "status": "Error", "message": str(exc), "rows": 0})
+                continue
+            if row:
+                rows.append(merge_earnings_calendar_hint(row, hint))
+                statuses.append({"source": ticker, "status": "OK", "message": "Visible card enriched", "rows": 1})
+            else:
+                statuses.append({"source": ticker, "status": "No data", "message": "No yfinance enrichment returned", "rows": 0})
+    return rows, statuses
+
+
+def merge_visible_earnings_enrichment(frame: pd.DataFrame, enriched_rows: list[dict[str, object]]) -> pd.DataFrame:
+    if frame.empty or not enriched_rows:
+        return frame
+    merged = frame.copy()
+    key_to_index = {
+        (str(row.get("Ticker")), parse_date(row.get("Earnings Date"))): index
+        for index, row in merged.iterrows()
+        if row.get("Ticker")
+    }
+    for enriched in enriched_rows:
+        key = (str(enriched.get("Ticker")), parse_date(enriched.get("Earnings Date")))
+        index = key_to_index.get(key)
+        if index is None:
+            continue
+        for column, value in enriched.items():
+            if column in {"Ticker", "Earnings Date", "Earnings DateTime"}:
+                continue
+            existing = merged.at[index, column] if column in merged.columns else None
+            if column not in merged.columns or existing in (None, "", "Unknown", "N/A") or pd.isna(existing):
+                merged.at[index, column] = value
+            elif column in {
+                "Last Price",
+                "Daily Change %",
+                "Logo URL",
+                "7D IV %",
+                "7D Implied Move %",
+                "Options Expiry Used",
+                "Options Contracts",
+                "Short %",
+                "Revenue Estimate",
+                "Actual Revenue",
+                "Revenue Surprise %",
+                "Reported",
+                "Data Notes",
+            } and value not in (None, "", "Unknown", "N/A"):
+                merged.at[index, column] = value
+    merged["Revenue Surprise $"] = (
+        pd.to_numeric(merged.get("Actual Revenue", pd.Series(index=merged.index, dtype=float)), errors="coerce")
+        - pd.to_numeric(merged.get("Revenue Estimate", pd.Series(index=merged.index, dtype=float)), errors="coerce")
+    )
+    merged["EPS Surprise $"] = (
+        pd.to_numeric(merged.get("Actual EPS", pd.Series(index=merged.index, dtype=float)), errors="coerce")
+        - pd.to_numeric(merged.get("EPS Estimate", pd.Series(index=merged.index, dtype=float)), errors="coerce")
+    )
+    return merged
+
+
 def render_weekly_earnings_grid(
     frame: pd.DataFrame,
     week_start: date,
@@ -16061,18 +16289,6 @@ def render_earnings_calendar_tab() -> None:
         upcoming_only,
         sort_mode,
     )
-    render_earnings_summary(filtered, week_start, earnings_df)
-    with st.expander("Sources and diagnostics", expanded=False):
-        diagnostic_rows = [
-            {"Metric": "Source used", "Value": "Nasdaq/Yahoo earnings calendars + Yahoo Finance/yfinance enrichment"},
-            {"Metric": "Headline sources", "Value": ", ".join(headline_stats.get("sources", [])) or "RSS/API feeds"},
-            {"Metric": "Last refreshed", "Value": earnings_refreshed.strftime("%I:%M:%S %p ET").lstrip("0")},
-            {"Metric": "Rows loaded", "Value": f"{len(earnings_df):,}"},
-            {"Metric": "Rows after filters", "Value": f"{len(filtered):,}"},
-            {"Metric": "Calendar source status rows", "Value": f"{len(calendar_preview_statuses):,}"},
-        ]
-        render_dashboard_table(pd.DataFrame(diagnostic_rows), height=table_height_for_rows(pd.DataFrame(diagnostic_rows), max_height=220))
-
     bucket_options = earnings_bucket_options(filtered, week_start, session_filter, show_time_not_supplied)
     if bucket_options:
         st.session_state["earnings_expanded_buckets"] = [
@@ -16089,6 +16305,34 @@ def render_earnings_calendar_tab() -> None:
         if bucket_options
         else []
     )
+    visible_rows = earnings_visible_rows_for_grid(
+        filtered,
+        week_start,
+        session_filter,
+        int(cards_per_session),
+        show_time_not_supplied,
+        expanded_buckets,
+    )
+    visible_hints = tuple(earnings_hint_from_row(row) for _, row in visible_rows.head(EARNINGS_DISPLAY_ENRICH_LIMIT).iterrows())
+    visible_enriched_rows, visible_enrichment_statuses = fetch_visible_earnings_enrichment(
+        visible_hints,
+        week_start.isoformat(),
+        week_end.isoformat(),
+    )
+    filtered = merge_visible_earnings_enrichment(filtered, visible_enriched_rows)
+    render_earnings_summary(filtered, week_start, earnings_df)
+    with st.expander("Sources and diagnostics", expanded=False):
+        diagnostic_rows = [
+            {"Metric": "Source used", "Value": "Nasdaq/Yahoo earnings calendars + Yahoo Finance/yfinance enrichment"},
+            {"Metric": "Headline sources", "Value": ", ".join(headline_stats.get("sources", [])) or "RSS/API feeds"},
+            {"Metric": "Last refreshed", "Value": earnings_refreshed.strftime("%I:%M:%S %p ET").lstrip("0")},
+            {"Metric": "Rows loaded", "Value": f"{len(earnings_df):,}"},
+            {"Metric": "Rows after filters", "Value": f"{len(filtered):,}"},
+            {"Metric": "Visible cards enriched", "Value": f"{len(visible_enriched_rows):,} of {len(visible_hints):,} requested"},
+            {"Metric": "Calendar source status rows", "Value": f"{len(calendar_preview_statuses):,}"},
+        ]
+        render_dashboard_table(pd.DataFrame(diagnostic_rows), height=table_height_for_rows(pd.DataFrame(diagnostic_rows), max_height=220))
+
     grid_stats = render_weekly_earnings_grid(
         filtered,
         week_start,
@@ -16151,6 +16395,7 @@ def render_earnings_calendar_tab() -> None:
         status_frames = [
             pd.DataFrame(calendar_preview_statuses),
             pd.DataFrame(earnings_statuses),
+            pd.DataFrame(visible_enrichment_statuses),
             pd.DataFrame(headline_statuses),
             pd.DataFrame(social_statuses),
         ]
@@ -16170,6 +16415,8 @@ def render_earnings_calendar_tab() -> None:
             {"Metric": "rows_after_filters", "Value": f"{len(filtered):,}"},
             {"Metric": "number_of_cards_rendered", "Value": f"{int(grid_stats.get('number_of_cards_rendered', 0)):,}"},
             {"Metric": "number_of_hidden_cards_due_to_limit", "Value": f"{int(grid_stats.get('number_of_hidden_cards_due_to_limit', 0)):,}"},
+            {"Metric": "visible_card_enrichment_requested", "Value": f"{len(visible_hints):,}"},
+            {"Metric": "visible_card_enrichment_returned", "Value": f"{len(visible_enriched_rows):,}"},
             {"Metric": "expanded_buckets", "Value": ", ".join(expanded_buckets) if expanded_buckets else "None"},
             {"Metric": "show_time_not_supplied", "Value": str(bool(show_time_not_supplied))},
             {"Metric": "overflow_fix_enabled", "Value": str(bool(grid_stats.get("overflow_fix_enabled", True)))},
