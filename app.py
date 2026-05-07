@@ -8368,13 +8368,13 @@ def inject_css() -> None:
             }
 
             .earnings-card {
-                background: #071014;
+                background: linear-gradient(180deg, #0a151a 0%, #071014 100%);
                 border: 1px solid var(--term-line-soft);
                 border-left: 3px solid var(--term-amber);
                 border-radius: 7px;
                 margin-bottom: 0.45rem;
                 min-width: 0;
-                padding: 0.48rem;
+                padding: 0.52rem;
             }
 
             .earnings-card:last-child {
@@ -8382,16 +8382,28 @@ def inject_css() -> None:
             }
 
             .earnings-card-top {
-                align-items: center;
+                align-items: start;
                 display: grid;
-                gap: 0.45rem;
+                gap: 0.5rem;
                 grid-template-columns: auto minmax(0, 1fr);
             }
 
             .earnings-card .company-logo {
                 border-radius: 9px;
-                height: 2.05rem;
-                width: 2.05rem;
+                height: 2.2rem;
+                width: 2.2rem;
+            }
+
+            .earnings-card-heading {
+                min-width: 0;
+            }
+
+            .earnings-card-titleline {
+                align-items: center;
+                display: flex;
+                gap: 0.35rem;
+                justify-content: space-between;
+                min-width: 0;
             }
 
             .earnings-card-ticker {
@@ -8403,6 +8415,27 @@ def inject_css() -> None:
                 line-height: 1;
                 overflow: hidden;
                 text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .earnings-card-meta {
+                align-items: center;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.24rem;
+                margin-top: 0.28rem;
+            }
+
+            .earnings-card-badge {
+                background: rgba(94, 199, 232, 0.08);
+                border: 1px solid rgba(94, 199, 232, 0.22);
+                border-radius: 999px;
+                color: var(--term-muted);
+                font-size: 0.48rem;
+                font-weight: 950;
+                line-height: 1;
+                padding: 0.19rem 0.31rem;
+                text-transform: uppercase;
                 white-space: nowrap;
             }
 
@@ -8419,9 +8452,17 @@ def inject_css() -> None:
 
             .earnings-card-metrics {
                 display: grid;
-                gap: 0.28rem;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 0.25rem;
                 margin-top: 0.42rem;
+            }
+
+            .earnings-card-metrics.expectations {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+
+            .earnings-card-metrics.actuals {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                margin-top: 0.25rem;
             }
 
             .earnings-metric-pill {
@@ -8429,7 +8470,7 @@ def inject_css() -> None:
                 border: 1px solid rgba(25, 49, 58, 0.88);
                 border-radius: 5px;
                 min-width: 0;
-                padding: 0.27rem 0.32rem;
+                padding: 0.24rem 0.3rem;
             }
 
             .earnings-metric-pill span {
@@ -8485,8 +8526,8 @@ def inject_css() -> None:
                 align-items: center;
                 display: flex;
                 flex-wrap: wrap;
-                gap: 0.3rem;
-                margin-top: 0.42rem;
+                gap: 0.26rem;
+                margin-top: 0.38rem;
             }
 
             .earnings-mini-badge {
@@ -8499,6 +8540,10 @@ def inject_css() -> None:
                 line-height: 1;
                 padding: 0.23rem 0.32rem;
                 text-transform: uppercase;
+            }
+
+            .earnings-mini-badge.iv-missing {
+                margin-left: auto;
             }
 
             .earnings-mini-badge.good {
@@ -15344,6 +15389,14 @@ def attach_anticipation_scores(
     frame["Options Activity Score"] = earnings_percentile_score(frame.get("Options Contracts", pd.Series(dtype=float)))
     frame["Short Interest Score"] = earnings_percentile_score(frame.get("Short %", pd.Series(dtype=float)))
     frame["Market Cap Score"] = earnings_percentile_score(frame.get("Market Cap", pd.Series(dtype=float)))
+    frame["Revenue Surprise $"] = (
+        pd.to_numeric(frame.get("Actual Revenue", pd.Series(index=frame.index, dtype=float)), errors="coerce")
+        - pd.to_numeric(frame.get("Revenue Estimate", pd.Series(index=frame.index, dtype=float)), errors="coerce")
+    )
+    frame["EPS Surprise $"] = (
+        pd.to_numeric(frame.get("Actual EPS", pd.Series(index=frame.index, dtype=float)), errors="coerce")
+        - pd.to_numeric(frame.get("EPS Estimate", pd.Series(index=frame.index, dtype=float)), errors="coerce")
+    )
     frame["Anticipation Score"] = (
         0.35 * frame["Social Score"]
         + 0.25 * frame["News Score"]
@@ -15399,12 +15452,12 @@ def render_earnings_detail_table(frame: pd.DataFrame, height: int) -> None:
     ]
     currency_columns = [
         column
-        for column in ("Revenue Estimate", "Actual Revenue")
+        for column in ("Revenue Estimate", "Actual Revenue", "Revenue Surprise $", "Prior-year Revenue")
         if column in display
     ]
     eps_columns = [
         column
-        for column in ("EPS Estimate", "Reported EPS", "Actual EPS", "EPS Surprise")
+        for column in ("EPS Estimate", "Reported EPS", "Actual EPS", "EPS Surprise", "EPS Surprise $", "Prior-year EPS")
         if column in display
     ]
     for column in percent_columns:
@@ -15445,48 +15498,163 @@ def render_earnings_detail_table(frame: pd.DataFrame, height: int) -> None:
     st.dataframe(styled, hide_index=True, use_container_width=True, height=height)
 
 
+def format_signed_currency(value: float | int | None, decimals: int = 2) -> str:
+    number = coerce_float(value)
+    if number is None:
+        return "N/A"
+    prefix = "+" if number > 0 else ""
+    return f"{prefix}{format_currency(number, decimals)}"
+
+
+def format_signed_compact_currency(value: float | int | None, decimals: int = 1) -> str:
+    number = coerce_float(value)
+    if number is None:
+        return "N/A"
+    prefix = "+" if number > 0 else ""
+    return f"{prefix}{format_compact_currency(number, decimals)}"
+
+
+def earnings_metric_box(label: str, value: str, tone: str = "neutral") -> str:
+    safe_tone = tone if tone in {"good", "bad", "neutral"} else "neutral"
+    return (
+        f"<div class='earnings-metric-pill {html.escape(safe_tone)}'>"
+        f"<span>{html.escape(label)}</span>"
+        f"<strong>{html.escape(value)}</strong>"
+        "</div>"
+    )
+
+
+def earnings_surprise_components(
+    actual: object,
+    estimate: object,
+    pct: object = None,
+    *,
+    eps: bool = False,
+) -> tuple[float | None, float | None, str]:
+    actual_value = coerce_float(actual)
+    estimate_value = coerce_float(estimate)
+    pct_value = coerce_float(pct)
+    delta = None
+    if actual_value is not None and estimate_value is not None:
+        delta = actual_value - estimate_value
+        if pct_value is None:
+            pct_value = earnings_surprise_percent(actual_value, estimate_value, eps=eps)
+    tone = earnings_result_tone(delta=delta, pct=pct_value)
+    return delta, pct_value, tone
+
+
+def earnings_surprise_badge(prefix: str, actual: object, estimate: object, pct: object = None, *, eps: bool = False) -> str | None:
+    delta, pct_value, tone = earnings_surprise_components(actual, estimate, pct, eps=eps)
+    if delta is None and pct_value is None:
+        return None
+    if tone == "good":
+        result = "Beat"
+    elif tone == "bad":
+        result = "Miss"
+    else:
+        return earnings_mini_badge(f"{prefix} In Line", "neutral")
+    delta_text = format_signed_currency(delta, 2) if eps else format_signed_compact_currency(delta, 1)
+    pct_text = format_percent(pct_value, 1, signed=True) if pct_value is not None else "N/A"
+    return earnings_mini_badge(f"{prefix} {result} {delta_text} / {pct_text}", tone)
+
+
+def earnings_card_sample_metrics(row: pd.Series | None) -> dict[str, object]:
+    if row is None:
+        return {}
+    eps_delta, eps_pct, _ = earnings_surprise_components(
+        row.get("Actual EPS"),
+        row.get("EPS Estimate"),
+        row.get("EPS Surprise %"),
+        eps=True,
+    )
+    revenue_delta, revenue_pct, _ = earnings_surprise_components(
+        row.get("Actual Revenue"),
+        row.get("Revenue Estimate"),
+        row.get("Revenue Surprise %"),
+    )
+    return {
+        "selected_ticker_card_sample": row.get("Ticker"),
+        "selected_card_eps_estimate": row.get("EPS Estimate"),
+        "selected_card_actual_eps": row.get("Actual EPS"),
+        "selected_card_eps_surprise": eps_delta,
+        "selected_card_eps_surprise_pct": eps_pct,
+        "selected_card_revenue_estimate": row.get("Revenue Estimate"),
+        "selected_card_actual_revenue": row.get("Actual Revenue"),
+        "selected_card_revenue_surprise": revenue_delta,
+        "selected_card_revenue_surprise_pct": revenue_pct,
+        "selected_card_7d_move": row.get("7D Implied Move %"),
+        "selected_card_iv_status": "Available" if coerce_float(row.get("7D Implied Move %")) is not None else "IV N/A",
+        "selected_card_score": row.get("Anticipation Score"),
+    }
+
+
 def render_earnings_card(row: pd.Series) -> str:
     ticker = str(row.get("Ticker") or "N/A")
     logo_html = company_logo_markup(ticker, row.get("Logo URL"))
     company = str(row.get("Company") or ticker)
+    session = str(row.get("Session") or "Time Not Supplied")
+    score = coerce_float(row.get("Anticipation Score"))
+    implied_move = coerce_float(row.get("7D Implied Move %"))
+    revenue_estimate = coerce_float(row.get("Revenue Estimate"))
+    eps_estimate = coerce_float(row.get("EPS Estimate"))
     actual_revenue = coerce_float(row.get("Actual Revenue"))
     actual_eps = coerce_float(row.get("Actual EPS"))
     revenue_surprise = coerce_float(row.get("Revenue Surprise %"))
     eps_surprise = coerce_float(row.get("EPS Surprise %"))
-    metric_html = "".join(
+    _, _, revenue_tone = earnings_surprise_components(actual_revenue, revenue_estimate, revenue_surprise)
+    _, _, eps_tone = earnings_surprise_components(actual_eps, eps_estimate, eps_surprise, eps=True)
+    expectation_html = "".join(
         [
-            earnings_metric("7D Move", format_move(row.get("7D Implied Move %"), 1)),
-            earnings_metric("Rev Est", format_compact_currency(row.get("Revenue Estimate"), 1)),
-            earnings_metric("EPS Est", format_currency(row.get("EPS Estimate"), 2)),
-            earnings_metric(
-                "Act Rev",
-                format_compact_currency(actual_revenue, 1) if actual_revenue is not None else "-",
-                earnings_result_tone(pct=revenue_surprise),
+            earnings_metric_box("7D Move", format_move(implied_move, 1), "neutral" if implied_move is None else "good"),
+            earnings_metric_box("Rev Est", format_compact_currency(revenue_estimate, 1), "neutral"),
+            earnings_metric_box("EPS Est", format_currency(eps_estimate, 2), "neutral"),
+        ]
+    )
+    actual_html = "".join(
+        [
+            earnings_metric_box(
+                "Actual Rev",
+                format_compact_currency(actual_revenue, 1) if actual_revenue is not None else "—",
+                revenue_tone if actual_revenue is not None and revenue_estimate is not None else "neutral",
             ),
-            earnings_metric("Act EPS", format_currency(actual_eps, 2) if actual_eps is not None else "-", earnings_surprise_tone(eps_surprise)),
-            earnings_metric("Score", format_number(row.get("Anticipation Score"), 0)),
+            earnings_metric_box(
+                "Actual EPS",
+                format_currency(actual_eps, 2) if actual_eps is not None else "—",
+                eps_tone if actual_eps is not None and eps_estimate is not None else "neutral",
+            ),
         ]
     )
     surprise_badges = []
-    if revenue_surprise is not None:
-        surprise_badges.append(earnings_mini_badge(earnings_result_label("Rev", revenue_surprise), earnings_result_tone(pct=revenue_surprise)))
-    if eps_surprise is not None:
-        surprise_badges.append(earnings_mini_badge(earnings_result_label("EPS", eps_surprise), earnings_result_tone(pct=eps_surprise)))
+    revenue_badge = earnings_surprise_badge("Rev", actual_revenue, revenue_estimate, revenue_surprise)
+    eps_badge = earnings_surprise_badge("EPS", actual_eps, eps_estimate, eps_surprise, eps=True)
+    if revenue_badge:
+        surprise_badges.append(revenue_badge)
+    if eps_badge:
+        surprise_badges.append(eps_badge)
     if not surprise_badges:
         surprise_badges.append(earnings_mini_badge("Actuals pending"))
     expiry = row.get("Options Expiry Used")
-    expiry_text = expiry.strftime("%Y-%m-%d") if isinstance(expiry, date) else str(expiry or "IV N/A")
-    surprise_badges.append(earnings_mini_badge(expiry_text))
+    if implied_move is None:
+        surprise_badges.append("<span class='earnings-mini-badge neutral iv-missing'>IV N/A</span>")
+    elif isinstance(expiry, date):
+        surprise_badges.append(earnings_mini_badge(f"Exp {expiry.strftime('%m/%d')}", "neutral"))
+    score_badge = f"<span class='earnings-card-badge'>Score {format_number(score, 0)}</span>" if score is not None else ""
     return (
         "<article class='earnings-card'>"
         "<div class='earnings-card-top'>"
         f"{logo_html}"
-        "<div>"
-        f"<span class='earnings-card-ticker'>{html.escape(ticker)}</span>"
+        "<div class='earnings-card-heading'>"
+        "<div class='earnings-card-titleline'>"
+        f"<span class='earnings-card-ticker'>{html.escape(ticker)}</span>{score_badge}"
+        "</div>"
         f"<span class='earnings-card-name'>{html.escape(company)}</span>"
+        "<div class='earnings-card-meta'>"
+        f"<span class='earnings-card-badge'>{html.escape(session)}</span>"
         "</div>"
         "</div>"
-        f"<div class='earnings-card-metrics'>{metric_html}</div>"
+        "</div>"
+        f"<div class='earnings-card-metrics expectations'>{expectation_html}</div>"
+        f"<div class='earnings-card-metrics actuals'>{actual_html}</div>"
         f"<div class='earnings-card-foot'>{''.join(surprise_badges)}</div>"
         "</article>"
     )
@@ -15522,6 +15690,26 @@ def render_earnings_summary(frame: pd.DataFrame, week_start: date) -> None:
     )
 
 
+def sort_earnings_cards(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    sortable = frame.copy()
+    actual_revenue = pd.to_numeric(sortable.get("Actual Revenue", pd.Series(index=sortable.index, dtype=float)), errors="coerce")
+    actual_eps = pd.to_numeric(sortable.get("Actual EPS", pd.Series(index=sortable.index, dtype=float)), errors="coerce")
+    sortable["__reported_sort"] = (actual_revenue.notna() | actual_eps.notna()).astype(int)
+    sortable["__score_sort"] = pd.to_numeric(sortable.get("Anticipation Score", pd.Series(index=sortable.index, dtype=float)), errors="coerce").fillna(-1)
+    sortable["__move_sort"] = pd.to_numeric(sortable.get("7D Implied Move %", pd.Series(index=sortable.index, dtype=float)), errors="coerce").fillna(-1)
+    sort_columns = ["__reported_sort", "__score_sort", "__move_sort"]
+    ascending = [False, False, False]
+    if "Ticker" in sortable:
+        sort_columns.append("Ticker")
+        ascending.append(True)
+    return sortable.sort_values(sort_columns, ascending=ascending, kind="mergesort").drop(
+        columns=["__reported_sort", "__score_sort", "__move_sort"],
+        errors="ignore",
+    )
+
+
 def render_weekly_earnings_grid(frame: pd.DataFrame, week_start: date, session_filter: str, cards_per_session: int) -> None:
     days = [week_start + timedelta(days=offset) for offset in range(5)]
     sessions = list(PRIMARY_EARNINGS_SESSIONS)
@@ -15541,10 +15729,7 @@ def render_weekly_earnings_grid(frame: pd.DataFrame, week_start: date, session_f
         for session in day_sessions:
             subset = day_rows[day_rows["Session"].eq(session)] if not day_rows.empty and "Session" in day_rows else pd.DataFrame()
             total_in_session = len(subset)
-            if not subset.empty and "Anticipation Score" in subset:
-                visible_subset = subset.sort_values("Anticipation Score", ascending=False, na_position="last").head(cards_per_session)
-            else:
-                visible_subset = subset.head(0)
+            visible_subset = sort_earnings_cards(subset).head(cards_per_session) if not subset.empty else subset.head(0)
             cards = "".join(render_earnings_card(row) for _, row in visible_subset.iterrows())
             if total_in_session > len(visible_subset):
                 cards += f"<div class='earnings-empty'>+{total_in_session - len(visible_subset):,} more names. Increase Cards/session to show more.</div>"
@@ -15739,13 +15924,19 @@ def render_earnings_calendar_tab() -> None:
                 "Earnings Date",
                 "Session",
                 "Anticipation Score",
+                "Last Price",
                 "7D Implied Move %",
+                "Options Expiry Used",
                 "Revenue Estimate",
-                "EPS Estimate",
                 "Actual Revenue",
-                "Actual EPS",
+                "Revenue Surprise $",
                 "Revenue Surprise %",
+                "EPS Estimate",
+                "Actual EPS",
+                "EPS Surprise $",
                 "EPS Surprise %",
+                "Prior-year Revenue",
+                "Prior-year EPS",
                 "News Mentions",
                 "Social Mentions",
                 "Short %",
@@ -15759,6 +15950,7 @@ def render_earnings_calendar_tab() -> None:
                 st.rerun()
 
     with st.expander("Data validation", expanded=False):
+        sample_metrics = earnings_card_sample_metrics(filtered.iloc[0] if not filtered.empty else None)
         validation_rows = [
             {"Metric": "selected_week", "Value": f"{week_start} to {week_end}"},
             {"Metric": "number_of_earnings_names", "Value": f"{len(filtered):,}"},
@@ -15771,9 +15963,23 @@ def render_earnings_calendar_tab() -> None:
             {"Metric": "weekly_calendar_rows", "Value": f"{len(calendar_preview_rows):,}"},
             {"Metric": "weekly_calendar_status_rows", "Value": f"{len(calendar_preview_statuses):,}"},
             {"Metric": "top_anticipated_tickers", "Value": ", ".join(filtered.head(5)["Ticker"].astype(str).tolist()) if not filtered.empty else "N/A"},
+            {"Metric": "selected_ticker_card_sample", "Value": sample_metrics.get("selected_ticker_card_sample", "N/A")},
+            {"Metric": "selected_card_eps_estimate", "Value": sample_metrics.get("selected_card_eps_estimate", "N/A")},
+            {"Metric": "selected_card_actual_eps", "Value": sample_metrics.get("selected_card_actual_eps", "N/A")},
+            {"Metric": "selected_card_eps_surprise", "Value": sample_metrics.get("selected_card_eps_surprise", "N/A")},
+            {"Metric": "selected_card_eps_surprise_pct", "Value": sample_metrics.get("selected_card_eps_surprise_pct", "N/A")},
+            {"Metric": "selected_card_revenue_estimate", "Value": sample_metrics.get("selected_card_revenue_estimate", "N/A")},
+            {"Metric": "selected_card_actual_revenue", "Value": sample_metrics.get("selected_card_actual_revenue", "N/A")},
+            {"Metric": "selected_card_revenue_surprise", "Value": sample_metrics.get("selected_card_revenue_surprise", "N/A")},
+            {"Metric": "selected_card_revenue_surprise_pct", "Value": sample_metrics.get("selected_card_revenue_surprise_pct", "N/A")},
+            {"Metric": "selected_card_7d_move", "Value": sample_metrics.get("selected_card_7d_move", "N/A")},
+            {"Metric": "selected_card_iv_status", "Value": sample_metrics.get("selected_card_iv_status", "N/A")},
+            {"Metric": "selected_card_score", "Value": sample_metrics.get("selected_card_score", "N/A")},
             {"Metric": "missing_logo_count", "Value": f"{int(filtered['Logo URL'].isna().sum()) if not filtered.empty and 'Logo URL' in filtered else 0:,}"},
             {"Metric": "missing_iv_count", "Value": f"{int(pd.to_numeric(filtered.get('7D Implied Move %', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
             {"Metric": "missing_revenue_estimate_count", "Value": f"{int(pd.to_numeric(filtered.get('Revenue Estimate', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
+            {"Metric": "missing_actual_revenue_count", "Value": f"{int(pd.to_numeric(filtered.get('Actual Revenue', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
+            {"Metric": "missing_7d_move_count", "Value": f"{int(pd.to_numeric(filtered.get('7D Implied Move %', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
             {"Metric": "missing_eps_estimate_count", "Value": f"{int(pd.to_numeric(filtered.get('EPS Estimate', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
             {"Metric": "missing_actual_results_count", "Value": f"{int(pd.to_numeric(filtered.get('Actual EPS', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
             {"Metric": "headline_rows", "Value": f"{len(articles):,}"},
