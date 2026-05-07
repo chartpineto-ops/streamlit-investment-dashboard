@@ -13041,6 +13041,20 @@ def earnings_reported_flag(row: dict[str, object] | pd.Series) -> bool:
     return coerce_float(row.get("Actual EPS")) is not None or coerce_float(row.get("Actual Revenue")) is not None
 
 
+def earnings_missing_value(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() in {"", "Unknown", "N/A", "NA", "None", "nan", "Time Not Supplied"}
+    try:
+        missing = pd.isna(value)
+        if isinstance(missing, bool) or type(missing).__name__ == "bool_":
+            return bool(missing)
+    except TypeError:
+        return False
+    return False
+
+
 def normalize_earnings_session(report_time_raw: object = None, earnings_datetime: datetime | None = None) -> str:
     try:
         missing_raw_time = report_time_raw is None or pd.isna(report_time_raw)
@@ -15214,7 +15228,6 @@ def fetch_yahoo_weekly_earnings_calendar(week_start_iso: str, week_end_iso: str)
 
 def merge_earnings_calendar_hint(row: dict[str, object], calendar_row: dict[str, object]) -> dict[str, object]:
     merged = dict(row)
-    missing_markers = {None, "", "Unknown", "N/A", "Unconfirmed", "Time Not Supplied"}
     for key, value in calendar_row.items():
         if key in {"Ticker", "Earnings Date", "Earnings DateTime"}:
             continue
@@ -15224,7 +15237,7 @@ def merge_earnings_calendar_hint(row: dict[str, object], calendar_row: dict[str,
             if normalize_earnings_session(existing) == "Unconfirmed" and normalized_value != "Unconfirmed":
                 merged[key] = normalized_value
             continue
-        if existing in missing_markers and value not in missing_markers:
+        if earnings_missing_value(existing) and not earnings_missing_value(value):
             merged[key] = value
     if merged.get("Revenue Surprise %") is None:
         merged["Revenue Surprise %"] = earnings_surprise_percent(merged.get("Actual Revenue"), merged.get("Revenue Estimate"))
@@ -16281,7 +16294,7 @@ def merge_visible_earnings_enrichment(frame: pd.DataFrame, enriched_rows: list[d
     key_to_index = {
         (str(row.get("Ticker")), parse_date(row.get("Earnings Date"))): index
         for index, row in merged.iterrows()
-        if row.get("Ticker")
+        if not earnings_missing_value(row.get("Ticker"))
     }
     for enriched in enriched_rows:
         key = (str(enriched.get("Ticker")), parse_date(enriched.get("Earnings Date")))
@@ -16292,7 +16305,7 @@ def merge_visible_earnings_enrichment(frame: pd.DataFrame, enriched_rows: list[d
             if column in {"Ticker", "Earnings Date", "Earnings DateTime"}:
                 continue
             existing = merged.at[index, column] if column in merged.columns else None
-            if column not in merged.columns or existing in (None, "", "Unknown", "N/A") or pd.isna(existing):
+            if column not in merged.columns or earnings_missing_value(existing):
                 merged.at[index, column] = value
             elif column == "Session" and normalize_earnings_session(existing) == "Unconfirmed" and normalize_earnings_session(value) != "Unconfirmed":
                 merged.at[index, column] = normalize_earnings_session(value)
@@ -16312,7 +16325,7 @@ def merge_visible_earnings_enrichment(frame: pd.DataFrame, enriched_rows: list[d
                 "Reported",
                 "Source Report Time",
                 "Data Notes",
-            } and value not in (None, "", "Unknown", "N/A"):
+            } and not earnings_missing_value(value):
                 merged.at[index, column] = value
     merged["Revenue Surprise $"] = (
         pd.to_numeric(merged.get("Actual Revenue", pd.Series(index=merged.index, dtype=float)), errors="coerce")
