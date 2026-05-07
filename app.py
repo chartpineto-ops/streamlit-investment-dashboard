@@ -153,7 +153,7 @@ EARNINGS_FILTER_DEFAULTS = {
     "earnings_only_most_discussed": True,
     "earnings_show_reported": False,
     "earnings_upcoming_only": False,
-    "earnings_show_time_not_supplied": False,
+    "earnings_show_time_not_supplied": True,
     "earnings_stocktwits": False,
     "earnings_sector_filter": [],
     "earnings_expanded_buckets": [],
@@ -15903,8 +15903,10 @@ def filter_earnings_frame(
     query = normalize_symbol(ticker_query)
     if query:
         filtered = filtered[filtered["Ticker"].astype(str).str.contains(re.escape(query), case=False, na=False)]
-    if not show_reported and "Reported" in filtered:
-        filtered = filtered[~filtered["Reported"].fillna(False)]
+    # The toggle means "reported only"; the default view includes both reported
+    # and upcoming releases so earlier weekdays in the active week do not vanish.
+    if show_reported and "Reported" in filtered:
+        filtered = filtered[filtered["Reported"].fillna(False)]
     if upcoming_only:
         filtered = filtered[pd.to_datetime(filtered["Earnings Date"], errors="coerce").dt.date >= date.today()]
     if only_most_discussed and not filtered.empty:
@@ -15946,6 +15948,10 @@ def render_earnings_calendar_tab() -> None:
     for key, value in EARNINGS_FILTER_DEFAULTS.items():
         if key not in st.session_state:
             st.session_state[key] = list(value) if isinstance(value, list) else value
+    if st.session_state.get("earnings_filter_schema") != 2:
+        st.session_state["earnings_show_reported"] = False
+        st.session_state["earnings_show_time_not_supplied"] = True
+        st.session_state["earnings_filter_schema"] = 2
     if "earnings_week_start" not in st.session_state:
         st.session_state["earnings_week_start"] = week_monday()
     with st.container(border=True):
@@ -15997,11 +16003,11 @@ def render_earnings_calendar_tab() -> None:
         with toggle_cols[0]:
             only_most_discussed = st.toggle("Most discussed", value=True, key="earnings_only_most_discussed")
         with toggle_cols[1]:
-            show_reported = st.toggle("Reported", value=False, key="earnings_show_reported")
+            show_reported = st.toggle("Reported only", value=False, key="earnings_show_reported")
         with toggle_cols[2]:
             upcoming_only = st.toggle("Upcoming only", value=False, key="earnings_upcoming_only")
         with toggle_cols[3]:
-            show_time_not_supplied = st.toggle("Show unknown times", value=False, key="earnings_show_time_not_supplied")
+            show_time_not_supplied = st.toggle("Unknown times", value=True, key="earnings_show_time_not_supplied")
         with toggle_cols[4]:
             st.caption("Before Open = pre-market releases. After Close = post-close releases. 7D move uses annualized ATM IV adjusted by sqrt(days/365).")
 
