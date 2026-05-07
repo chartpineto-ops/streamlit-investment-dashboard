@@ -139,9 +139,10 @@ HOME_MARKET_SYMBOLS = (
     {"label": "10Y Treasury", "symbol": "^TNX", "type": "yield"},
 )
 
-EARNINGS_SESSIONS = ("Before Open", "After Close", "During Market", "Time Not Supplied")
+EARNINGS_SESSIONS = ("Before Open", "After Close", "During Market", "Unconfirmed")
 PRIMARY_EARNINGS_SESSIONS = ("Before Open", "After Close")
 EARNINGS_NEUTRAL_TOLERANCE = 0.05
+EARNINGS_EPS_TOLERANCE = 0.005
 EARNINGS_FILTER_DEFAULTS = {
     "earnings_universe": "All major indexes",
     "earnings_session_filter": "All",
@@ -153,7 +154,7 @@ EARNINGS_FILTER_DEFAULTS = {
     "earnings_only_most_discussed": True,
     "earnings_show_reported": False,
     "earnings_upcoming_only": False,
-    "earnings_show_time_not_supplied": True,
+    "earnings_show_time_not_supplied": False,
     "earnings_stocktwits": False,
     "earnings_sector_filter": [],
     "earnings_expanded_buckets": [],
@@ -1964,19 +1965,24 @@ def parse_numeric_value(value: object) -> float | None:
     text = str(value).strip()
     if not text or text.lower() in {"n/a", "na", "none", "null", "undefined", "--"}:
         return None
+    negative_parentheses = bool(re.search(r"\(\s*\$?\s*\d", text))
     cleaned = (
-        text.replace("$", "")
+        text.replace("−", "-")
+        .replace("$", "")
         .replace(",", "")
         .replace("%", "")
         .replace("+/-", "")
         .replace("+-", "")
+        .replace("(", "")
+        .replace(")", "")
         .strip()
     )
     match = re.search(r"[-+]?\d*\.?\d+", cleaned)
     if not match:
         return None
     try:
-        return float(match.group(0))
+        number = float(match.group(0))
+        return -abs(number) if negative_parentheses else number
     except ValueError:
         return None
 
@@ -13013,14 +13019,124 @@ def signed_result_tone(value: object, tolerance: float = EARNINGS_NEUTRAL_TOLERA
     return "good" if number > 0 else "bad"
 
 
+def format_eps(value: object) -> str:
+    number = coerce_float(value)
+    if number is None:
+        return "N/A"
+    sign = "-" if number < 0 else ""
+    return f"{sign}${abs(number):,.2f}"
+
+
+def format_signed_eps(value: object) -> str:
+    number = coerce_float(value)
+    if number is None:
+        return "N/A"
+    sign = "+" if number > 0 else "-" if number < 0 else ""
+    return f"{sign}${abs(number):,.2f}"
+
+
+def earnings_reported_flag(row: dict[str, object] | pd.Series) -> bool:
+    if bool(row.get("Reported Source Flag", False)):
+        return True
+    return coerce_float(row.get("Actual EPS")) is not None or coerce_float(row.get("Actual Revenue")) is not None
+
+
+def normalize_earnings_session(report_time_raw: object = None, earnings_datetime: datetime | None = None) -> str:
+    try:
+        missing_raw_time = report_time_raw is None or pd.isna(report_time_raw)
+    except TypeError:
+        missing_raw_time = report_time_raw is None
+    text = "" if missing_raw_time else clean_text(str(report_time_raw)).strip()
+    normalized = re.sub(r"[\s_\-]+", " ", text).strip().casefold()
+    if normalized in {"", "nan", "none", "null", "unknown", "time not supplied", "not supplied", "tbd", "unconfirmed", "estimated"}:
+        return "Unconfirmed"
+    before_tokens = {
+        "bmo",
+        "amc before market open",  # defensive for malformed feeds
+        "before market open",
+        "before open",
+        "pre market",
+        "premarket",
+        "pre market open",
+        "morning",
+        "am",
+    }
+    after_tokens = {
+        "amc",
+        "after market close",
+        "after close",
+        "post market",
+        "postmarket",
+        "post close",
+        "evening",
+        "pm",
+    }
+    during_tokens = {"dmh", "during market", "during market hours", "market hours", "midday"}
+    if normalized in before_tokens or any(token in normalized for token in ("before", "pre market", "premarket")):
+        return "Before Open"
+    if normalized in after_tokens or any(token in normalized for token in ("after", "post market", "postmarket")):
+        return "After Close"
+    if normalized in during_tokens or any(token in normalized for token in ("during", "midday")):
+        return "During Market"
+    if earnings_datetime is None:
+        earnings_datetime = parse_earnings_datetime(report_time_raw)
+    if earnings_datetime is None:
+        return "Unconfirmed"
+    if earnings_datetime.hour == 0 and earnings_datetime.minute == 0:
+        return "Unconfirmed"
+    minutes = earnings_datetime.hour * 60 + earnings_datetime.minute
+    if minutes < 9 * 60 + 30:
+        return "Before Open"
+    if minutes >= 16 * 60:
+        return "After Close"
+    return "During Market"
+
+
+def earnings_surprise_payload(
+    actual: object,
+    estimate: object,
+    *,
+    eps: bool = False,
+    supplied_pct: object = None,
+) -> dict[str, object]:
+    actual_value = coerce_float(actual)
+    estimate_value = coerce_float(estimate)
+    delta = None
+    pct_value = coerce_float(supplied_pct)
+    tolerance = EARNINGS_EPS_TOLERANCE if eps else 1.0
+    if actual_value is not None and estimate_value is not None:
+        delta = actual_value - estimate_value
+        if estimate_value not in (None, 0):
+            denominator = abs(estimate_value) if eps else estimate_value
+            if denominator not in (None, 0):
+                pct_value = delta / denominator * 100
+    if delta is None:
+        tone = earnings_result_tone(pct=pct_value)
+    elif abs(delta) <= tolerance:
+        tone = "neutral"
+    else:
+        tone = "good" if delta > 0 else "bad"
+    if tone == "good":
+        result = "Beat"
+    elif tone == "bad":
+        result = "Miss"
+    else:
+        result = "In Line" if delta is not None or pct_value is not None else "N/A"
+    return {"delta": delta, "pct": pct_value, "tone": tone, "result": result}
+
+
+def format_earnings_surprise_delta(delta: object, *, eps: bool = False) -> str:
+    return format_signed_eps(delta) if eps else format_signed_compact_currency(delta, 1)
+
+
 def earnings_result_tone(delta: object = None, pct: object = None) -> str:
+    delta_value = coerce_float(delta)
+    if delta_value is not None:
+        return signed_result_tone(delta_value, tolerance=1e-9)
     pct_value = coerce_float(pct)
     if pct_value is not None:
         return signed_result_tone(pct_value)
-    delta_value = coerce_float(delta)
-    if delta_value is None:
-        return "neutral"
-    return signed_result_tone(delta_value, tolerance=1e-9)
+    return "neutral"
 
 
 def earnings_result_label(prefix: str, pct: object) -> str:
@@ -13046,11 +13162,8 @@ def earnings_badge(delta: float | None, pct: float | None, *, unit: str) -> str:
     if tone == "neutral":
         return "<span class='earnings-badge neutral'>In line</span>"
     verb = "Beat" if tone == "good" else "Missed"
-    if unit == "eps":
-        amount = format_currency(abs(delta), 2)
-    else:
-        amount = format_compact_currency(abs(delta), 2)
-    pct_text = f" ({format_percent(abs(pct), 1)})" if pct is not None else ""
+    amount = format_signed_eps(delta) if unit == "eps" else format_signed_compact_currency(delta, 2)
+    pct_text = f" ({format_percent(pct, 1, signed=True)})" if pct is not None else ""
     return f"<span class='earnings-badge {tone}'>{verb} by {html.escape(amount)}{html.escape(pct_text)}</span>"
 
 
@@ -13061,8 +13174,8 @@ def yoy_badge(delta: float | None, pct: float | None, *, unit: str) -> str:
     if tone == "neutral":
         return "<span class='earnings-badge neutral'>Flat YoY</span>"
     verb = "Up YoY" if tone == "good" else "Down YoY"
-    amount = format_currency(abs(delta), 2) if unit == "eps" else format_compact_currency(abs(delta), 2)
-    pct_text = f" ({format_percent(abs(pct), 1)})" if pct is not None else ""
+    amount = format_signed_eps(delta) if unit == "eps" else format_signed_compact_currency(delta, 2)
+    pct_text = f" ({format_percent(pct, 1, signed=True)})" if pct is not None else ""
     return f"<span class='earnings-badge {tone}'>{verb} {html.escape(amount)}{html.escape(pct_text)}</span>"
 
 
@@ -13124,10 +13237,12 @@ def latest_quarter_earnings_summary(ticker: str, income: pd.DataFrame, payload: 
     consensus_revenue = None
     prior_revenue = coerce_float(prior.get("Revenue")) if not prior.empty else None
     prior_eps = coerce_float(prior.get("EPS")) if not prior.empty else None
-    eps_surprise = eps_actual - consensus_eps if eps_actual is not None and consensus_eps is not None else None
-    eps_surprise_pct = safe_ratio(eps_surprise, abs(consensus_eps), 100) if eps_surprise is not None and consensus_eps not in (None, 0) else None
-    revenue_surprise = revenue - consensus_revenue if revenue is not None and consensus_revenue is not None else None
-    revenue_surprise_pct = safe_ratio(revenue_surprise, consensus_revenue, 100) if revenue_surprise is not None and consensus_revenue not in (None, 0) else None
+    eps_surprise_data = earnings_surprise_payload(eps_actual, consensus_eps, eps=True)
+    eps_surprise = eps_surprise_data["delta"]
+    eps_surprise_pct = eps_surprise_data["pct"]
+    revenue_surprise_data = earnings_surprise_payload(revenue, consensus_revenue)
+    revenue_surprise = revenue_surprise_data["delta"]
+    revenue_surprise_pct = revenue_surprise_data["pct"]
     eps_yoy = eps_actual - prior_eps if eps_actual is not None and prior_eps is not None else None
     eps_yoy_pct = safe_ratio(eps_yoy, abs(prior_eps), 100) if eps_yoy is not None and prior_eps not in (None, 0) else None
     revenue_yoy = revenue - prior_revenue if revenue is not None and prior_revenue is not None else None
@@ -13179,7 +13294,7 @@ def render_latest_quarter_earnings_card(summary: dict[str, object]) -> None:
         },
         {
             "label": "EPS Normalized",
-            "value": format_currency(summary.get("eps_normalized"), 2),
+            "value": format_eps(summary.get("eps_normalized")),
             "rows": [
                 earnings_badge(summary.get("eps_surprise"), summary.get("eps_surprise_pct"), unit="eps"),
                 yoy_badge(summary.get("eps_yoy"), summary.get("eps_yoy_pct"), unit="eps"),
@@ -13187,7 +13302,7 @@ def render_latest_quarter_earnings_card(summary: dict[str, object]) -> None:
         },
         {
             "label": "EPS GAAP",
-            "value": format_currency(summary.get("eps_gaap"), 2),
+            "value": format_eps(summary.get("eps_gaap")),
             "rows": [
                 "<span class='earnings-badge neutral'>GAAP estimate unavailable</span>",
             ],
@@ -13650,14 +13765,14 @@ def render_three_statement_analysis_dashboard() -> None:
             {"Metric": "financial_view_selected", "Value": statement_period},
             {"Metric": "latest_quarter_announce_date", "Value": str(latest_quarter_debug.get("announce_date") or "N/A")},
             {"Metric": "latest_quarter_revenue", "Value": format_compact_currency(latest_quarter_debug.get("revenue"), 2)},
-            {"Metric": "latest_quarter_eps_normalized", "Value": format_currency(latest_quarter_debug.get("eps_normalized"), 2)},
-            {"Metric": "latest_quarter_eps_gaap", "Value": format_currency(latest_quarter_debug.get("eps_gaap"), 2)},
+            {"Metric": "latest_quarter_eps_normalized", "Value": format_eps(latest_quarter_debug.get("eps_normalized"))},
+            {"Metric": "latest_quarter_eps_gaap", "Value": format_eps(latest_quarter_debug.get("eps_gaap"))},
             {"Metric": "latest_quarter_consensus_revenue", "Value": format_compact_currency(latest_quarter_debug.get("consensus_revenue"), 2)},
-            {"Metric": "latest_quarter_consensus_eps", "Value": format_currency(latest_quarter_debug.get("consensus_eps"), 2)},
+            {"Metric": "latest_quarter_consensus_eps", "Value": format_eps(latest_quarter_debug.get("consensus_eps"))},
             {"Metric": "latest_quarter_revenue_surprise_pct", "Value": format_percent(latest_quarter_debug.get("revenue_surprise_pct"), 2, signed=True)},
             {"Metric": "latest_quarter_eps_surprise_pct", "Value": format_percent(latest_quarter_debug.get("eps_surprise_pct"), 2, signed=True)},
             {"Metric": "latest_quarter_prior_year_revenue", "Value": format_compact_currency(latest_quarter_debug.get("prior_year_revenue"), 2)},
-            {"Metric": "latest_quarter_prior_year_eps", "Value": format_currency(latest_quarter_debug.get("prior_year_eps"), 2)},
+            {"Metric": "latest_quarter_prior_year_eps", "Value": format_eps(latest_quarter_debug.get("prior_year_eps"))},
             {"Metric": "latest_quarter_revenue_yoy_pct", "Value": format_percent(latest_quarter_debug.get("revenue_yoy_pct"), 2, signed=True)},
             {"Metric": "latest_quarter_eps_yoy_pct", "Value": format_percent(latest_quarter_debug.get("eps_yoy_pct"), 2, signed=True)},
         ]
@@ -14840,7 +14955,14 @@ def week_monday(value: date | datetime | pd.Timestamp | None = None) -> date:
 
 
 def parse_earnings_datetime(value: object) -> datetime | None:
-    if value in (None, ""):
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    if value == "":
         return None
     if isinstance(value, pd.Timestamp):
         if pd.isna(value):
@@ -14861,16 +14983,7 @@ def parse_earnings_datetime(value: object) -> datetime | None:
 
 
 def earnings_session_for_datetime(value: datetime | None) -> str:
-    if value is None:
-        return "Time Not Supplied"
-    if value.hour == 0 and value.minute == 0:
-        return "Time Not Supplied"
-    minutes = value.hour * 60 + value.minute
-    if minutes < 9 * 60 + 30:
-        return "Before Open"
-    if minutes >= 16 * 60:
-        return "After Close"
-    return "During Market"
+    return normalize_earnings_session(None, value)
 
 
 def earnings_date_rows(frame: pd.DataFrame) -> list[dict[str, object]]:
@@ -14932,18 +15045,7 @@ def first_present_value(source: dict, keys: Sequence[str]) -> object:
 
 
 def earnings_session_for_code(value: object, fallback_datetime: datetime | None = None) -> str:
-    text = clean_text(str(value or "")).upper()
-    if text in {"BMO", "BEFORE MARKET OPEN", "BEFORE OPEN", "PRE-MARKET", "PREMARKET"}:
-        return "Before Open"
-    if text in {"AMC", "AFTER MARKET CLOSE", "AFTER CLOSE", "POST-MARKET", "POSTMARKET"}:
-        return "After Close"
-    if text in {"DMH", "DURING MARKET", "DURING MARKET HOURS"}:
-        return "During Market"
-    if "BEFORE" in text or "PRE" in text:
-        return "Before Open"
-    if "AFTER" in text or "POST" in text:
-        return "After Close"
-    return earnings_session_for_datetime(fallback_datetime)
+    return normalize_earnings_session(value, fallback_datetime)
 
 
 def earnings_surprise_percent(actual: object, estimate: object, *, eps: bool = False) -> float | None:
@@ -15014,15 +15116,16 @@ def yahoo_calendar_item_to_earnings_row(item: dict, week_start: date, week_end: 
             or symbol
         )
     )
-    session = earnings_session_for_code(
-        first_present_value(item, ("startdatetimetype", "startDateTimeType", "timeType", "session")),
-        event_dt,
-    )
+    report_time_raw = first_present_value(item, ("startdatetimetype", "startDateTimeType", "timeType", "session", "time"))
+    session = earnings_session_for_code(report_time_raw, event_dt)
+    source_reported = str(first_present_value(item, ("reported", "isReported", "status", "eventStatus")) or "").strip().casefold()
+    reported_flag = source_reported in {"reported", "complete", "completed", "true", "1", "actual", "results reported"}
     return {
         "Ticker": symbol,
         "Company": company,
         "Earnings Date": event_date,
         "Earnings DateTime": event_dt,
+        "Report Time Raw": report_time_raw,
         "Session": session,
         "Sector": "Unknown",
         "Market Cap": None,
@@ -15040,7 +15143,14 @@ def yahoo_calendar_item_to_earnings_row(item: dict, week_start: date, week_end: 
         "Actual EPS": eps_actual,
         "Revenue Surprise %": revenue_surprise_pct,
         "EPS Surprise %": eps_surprise_pct,
-        "Reported": bool(actual_revenue is not None or eps_actual is not None or event_date < eastern_now().date()),
+        "Reported": bool(actual_revenue is not None or eps_actual is not None or reported_flag),
+        "Reported Source Flag": reported_flag,
+        "EPS Type": "Reported/normalized",
+        "Revenue Currency": "USD",
+        "Revenue Unit": "raw",
+        "Source Earnings": "Yahoo Finance earnings calendar",
+        "Source Estimates": "Yahoo Finance earnings calendar",
+        "Source Actuals": "Yahoo Finance earnings calendar" if actual_revenue is not None or eps_actual is not None else "",
         "Data Notes": "Yahoo weekly earnings calendar row",
     }
 
@@ -15104,11 +15214,17 @@ def fetch_yahoo_weekly_earnings_calendar(week_start_iso: str, week_end_iso: str)
 
 def merge_earnings_calendar_hint(row: dict[str, object], calendar_row: dict[str, object]) -> dict[str, object]:
     merged = dict(row)
+    missing_markers = {None, "", "Unknown", "N/A", "Unconfirmed", "Time Not Supplied"}
     for key, value in calendar_row.items():
         if key in {"Ticker", "Earnings Date", "Earnings DateTime"}:
             continue
         existing = merged.get(key)
-        if existing in (None, "", "Unknown", "N/A") and value not in (None, "", "Unknown", "N/A"):
+        if key == "Session":
+            normalized_value = normalize_earnings_session(value)
+            if normalize_earnings_session(existing) == "Unconfirmed" and normalized_value != "Unconfirmed":
+                merged[key] = normalized_value
+            continue
+        if existing in missing_markers and value not in missing_markers:
             merged[key] = value
     if merged.get("Revenue Surprise %") is None:
         merged["Revenue Surprise %"] = earnings_surprise_percent(merged.get("Actual Revenue"), merged.get("Revenue Estimate"))
@@ -15120,14 +15236,7 @@ def merge_earnings_calendar_hint(row: dict[str, object], calendar_row: dict[str,
 
 
 def nasdaq_session_label(value: object) -> str:
-    text = clean_text(str(value or "")).replace("_", "-").replace(" ", "-").lower()
-    if any(token in text for token in ("before", "pre-market", "premarket", "bmo")):
-        return "Before Open"
-    if any(token in text for token in ("after", "after-hours", "post-market", "postmarket", "amc")):
-        return "After Close"
-    if any(token in text for token in ("during", "market-hours")):
-        return "During Market"
-    return "Time Not Supplied"
+    return normalize_earnings_session(value)
 
 
 def nasdaq_calendar_item_to_earnings_row(item: dict, event_date: date) -> dict[str, object] | None:
@@ -15142,12 +15251,16 @@ def nasdaq_calendar_item_to_earnings_row(item: dict, event_date: date) -> dict[s
     if eps_surprise_pct is None:
         eps_surprise_pct = earnings_surprise_percent(eps_actual, eps_estimate, eps=True)
     company = clean_text(str(first_present_value(item, ("name", "companyName", "companyshortname")) or symbol))
+    report_time_raw = first_present_value(item, ("time", "startdatetimetype", "session"))
+    source_reported = str(first_present_value(item, ("reported", "isReported", "status")) or "").strip().casefold()
+    reported_flag = source_reported in {"reported", "complete", "completed", "true", "1", "actual", "results reported"}
     return {
         "Ticker": symbol,
         "Company": company,
         "Earnings Date": event_date,
         "Earnings DateTime": datetime.combine(event_date, datetime.min.time()).replace(tzinfo=EASTERN),
-        "Session": nasdaq_session_label(first_present_value(item, ("time", "startdatetimetype", "session"))),
+        "Report Time Raw": report_time_raw,
+        "Session": nasdaq_session_label(report_time_raw),
         "Sector": "Unknown",
         "Market Cap": parse_numeric_value(first_present_value(item, ("marketCap", "marketcap"))),
         "Last Price": None,
@@ -15164,7 +15277,14 @@ def nasdaq_calendar_item_to_earnings_row(item: dict, event_date: date) -> dict[s
         "Actual EPS": eps_actual,
         "Revenue Surprise %": None,
         "EPS Surprise %": eps_surprise_pct,
-        "Reported": bool(eps_actual is not None or event_date < eastern_now().date()),
+        "Reported": bool(eps_actual is not None or reported_flag),
+        "Reported Source Flag": reported_flag,
+        "EPS Type": "Reported/normalized",
+        "Revenue Currency": "USD",
+        "Revenue Unit": "raw",
+        "Source Earnings": "Nasdaq earnings calendar",
+        "Source Estimates": "Nasdaq earnings calendar",
+        "Source Actuals": "Nasdaq earnings calendar" if eps_actual is not None else "",
         "Data Notes": "Nasdaq earnings calendar row",
     }
 
@@ -15265,7 +15385,7 @@ def earnings_event_from_calendar_hint(calendar_hint: dict[str, object] | None, w
     return {
         "datetime": event_dt,
         "date": event_date,
-        "session": str(calendar_hint.get("Session") or earnings_session_for_datetime(event_dt)),
+        "session": normalize_earnings_session(calendar_hint.get("Report Time Raw") or calendar_hint.get("Session"), event_dt),
         "eps_estimate": coerce_float(calendar_hint.get("EPS Estimate")),
         "eps_actual": coerce_float(calendar_hint.get("Actual EPS")),
         "eps_surprise_pct": coerce_float(calendar_hint.get("EPS Surprise %")),
@@ -15291,11 +15411,45 @@ def latest_reported_statement_revenue(yf_ticker: yf.Ticker, event_date: date | N
             cutoff = pd.Timestamp(event_date)
             candidates = dated[dated.index <= cutoff]
             if candidates.empty:
-                candidates = dated
+                return None
+            candidate_date = pd.Timestamp(candidates.index[-1]).date()
+            if (event_date - candidate_date).days > 120:
+                return None
             return coerce_float(candidates.iloc[-1])
         except Exception:
             pass
     return coerce_float(clean.iloc[-1])
+
+
+def refine_earnings_event_from_yfinance(
+    yf_ticker: yf.Ticker,
+    event: dict[str, object],
+) -> tuple[dict[str, object], bool, str]:
+    try:
+        earnings_frame = earnings_dates_frame(yf_ticker)
+    except Exception:
+        return event, False, ""
+    event_rows = [row for row in earnings_date_rows(earnings_frame) if row.get("date") == event.get("date")]
+    if not event_rows:
+        return event, False, ""
+    event_rows.sort(
+        key=lambda row: (
+            0 if row.get("session") in PRIMARY_EARNINGS_SESSIONS else 1,
+            row.get("datetime") or datetime.max.replace(tzinfo=EASTERN),
+        )
+    )
+    matched = event_rows[0]
+    refined = dict(event)
+    changed = False
+    if normalize_earnings_session(refined.get("session")) == "Unconfirmed" and matched.get("session") != "Unconfirmed":
+        refined["session"] = matched.get("session")
+        refined["datetime"] = matched.get("datetime") or refined.get("datetime")
+        changed = True
+    for key in ("eps_estimate", "eps_actual", "eps_surprise_pct"):
+        if coerce_float(refined.get(key)) is None and coerce_float(matched.get(key)) is not None:
+            refined[key] = coerce_float(matched.get(key))
+            changed = True
+    return refined, changed, "Yahoo Finance/yfinance earnings timestamp" if changed else ""
 
 
 def fetch_single_earnings_release(
@@ -15322,6 +15476,9 @@ def fetch_single_earnings_release(
                 return None
             event_rows.sort(key=lambda row: row["datetime"] or datetime.max.replace(tzinfo=EASTERN))
             event = event_rows[0]
+            session_source = "Yahoo Finance/yfinance earnings dates"
+        else:
+            event, _, session_source = refine_earnings_event_from_yfinance(yf_ticker, event)
         info: dict = {}
         try:
             fast_info = getattr(yf_ticker, "fast_info", {}) or {}
@@ -15360,23 +15517,28 @@ def fetch_single_earnings_release(
         revenue_est = coerce_float((calendar_hint or {}).get("Revenue Estimate")) or estimate_frame_average(revenue_estimate)
         eps_actual = coerce_float(event.get("eps_actual"))
         actual_revenue = coerce_float((calendar_hint or {}).get("Actual Revenue"))
-        is_reported = bool(eps_actual is not None or actual_revenue is not None or event["date"] < date.today())
+        source_reported = bool((calendar_hint or {}).get("Reported Source Flag"))
+        is_reported = bool(eps_actual is not None or actual_revenue is not None or source_reported)
+        actual_source = str((calendar_hint or {}).get("Source Actuals") or "").strip()
         if actual_revenue is None and is_reported:
             actual_revenue = latest_reported_statement_revenue(yf_ticker, event.get("date"))
-        eps_surprise_pct = coerce_float(event.get("eps_surprise_pct"))
-        if eps_surprise_pct is None and eps_actual is not None and eps_estimate not in (None, 0):
-            eps_surprise_pct = (eps_actual - eps_estimate) / abs(eps_estimate) * 100
-        revenue_surprise_pct = earnings_surprise_percent(actual_revenue, revenue_est)
+            if actual_revenue is not None:
+                actual_source = "Yahoo Finance/yfinance quarterly income statement"
+        eps_surprise = earnings_surprise_payload(eps_actual, eps_estimate, eps=True, supplied_pct=event.get("eps_surprise_pct"))
+        revenue_surprise = earnings_surprise_payload(actual_revenue, revenue_est)
         note_parts = [str(option_data.get("message", "") or "").strip()]
         if event_rows:
             note_parts.append("yfinance earnings dates")
         elif calendar_hint:
             note_parts.append("calendar fallback enriched with yfinance quote/options")
+        if session_source:
+            note_parts.append(f"report time confirmed by {session_source}")
         return {
             "Ticker": symbol,
             "Company": company,
             "Earnings Date": event["date"],
             "Earnings DateTime": event["datetime"],
+            "Report Time Raw": (calendar_hint or {}).get("Report Time Raw") or event.get("session"),
             "Session": event["session"],
             "Sector": info.get("sector") or "Unknown",
             "Market Cap": coerce_float(info.get("marketCap") or info.get("market_cap")),
@@ -15392,9 +15554,17 @@ def fetch_single_earnings_release(
             "EPS Estimate": eps_estimate,
             "Actual Revenue": actual_revenue,
             "Actual EPS": eps_actual,
-            "Revenue Surprise %": revenue_surprise_pct,
-            "EPS Surprise %": eps_surprise_pct,
+            "Revenue Surprise %": revenue_surprise["pct"],
+            "EPS Surprise %": eps_surprise["pct"],
             "Reported": is_reported,
+            "Reported Source Flag": source_reported,
+            "EPS Type": "Reported/normalized",
+            "Revenue Currency": "USD",
+            "Revenue Unit": "raw",
+            "Source Earnings": (calendar_hint or {}).get("Source Earnings") or ("Yahoo Finance/yfinance earnings dates" if event_rows else "Earnings calendar"),
+            "Source Estimates": (calendar_hint or {}).get("Source Estimates") or "Yahoo Finance/yfinance analyst estimates",
+            "Source Actuals": actual_source,
+            "Source Report Time": session_source or (calendar_hint or {}).get("Source Report Time") or "",
             "Data Notes": "; ".join(dict.fromkeys(part for part in note_parts if part)),
         }
     except Exception:
@@ -15584,7 +15754,7 @@ def render_earnings_detail_table(frame: pd.DataFrame, height: int) -> None:
     for column in currency_columns:
         display[column] = pd.to_numeric(display[column], errors="coerce").map(lambda value: format_compact_currency(value, 1))
     for column in eps_columns:
-        display[column] = pd.to_numeric(display[column], errors="coerce").map(lambda value: format_currency(value, 2))
+        display[column] = pd.to_numeric(display[column], errors="coerce").map(lambda value: format_eps(value))
     display = display.astype("object").where(pd.notna(display), "N/A")
     styles = [
         {
@@ -15649,16 +15819,8 @@ def earnings_surprise_components(
     *,
     eps: bool = False,
 ) -> tuple[float | None, float | None, str]:
-    actual_value = coerce_float(actual)
-    estimate_value = coerce_float(estimate)
-    pct_value = coerce_float(pct)
-    delta = None
-    if actual_value is not None and estimate_value is not None:
-        delta = actual_value - estimate_value
-        if pct_value is None:
-            pct_value = earnings_surprise_percent(actual_value, estimate_value, eps=eps)
-    tone = earnings_result_tone(delta=delta, pct=pct_value)
-    return delta, pct_value, tone
+    payload = earnings_surprise_payload(actual, estimate, eps=eps, supplied_pct=pct)
+    return payload["delta"], payload["pct"], payload["tone"]
 
 
 def earnings_surprise_badge(prefix: str, actual: object, estimate: object, pct: object = None, *, eps: bool = False) -> str | None:
@@ -15671,7 +15833,7 @@ def earnings_surprise_badge(prefix: str, actual: object, estimate: object, pct: 
         result = "Miss"
     else:
         return earnings_mini_badge(f"{prefix} In Line", "neutral")
-    delta_text = format_signed_currency(delta, 2) if eps else format_signed_compact_currency(delta, 1)
+    delta_text = format_signed_eps(delta) if eps else format_signed_compact_currency(delta, 1)
     pct_text = format_percent(pct_value, 1, signed=True) if pct_value is not None else "N/A"
     return earnings_mini_badge(f"{prefix} {result} {delta_text} / {pct_text}", tone)
 
@@ -15706,11 +15868,151 @@ def earnings_card_sample_metrics(row: pd.Series | None) -> dict[str, object]:
     }
 
 
+def normalize_earnings_dataframe(frame: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return pd.DataFrame() if frame is None else frame
+    normalized = frame.copy()
+    for column in (
+        "Ticker",
+        "Company",
+        "Earnings Date",
+        "Earnings DateTime",
+        "Report Time Raw",
+        "Session",
+        "Reported",
+        "EPS Estimate",
+        "Actual EPS",
+        "Revenue Estimate",
+        "Actual Revenue",
+        "EPS Type",
+        "Revenue Currency",
+        "Revenue Unit",
+        "Source Earnings",
+        "Source Estimates",
+        "Source Actuals",
+        "Source Report Time",
+        "Last Updated",
+    ):
+        if column not in normalized:
+            normalized[column] = pd.NA
+    sessions = []
+    reported_flags = []
+    eps_surprise_dollars = []
+    eps_surprise_pcts = []
+    revenue_surprise_dollars = []
+    revenue_surprise_pcts = []
+    validation_warnings: list[str] = []
+    for index, row in normalized.iterrows():
+        event_dt = parse_earnings_datetime(row.get("Earnings DateTime"))
+        raw_time = row.get("Report Time Raw")
+        if raw_time is None or pd.isna(raw_time):
+            raw_time = row.get("Session")
+        session = normalize_earnings_session(raw_time, event_dt)
+        sessions.append(session)
+        eps_payload = earnings_surprise_payload(row.get("Actual EPS"), row.get("EPS Estimate"), eps=True)
+        revenue_payload = earnings_surprise_payload(row.get("Actual Revenue"), row.get("Revenue Estimate"))
+        eps_surprise_dollars.append(eps_payload["delta"])
+        eps_surprise_pcts.append(eps_payload["pct"])
+        revenue_surprise_dollars.append(revenue_payload["delta"])
+        revenue_surprise_pcts.append(revenue_payload["pct"])
+        reported = earnings_reported_flag(row)
+        reported_flags.append(reported)
+        ticker = row.get("Ticker") or f"row {index}"
+        if coerce_float(row.get("Actual EPS")) is not None and coerce_float(row.get("Actual EPS")) < 0 and "-" not in format_eps(row.get("Actual EPS")):
+            validation_warnings.append(f"{ticker}: negative actual EPS display lost sign")
+        if coerce_float(row.get("EPS Estimate")) is not None and coerce_float(row.get("EPS Estimate")) < 0 and "-" not in format_eps(row.get("EPS Estimate")):
+            validation_warnings.append(f"{ticker}: negative EPS estimate display lost sign")
+        if eps_payload["delta"] is not None and eps_payload["delta"] < -EARNINGS_EPS_TOLERANCE and eps_payload["tone"] != "bad":
+            validation_warnings.append(f"{ticker}: EPS miss classification mismatch")
+        if eps_payload["delta"] is not None and eps_payload["delta"] > EARNINGS_EPS_TOLERANCE and eps_payload["tone"] != "good":
+            validation_warnings.append(f"{ticker}: EPS beat classification mismatch")
+        if revenue_payload["delta"] is not None and revenue_payload["delta"] < -1 and revenue_payload["tone"] != "bad":
+            validation_warnings.append(f"{ticker}: revenue miss classification mismatch")
+        if revenue_payload["delta"] is not None and revenue_payload["delta"] > 1 and revenue_payload["tone"] != "good":
+            validation_warnings.append(f"{ticker}: revenue beat classification mismatch")
+    normalized["Session"] = sessions
+    normalized["Reported"] = reported_flags
+    normalized["EPS Surprise $"] = eps_surprise_dollars
+    normalized["EPS Surprise %"] = eps_surprise_pcts
+    normalized["Revenue Surprise $"] = revenue_surprise_dollars
+    normalized["Revenue Surprise %"] = revenue_surprise_pcts
+    normalized["ticker"] = normalized["Ticker"].astype(str)
+    normalized["company_name"] = normalized["Company"]
+    normalized["earnings_date"] = normalized["Earnings Date"]
+    normalized["fiscal_quarter"] = normalized.get("Fiscal Quarter", pd.Series(index=normalized.index, dtype=object))
+    normalized["fiscal_year"] = normalized.get("Fiscal Year", pd.Series(index=normalized.index, dtype=object))
+    normalized["report_time_raw"] = normalized["Report Time Raw"]
+    normalized["session"] = normalized["Session"]
+    normalized["is_reported"] = normalized["Reported"]
+    normalized["eps_estimate"] = pd.to_numeric(normalized["EPS Estimate"], errors="coerce")
+    normalized["eps_actual"] = pd.to_numeric(normalized["Actual EPS"], errors="coerce")
+    normalized["eps_type"] = normalized["EPS Type"].fillna("Reported/normalized")
+    normalized["revenue_estimate"] = pd.to_numeric(normalized["Revenue Estimate"], errors="coerce")
+    normalized["revenue_actual"] = pd.to_numeric(normalized["Actual Revenue"], errors="coerce")
+    normalized["revenue_currency"] = normalized["Revenue Currency"].fillna("USD")
+    normalized["revenue_unit"] = normalized["Revenue Unit"].fillna("raw")
+    normalized["eps_surprise"] = pd.to_numeric(normalized["EPS Surprise $"], errors="coerce")
+    normalized["eps_surprise_pct"] = pd.to_numeric(normalized["EPS Surprise %"], errors="coerce")
+    normalized["revenue_surprise"] = pd.to_numeric(normalized["Revenue Surprise $"], errors="coerce")
+    normalized["revenue_surprise_pct"] = pd.to_numeric(normalized["Revenue Surprise %"], errors="coerce")
+    normalized["source_earnings"] = normalized["Source Earnings"]
+    normalized["source_estimates"] = normalized["Source Estimates"]
+    normalized["source_actuals"] = normalized["Source Actuals"]
+    normalized["source_report_time"] = normalized["Source Report Time"]
+    normalized["last_updated"] = normalized["Last Updated"].astype("object").where(pd.notna(normalized["Last Updated"]), eastern_now())
+    normalized.attrs["validation_warnings"] = validation_warnings
+    return normalized
+
+
+def earnings_calculation_test_cases() -> pd.DataFrame:
+    rows = []
+    for estimate, actual, expected in (
+        (-0.02, -0.04, "EPS Miss -$0.02 / -100.0%"),
+        (-0.04, -0.02, "EPS Beat +$0.02 / +50.0%"),
+        (0.02, 0.08, "EPS Beat +$0.06 / +300.0%"),
+        (0.08, 0.02, "EPS Miss -$0.06 / -75.0%"),
+    ):
+        payload = earnings_surprise_payload(actual, estimate, eps=True)
+        rows.append(
+            {
+                "Case": expected,
+                "Actual": format_eps(actual),
+                "Estimate": format_eps(estimate),
+                "Observed": f"EPS {payload['result']} {format_signed_eps(payload['delta'])} / {format_percent(payload['pct'], 1, signed=True)}",
+            }
+        )
+    for estimate, actual, expected in (
+        (28_300_000, 24_100_000, "Rev Miss -$4.2M / -14.8%"),
+        (25_700_000, 28_500_000, "Rev Beat +$2.8M / +10.9%"),
+    ):
+        payload = earnings_surprise_payload(actual, estimate)
+        rows.append(
+            {
+                "Case": expected,
+                "Actual": format_compact_currency(actual, 1),
+                "Estimate": format_compact_currency(estimate, 1),
+                "Observed": f"Rev {payload['result']} {format_signed_compact_currency(payload['delta'], 1)} / {format_percent(payload['pct'], 1, signed=True)}",
+            }
+        )
+    for raw, expected in (
+        ("BMO", "Before Open"),
+        ("AMC", "After Close"),
+        ("pre-market", "Before Open"),
+        ("post-market", "After Close"),
+        ("", "Unconfirmed"),
+        (datetime(2026, 5, 7, 8, 0, tzinfo=EASTERN), "Before Open"),
+        (datetime(2026, 5, 7, 17, 0, tzinfo=EASTERN), "After Close"),
+        (datetime(2026, 5, 7, 12, 0, tzinfo=EASTERN), "During Market"),
+    ):
+        rows.append({"Case": f"{raw} -> {expected}", "Actual": "", "Estimate": "", "Observed": normalize_earnings_session(raw)})
+    return pd.DataFrame(rows)
+
+
 def render_earnings_card(row: pd.Series) -> str:
     ticker = str(row.get("Ticker") or "N/A")
     logo_html = company_logo_markup(ticker, row.get("Logo URL"))
     company = str(row.get("Company") or ticker)
-    session = str(row.get("Session") or "Time Not Supplied")
+    session = str(row.get("Session") or "Unconfirmed")
     score = coerce_float(row.get("Anticipation Score"))
     implied_move = coerce_float(row.get("7D Implied Move %"))
     revenue_estimate = coerce_float(row.get("Revenue Estimate"))
@@ -15725,19 +16027,19 @@ def render_earnings_card(row: pd.Series) -> str:
         [
             earnings_metric_box("7D Move", format_move(implied_move, 1), "neutral" if implied_move is None else "good"),
             earnings_metric_box("Rev Est", format_compact_currency(revenue_estimate, 1), "neutral"),
-            earnings_metric_box("EPS Est", format_currency(eps_estimate, 2), "neutral"),
+            earnings_metric_box("EPS Est", format_eps(eps_estimate), "neutral"),
         ]
     )
     actual_html = "".join(
         [
             earnings_metric_box(
                 "Actual Rev",
-                format_compact_currency(actual_revenue, 1) if actual_revenue is not None else "—",
+                format_compact_currency(actual_revenue, 1) if actual_revenue is not None else "-",
                 revenue_tone if actual_revenue is not None and revenue_estimate is not None else "neutral",
             ),
             earnings_metric_box(
                 "Actual EPS",
-                format_currency(actual_eps, 2) if actual_eps is not None else "—",
+                format_eps(actual_eps) if actual_eps is not None else "-",
                 eps_tone if actual_eps is not None and eps_estimate is not None else "neutral",
             ),
         ]
@@ -15788,7 +16090,11 @@ def render_earnings_summary(frame: pd.DataFrame, week_start: date, total_frame: 
         pd.to_numeric(frame.get("Actual Revenue", pd.Series(index=frame.index, dtype=float)), errors="coerce").notna()
         | pd.to_numeric(frame.get("Actual EPS", pd.Series(index=frame.index, dtype=float)), errors="coerce").notna()
     )
-    upcoming_mask = pd.to_datetime(frame.get("Earnings Date", pd.Series(index=frame.index, dtype=object)), errors="coerce").dt.date >= date.today()
+    if "Reported" in frame:
+        reported_mask = frame["Reported"].fillna(False).astype(bool)
+    upcoming_mask = (
+        pd.to_datetime(frame.get("Earnings Date", pd.Series(index=frame.index, dtype=object)), errors="coerce").dt.date >= eastern_now().date()
+    ) & ~reported_mask
     most_anticipated = str(frame.iloc[0].get("Ticker") or "N/A") if not frame.empty else "N/A"
     highest_move = pd.to_numeric(frame.get("7D Implied Move %", pd.Series(dtype=float)), errors="coerce").max()
     week_label = f"{calendar.month_abbr[week_start.month]} {week_start.day}, {week_start.year}"
@@ -15844,21 +16150,16 @@ def earnings_bucket_options(frame: pd.DataFrame, week_start: date, session_filte
         return []
     labels: list[str] = []
     days = [week_start + timedelta(days=offset) for offset in range(5)]
-    show_unknown = show_time_not_supplied or session_filter == "Time Not Supplied"
     for day in days:
         day_rows = frame[frame["Earnings Date"].eq(day)]
         if day_rows.empty:
             continue
-        sessions = list(PRIMARY_EARNINGS_SESSIONS)
-        if session_filter not in {"All", "Before Open", "After Close"}:
+        if session_filter in PRIMARY_EARNINGS_SESSIONS:
             sessions = [session_filter]
-        elif session_filter in PRIMARY_EARNINGS_SESSIONS:
-            sessions = [session_filter]
-        if session_filter == "All":
-            if day_rows["Session"].eq("During Market").any():
-                sessions.append("During Market")
-            if show_unknown and day_rows["Session"].eq("Time Not Supplied").any():
-                sessions.append("Time Not Supplied")
+        elif session_filter == "All":
+            sessions = list(PRIMARY_EARNINGS_SESSIONS)
+        else:
+            sessions = []
         for session in sessions:
             count = int(day_rows["Session"].eq(session).sum())
             if count:
@@ -15877,25 +16178,19 @@ def earnings_visible_rows_for_grid(
     if frame.empty or "Earnings Date" not in frame or "Session" not in frame:
         return frame.head(0)
     days = [week_start + timedelta(days=offset) for offset in range(5)]
-    sessions = list(PRIMARY_EARNINGS_SESSIONS)
-    if session_filter not in {"All", "Before Open", "After Close"}:
+    if session_filter in PRIMARY_EARNINGS_SESSIONS:
         sessions = [session_filter]
-    elif session_filter in PRIMARY_EARNINGS_SESSIONS:
-        sessions = [session_filter]
+    elif session_filter == "All":
+        sessions = list(PRIMARY_EARNINGS_SESSIONS)
+    else:
+        sessions = []
     expanded_set = set(expanded_buckets or [])
-    show_unknown = show_time_not_supplied or session_filter == "Time Not Supplied"
     visible_indexes: list[object] = []
     for day in days:
         day_rows = frame[frame["Earnings Date"].eq(day)]
         if day_rows.empty:
             continue
-        day_sessions = list(sessions)
-        if session_filter == "All":
-            if day_rows["Session"].eq("During Market").any():
-                day_sessions.append("During Market")
-            if show_unknown and day_rows["Session"].eq("Time Not Supplied").any():
-                day_sessions.append("Time Not Supplied")
-        for session in day_sessions:
+        for session in sessions:
             subset = day_rows[day_rows["Session"].eq(session)]
             if subset.empty:
                 continue
@@ -15999,10 +16294,13 @@ def merge_visible_earnings_enrichment(frame: pd.DataFrame, enriched_rows: list[d
             existing = merged.at[index, column] if column in merged.columns else None
             if column not in merged.columns or existing in (None, "", "Unknown", "N/A") or pd.isna(existing):
                 merged.at[index, column] = value
+            elif column == "Session" and normalize_earnings_session(existing) == "Unconfirmed" and normalize_earnings_session(value) != "Unconfirmed":
+                merged.at[index, column] = normalize_earnings_session(value)
             elif column in {
                 "Last Price",
                 "Daily Change %",
                 "Logo URL",
+                "Report Time Raw",
                 "7D IV %",
                 "7D Implied Move %",
                 "Options Expiry Used",
@@ -16012,6 +16310,7 @@ def merge_visible_earnings_enrichment(frame: pd.DataFrame, enriched_rows: list[d
                 "Actual Revenue",
                 "Revenue Surprise %",
                 "Reported",
+                "Source Report Time",
                 "Data Notes",
             } and value not in (None, "", "Unknown", "N/A"):
                 merged.at[index, column] = value
@@ -16035,30 +16334,24 @@ def render_weekly_earnings_grid(
     expanded_buckets: list[str] | tuple[str, ...] = (),
 ) -> dict[str, int | bool]:
     days = [week_start + timedelta(days=offset) for offset in range(5)]
-    sessions = list(PRIMARY_EARNINGS_SESSIONS)
-    if session_filter not in {"All", "Before Open", "After Close"}:
+    if session_filter in PRIMARY_EARNINGS_SESSIONS:
         sessions = [session_filter]
-    elif session_filter in PRIMARY_EARNINGS_SESSIONS:
-        sessions = [session_filter]
+    elif session_filter == "All":
+        sessions = list(PRIMARY_EARNINGS_SESSIONS)
+    else:
+        sessions = []
     html_days = []
     stats: dict[str, int | bool] = {
         "number_of_cards_rendered": 0,
         "number_of_hidden_cards_due_to_limit": 0,
-        "hidden_time_not_supplied": 0,
+        "hidden_unconfirmed": 0,
         "overflow_fix_enabled": True,
     }
     expanded_set = set(expanded_buckets or [])
-    show_unknown_for_grid = show_time_not_supplied or session_filter == "Time Not Supplied"
     for day in days:
         day_rows = frame[frame["Earnings Date"].eq(day)] if not frame.empty and "Earnings Date" in frame else pd.DataFrame()
-        day_sessions = list(sessions)
-        if session_filter == "All" and not day_rows.empty and "Session" in day_rows:
-            if day_rows["Session"].eq("During Market").any() and "During Market" not in day_sessions:
-                day_sessions.append("During Market")
-            if show_unknown_for_grid and day_rows["Session"].eq("Time Not Supplied").any() and "Time Not Supplied" not in day_sessions:
-                day_sessions.append("Time Not Supplied")
         session_html = []
-        for session in day_sessions:
+        for session in sessions:
             subset = day_rows[day_rows["Session"].eq(session)] if not day_rows.empty and "Session" in day_rows else pd.DataFrame()
             total_in_session = len(subset)
             bucket_label = earnings_bucket_label(day, session, total_in_session)
@@ -16083,13 +16376,10 @@ def render_weekly_earnings_grid(
                 f"{cards}"
                 "</div>"
             )
-        if not show_unknown_for_grid and not day_rows.empty and "Session" in day_rows:
-            hidden_unknown = int(day_rows["Session"].eq("Time Not Supplied").sum())
+        if not day_rows.empty and "Session" in day_rows:
+            hidden_unknown = int(day_rows["Session"].eq("Unconfirmed").sum())
             if hidden_unknown:
-                stats["hidden_time_not_supplied"] = int(stats["hidden_time_not_supplied"]) + hidden_unknown
-                session_html.append(
-                    f"<div class='earnings-hidden-summary'>{hidden_unknown:,} releases have no report time. Turn on Show unknown times to view.</div>"
-                )
+                stats["hidden_unconfirmed"] = int(stats["hidden_unconfirmed"]) + hidden_unknown
         html_days.append(
             "<section class='earnings-day-panel'>"
             "<div class='earnings-day-head'>"
@@ -16105,6 +16395,31 @@ def render_weekly_earnings_grid(
         + "</div></div>",
         unsafe_allow_html=True,
     )
+    return stats
+
+
+def render_unconfirmed_earnings_section(frame: pd.DataFrame, show_table: bool) -> dict[str, int]:
+    stats = {"rows_unconfirmed": 0}
+    if frame.empty or "Session" not in frame:
+        return stats
+    unconfirmed = frame[frame["Session"].eq("Unconfirmed")].copy()
+    stats["rows_unconfirmed"] = len(unconfirmed)
+    if unconfirmed.empty:
+        return stats
+    label = f"Earnings with Unconfirmed Report Time ({len(unconfirmed):,})"
+    with st.expander(label, expanded=False):
+        st.caption("These releases have a date but no reliable Before Open / After Close confirmation from the configured calendar or yfinance timestamp sources, so they are kept out of the main weekly grid.")
+        columns = [
+            "Ticker",
+            "Company",
+            "Earnings Date",
+            "EPS Estimate",
+            "Actual EPS",
+            "Revenue Estimate",
+            "Actual Revenue",
+            "Anticipation Score",
+        ]
+        render_earnings_detail_table(unconfirmed[[column for column in columns if column in unconfirmed]].head(250), height=320)
     return stats
 
 
@@ -16136,7 +16451,9 @@ def filter_earnings_frame(
     if show_reported and "Reported" in filtered:
         filtered = filtered[filtered["Reported"].fillna(False)]
     if upcoming_only:
-        filtered = filtered[pd.to_datetime(filtered["Earnings Date"], errors="coerce").dt.date >= date.today()]
+        event_dates = pd.to_datetime(filtered["Earnings Date"], errors="coerce").dt.date
+        reported = filtered["Reported"].fillna(False) if "Reported" in filtered else False
+        filtered = filtered[(~reported) & (event_dates >= eastern_now().date())]
     if only_most_discussed and not filtered.empty:
         score_values = pd.to_numeric(filtered["Anticipation Score"], errors="coerce")
         median_score = coerce_float(score_values.median())
@@ -16176,10 +16493,14 @@ def render_earnings_calendar_tab() -> None:
     for key, value in EARNINGS_FILTER_DEFAULTS.items():
         if key not in st.session_state:
             st.session_state[key] = list(value) if isinstance(value, list) else value
-    if st.session_state.get("earnings_filter_schema") != 2:
+    if st.session_state.get("earnings_filter_schema") != 3:
         st.session_state["earnings_show_reported"] = False
-        st.session_state["earnings_show_time_not_supplied"] = True
-        st.session_state["earnings_filter_schema"] = 2
+        st.session_state["earnings_show_time_not_supplied"] = False
+        if st.session_state.get("earnings_session_filter") == "Time Not Supplied":
+            st.session_state["earnings_session_filter"] = "All"
+        st.session_state["earnings_filter_schema"] = 3
+    if st.session_state.get("earnings_session_filter") not in {"All", "Before Open", "After Close"}:
+        st.session_state["earnings_session_filter"] = "All"
     if "earnings_week_start" not in st.session_state:
         st.session_state["earnings_week_start"] = week_monday()
     with st.container(border=True):
@@ -16196,7 +16517,7 @@ def render_earnings_calendar_tab() -> None:
                 st.session_state["earnings_week_start"] = st.session_state["earnings_week_start"] + timedelta(days=7)
                 week_start = st.session_state["earnings_week_start"]
         with nav_cols[3]:
-            session_filter = st.selectbox("Session", ["All", "Before Open", "After Close", "During Market", "Time Not Supplied"], key="earnings_session_filter")
+            session_filter = st.selectbox("Session", ["All", "Before Open", "After Close"], key="earnings_session_filter")
         with nav_cols[4]:
             sort_mode = st.selectbox("Sort", ["Anticipation Score", "Highest 7D implied move", "Largest market cap", "Highest short interest", "Alphabetical"], key="earnings_sort_mode")
         with nav_cols[5]:
@@ -16235,7 +16556,8 @@ def render_earnings_calendar_tab() -> None:
         with toggle_cols[2]:
             upcoming_only = st.toggle("Upcoming only", value=False, key="earnings_upcoming_only")
         with toggle_cols[3]:
-            show_time_not_supplied = st.toggle("Unknown times", value=True, key="earnings_show_time_not_supplied")
+            show_time_not_supplied = True
+            st.caption("Unconfirmed report times stay out of the grid and are listed below.")
         with toggle_cols[4]:
             st.caption("Before Open = pre-market releases. After Close = post-close releases. 7D move uses annualized ATM IV adjusted by sqrt(days/365).")
 
@@ -16272,6 +16594,7 @@ def render_earnings_calendar_tab() -> None:
         )
         rows, earnings_statuses, earnings_refreshed = fetch_weekly_earnings_releases(tickers, week_start.isoformat(), week_end.isoformat())
         earnings_df = attach_anticipation_scores(rows, articles, social_mentions)
+        earnings_df = normalize_earnings_dataframe(earnings_df)
     sector_options = sorted(earnings_df["Sector"].dropna().astype(str).unique().tolist()) if not earnings_df.empty and "Sector" in earnings_df else []
     if sector_options:
         st.session_state["earnings_sector_filter"] = [
@@ -16289,6 +16612,7 @@ def render_earnings_calendar_tab() -> None:
         upcoming_only,
         sort_mode,
     )
+    filtered = normalize_earnings_dataframe(filtered)
     bucket_options = earnings_bucket_options(filtered, week_start, session_filter, show_time_not_supplied)
     if bucket_options:
         st.session_state["earnings_expanded_buckets"] = [
@@ -16320,6 +16644,7 @@ def render_earnings_calendar_tab() -> None:
         week_end.isoformat(),
     )
     filtered = merge_visible_earnings_enrichment(filtered, visible_enriched_rows)
+    filtered = normalize_earnings_dataframe(filtered)
     render_earnings_summary(filtered, week_start, earnings_df)
     with st.expander("Sources and diagnostics", expanded=False):
         diagnostic_rows = [
@@ -16341,6 +16666,7 @@ def render_earnings_calendar_tab() -> None:
         show_time_not_supplied,
         expanded_buckets,
     )
+    unconfirmed_stats = render_unconfirmed_earnings_section(filtered, bool(show_time_not_supplied))
 
     with st.expander("Expanded earnings detail", expanded=False):
         if filtered.empty:
@@ -16351,6 +16677,7 @@ def render_earnings_calendar_tab() -> None:
                 "Company",
                 "Earnings Date",
                 "Session",
+                "Source Report Time",
                 "Anticipation Score",
                 "Last Price",
                 "7D Implied Move %",
@@ -16382,7 +16709,7 @@ def render_earnings_calendar_tab() -> None:
                 st.session_state["main_tab"] = "Company Analysis"
                 st.rerun()
 
-    with st.expander("Data validation", expanded=False):
+    with st.expander("Earnings Data Validation", expanded=False):
         selected_card = st.session_state.get("earnings_open_ticker", "Select a ticker")
         selected_sample = None
         if not filtered.empty:
@@ -16415,10 +16742,11 @@ def render_earnings_calendar_tab() -> None:
             {"Metric": "rows_after_filters", "Value": f"{len(filtered):,}"},
             {"Metric": "number_of_cards_rendered", "Value": f"{int(grid_stats.get('number_of_cards_rendered', 0)):,}"},
             {"Metric": "number_of_hidden_cards_due_to_limit", "Value": f"{int(grid_stats.get('number_of_hidden_cards_due_to_limit', 0)):,}"},
+            {"Metric": "unconfirmed_rows_kept_out_of_grid", "Value": f"{int(unconfirmed_stats.get('rows_unconfirmed', 0)):,}"},
             {"Metric": "visible_card_enrichment_requested", "Value": f"{len(visible_hints):,}"},
             {"Metric": "visible_card_enrichment_returned", "Value": f"{len(visible_enriched_rows):,}"},
             {"Metric": "expanded_buckets", "Value": ", ".join(expanded_buckets) if expanded_buckets else "None"},
-            {"Metric": "show_time_not_supplied", "Value": str(bool(show_time_not_supplied))},
+            {"Metric": "show_unconfirmed_table", "Value": str(bool(show_time_not_supplied))},
             {"Metric": "overflow_fix_enabled", "Value": str(bool(grid_stats.get("overflow_fix_enabled", True)))},
             {"Metric": "selected_card", "Value": selected_card or "N/A"},
             {"Metric": "source_used", "Value": "Nasdaq/Yahoo earnings calendars + yfinance enrichment"},
@@ -16426,7 +16754,17 @@ def render_earnings_calendar_tab() -> None:
             {"Metric": "number_of_earnings_names", "Value": f"{len(filtered):,}"},
             {"Metric": "number_before_open", "Value": f"{int(filtered['Session'].eq('Before Open').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
             {"Metric": "number_after_close", "Value": f"{int(filtered['Session'].eq('After Close').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
-            {"Metric": "number_time_unknown", "Value": f"{int(filtered['Session'].eq('Time Not Supplied').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
+            {"Metric": "rows_during_market", "Value": f"{int(filtered['Session'].eq('During Market').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
+            {"Metric": "rows_unconfirmed", "Value": f"{int(filtered['Session'].eq('Unconfirmed').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
+            {"Metric": "rows_reported", "Value": f"{int(filtered['Reported'].fillna(False).sum()) if not filtered.empty and 'Reported' in filtered else 0:,}"},
+            {
+                "Metric": "rows_upcoming",
+                "Value": f"{int(((pd.to_datetime(filtered.get('Earnings Date', pd.Series(index=filtered.index, dtype=object)), errors='coerce').dt.date >= eastern_now().date()) & (~filtered.get('Reported', pd.Series(False, index=filtered.index)).fillna(False))).sum()) if not filtered.empty else 0:,}",
+            },
+            {"Metric": "number_of_eps_sign_warnings", "Value": f"{len([w for w in filtered.attrs.get('validation_warnings', []) if 'EPS' in w]):,}"},
+            {"Metric": "number_of_revenue_source_warnings", "Value": f"{len([w for w in filtered.attrs.get('validation_warnings', []) if 'revenue' in w.lower()]):,}"},
+            {"Metric": "number_of_session_warnings", "Value": f"{len([w for w in filtered.attrs.get('validation_warnings', []) if 'session' in w.lower()]):,}"},
+            {"Metric": "first_20_validation_warnings", "Value": "; ".join(filtered.attrs.get('validation_warnings', [])[:20]) if filtered.attrs.get('validation_warnings') else "None"},
             {"Metric": "ranking_formula_used", "Value": "0.35 social + 0.25 news + 0.15 implied move + 0.10 options activity + 0.05 short interest + 0.10 market cap"},
             {"Metric": "data_sources_used", "Value": "Nasdaq/Yahoo earnings calendars, Yahoo Finance/yfinance enrichment, shared RSS/API headlines, social RSS/Stocktwits optional"},
             {"Metric": "tickers_loaded", "Value": f"{len(tickers):,}"},
@@ -16457,6 +16795,29 @@ def render_earnings_calendar_tab() -> None:
             {"Metric": "earnings_source_status_rows", "Value": f"{len(earnings_statuses):,}"},
         ]
         render_dashboard_table(pd.DataFrame(validation_rows), height=420)
+        sample_cols = [
+            "ticker",
+            "company_name",
+            "earnings_date",
+            "report_time_raw",
+            "session",
+            "is_reported",
+            "eps_estimate",
+            "eps_actual",
+            "eps_surprise",
+            "eps_surprise_pct",
+            "revenue_estimate",
+            "revenue_actual",
+            "revenue_surprise",
+            "revenue_surprise_pct",
+            "source_earnings",
+            "source_estimates",
+            "source_actuals",
+        ]
+        if not filtered.empty:
+            render_dashboard_table(filtered[[column for column in sample_cols if column in filtered]].head(20), height=300)
+        st.caption("Earnings calculation self-checks")
+        render_dashboard_table(earnings_calculation_test_cases(), height=360)
 
 
 def render_home_dashboard() -> None:
