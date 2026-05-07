@@ -58,6 +58,11 @@ try:
 except Exception:
     st_autorefresh = None
 
+try:
+    EASTERN = ZoneInfo("America/New_York")
+except Exception:
+    EASTERN = timezone(timedelta(hours=-4))
+
 
 DEFAULT_UNIVERSE = (
     "AAPL, MSFT, NVDA, AMD, AVGO, AMZN, GOOGL, META, TSLA, NFLX, JPM, XOM, "
@@ -111,7 +116,7 @@ PROVIDER_HIERARCHY = {
     "Competitive Analysis": ["Yahoo Finance/yfinance peer quotes, fundamentals, analyst fields, and price history", "Cached/empty state"],
     "Company Analysis": ["Yahoo Finance/yfinance financial statement matrices", "Cached/empty state"],
     "Analyst Expectations": ["Yahoo Finance/yfinance analyst estimates and public news links", "Clean empty state"],
-    "Earnings Calendar": ["Yahoo Finance/yfinance earnings dates, estimates, options chains", "Shared RSS/social feeds for discussion ranking", "Cached/empty state"],
+    "Earnings Calendar": ["Nasdaq/Yahoo public earnings calendars", "Yahoo Finance/yfinance estimates and options enrichment", "Shared RSS/social feeds for discussion ranking", "Cached/empty state"],
     "Volatility Radar": ["Yahoo Finance/yfinance price history and option chains", "Cached/empty state"],
     "Sector Performance": ["Yahoo Finance/yfinance sector ETF quotes", "Cached last successful Streamlit data"],
     "News Headlines": ["Reputable RSS/API and official feeds", "Yahoo Finance only after relevance filters", "Cached last successful feed set"],
@@ -5008,7 +5013,7 @@ def earnings_dates_frame(yf_ticker: yf.Ticker) -> pd.DataFrame:
     if not callable(getter):
         return pd.DataFrame()
     try:
-        frame = getter(limit=12)
+        frame = getter(limit=24)
     except Exception:
         return pd.DataFrame()
     return frame if isinstance(frame, pd.DataFrame) else pd.DataFrame()
@@ -14823,6 +14828,336 @@ def estimate_frame_average(frame: pd.DataFrame, preferred_periods: Sequence[str]
     return None
 
 
+def first_present_value(source: dict, keys: Sequence[str]) -> object:
+    for key in keys:
+        value = source.get(key)
+        if value not in (None, "", "-", "--"):
+            return value
+    return None
+
+
+def earnings_session_for_code(value: object, fallback_datetime: datetime | None = None) -> str:
+    text = clean_text(str(value or "")).upper()
+    if text in {"BMO", "BEFORE MARKET OPEN", "BEFORE OPEN", "PRE-MARKET", "PREMARKET"}:
+        return "Before Open"
+    if text in {"AMC", "AFTER MARKET CLOSE", "AFTER CLOSE", "POST-MARKET", "POSTMARKET"}:
+        return "After Close"
+    if text in {"DMH", "DURING MARKET", "DURING MARKET HOURS"}:
+        return "During Market"
+    if "BEFORE" in text or "PRE" in text:
+        return "Before Open"
+    if "AFTER" in text or "POST" in text:
+        return "After Close"
+    return earnings_session_for_datetime(fallback_datetime)
+
+
+def earnings_surprise_percent(actual: object, estimate: object, *, eps: bool = False) -> float | None:
+    actual_value = coerce_float(actual)
+    estimate_value_ = coerce_float(estimate)
+    if actual_value is None or estimate_value_ in (None, 0):
+        return None
+    denominator = abs(estimate_value_) if eps else estimate_value_
+    if denominator == 0:
+        return None
+    return (actual_value - estimate_value_) / denominator * 100
+
+
+def yahoo_earnings_datetime(item: dict) -> datetime | None:
+    raw_value = first_present_value(
+        item,
+        (
+            "startdatetime",
+            "startDateTime",
+            "start_time",
+            "startTime",
+            "earningsDate",
+            "earnings_date",
+            "date",
+        ),
+    )
+    if isinstance(raw_value, (int, float)) and not isinstance(raw_value, bool):
+        try:
+            return datetime.fromtimestamp(float(raw_value), timezone.utc).astimezone(EASTERN)
+        except Exception:
+            return None
+    return parse_earnings_datetime(raw_value)
+
+
+def yahoo_calendar_item_to_earnings_row(item: dict, week_start: date, week_end: date) -> dict[str, object] | None:
+    symbol = normalize_symbol(first_present_value(item, ("ticker", "symbol", "Symbol")))
+    if not symbol:
+        return None
+    event_dt = yahoo_earnings_datetime(item)
+    event_date = event_dt.date() if event_dt else parse_date(first_present_value(item, ("date", "earningsDate")))
+    if event_date is None or not (week_start <= event_date <= week_end):
+        return None
+    eps_estimate = coerce_float(first_present_value(item, ("epsestimate", "epsEstimate", "eps_estimate", "epsAvgEstimate")))
+    eps_actual = coerce_float(first_present_value(item, ("epsactual", "epsActual", "reportedEPS", "actualEps")))
+    revenue_estimate = coerce_float(
+        first_present_value(
+            item,
+            ("revenueestimate", "revenueEstimate", "revenue_estimate", "revenueAvgEstimate", "revenueEstimateAvg"),
+        )
+    )
+    actual_revenue = coerce_float(first_present_value(item, ("revenueactual", "revenueActual", "actualRevenue")))
+    revenue_surprise_pct = coerce_float(first_present_value(item, ("revenuesurprisepct", "revenueSurprisePct", "revenueSurprisePercent")))
+    eps_surprise_pct = coerce_float(first_present_value(item, ("epssurprisepct", "epsSurprisePct", "surprisePercent", "surprisePct")))
+    if revenue_surprise_pct is not None and abs(revenue_surprise_pct) <= 1:
+        revenue_surprise_pct *= 100
+    if eps_surprise_pct is not None and abs(eps_surprise_pct) <= 1:
+        eps_surprise_pct *= 100
+    if revenue_surprise_pct is None:
+        revenue_surprise_pct = earnings_surprise_percent(actual_revenue, revenue_estimate)
+    if eps_surprise_pct is None:
+        eps_surprise_pct = earnings_surprise_percent(eps_actual, eps_estimate, eps=True)
+    company = clean_text(
+        str(
+            first_present_value(
+                item,
+                ("companyshortname", "companyShortName", "companyName", "companyname", "shortName", "name"),
+            )
+            or symbol
+        )
+    )
+    session = earnings_session_for_code(
+        first_present_value(item, ("startdatetimetype", "startDateTimeType", "timeType", "session")),
+        event_dt,
+    )
+    return {
+        "Ticker": symbol,
+        "Company": company,
+        "Earnings Date": event_date,
+        "Earnings DateTime": event_dt,
+        "Session": session,
+        "Sector": "Unknown",
+        "Market Cap": None,
+        "Last Price": None,
+        "Daily Change %": None,
+        "Logo URL": None,
+        "7D IV %": None,
+        "7D Implied Move %": None,
+        "Options Expiry Used": None,
+        "Options Contracts": None,
+        "Short %": None,
+        "Revenue Estimate": revenue_estimate,
+        "EPS Estimate": eps_estimate,
+        "Actual Revenue": actual_revenue,
+        "Actual EPS": eps_actual,
+        "Revenue Surprise %": revenue_surprise_pct,
+        "EPS Surprise %": eps_surprise_pct,
+        "Reported": bool(actual_revenue is not None or eps_actual is not None or event_date < eastern_now().date()),
+        "Data Notes": "Yahoo weekly earnings calendar row",
+    }
+
+
+def yahoo_calendar_payload_items(payload: object) -> list[dict]:
+    if not isinstance(payload, dict):
+        return []
+    result = nested_value(payload, ("finance", "result"))
+    if isinstance(result, list):
+        for item in result:
+            calendar_rows = item.get("earningsCalendar") if isinstance(item, dict) else None
+            if isinstance(calendar_rows, list):
+                return [row for row in calendar_rows if isinstance(row, dict)]
+    if isinstance(result, dict):
+        calendar_rows = result.get("earningsCalendar")
+        if isinstance(calendar_rows, list):
+            return [row for row in calendar_rows if isinstance(row, dict)]
+    return []
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_yahoo_weekly_earnings_calendar(week_start_iso: str, week_end_iso: str) -> tuple[list[dict[str, object]], list[dict[str, object]], datetime]:
+    week_start = parse_date(week_start_iso) or week_monday()
+    week_end = parse_date(week_end_iso) or (week_start + timedelta(days=4))
+    rows: list[dict[str, object]] = []
+    statuses: list[dict[str, object]] = []
+    url = "https://query1.finance.yahoo.com/v1/finance/calendar/earnings"
+    seen: set[str] = set()
+    headers = {"User-Agent": "streamlit-investment-dashboard/1.0 (+https://streamlit.io)"}
+    for offset in range(0, 750, 250):
+        try:
+            response = requests.get(
+                url,
+                params={
+                    "from": week_start.isoformat(),
+                    "to": (week_end + timedelta(days=1)).isoformat(),
+                    "size": 250,
+                    "offset": offset,
+                },
+                headers=headers,
+                timeout=12,
+            )
+            response.raise_for_status()
+            items = yahoo_calendar_payload_items(response.json())
+        except Exception as exc:
+            statuses.append({"source": "Yahoo Finance earnings calendar", "status": "Error", "message": str(exc), "rows": len(rows)})
+            break
+        parsed_rows = []
+        for item in items:
+            row = yahoo_calendar_item_to_earnings_row(item, week_start, week_end)
+            if row and row["Ticker"] not in seen:
+                seen.add(str(row["Ticker"]))
+                parsed_rows.append(row)
+        rows.extend(parsed_rows)
+        statuses.append({"source": "Yahoo Finance earnings calendar", "status": "OK", "message": f"offset {offset}", "rows": len(parsed_rows)})
+        if len(items) < 250:
+            break
+    rows.sort(key=lambda row: (row.get("Earnings Date") or date.max, row.get("Session") or "", row.get("Ticker") or ""))
+    return rows, statuses, eastern_now()
+
+
+def merge_earnings_calendar_hint(row: dict[str, object], calendar_row: dict[str, object]) -> dict[str, object]:
+    merged = dict(row)
+    for key, value in calendar_row.items():
+        if key in {"Ticker", "Earnings Date", "Earnings DateTime"}:
+            continue
+        existing = merged.get(key)
+        if existing in (None, "", "Unknown", "N/A") and value not in (None, "", "Unknown", "N/A"):
+            merged[key] = value
+    if merged.get("Revenue Surprise %") is None:
+        merged["Revenue Surprise %"] = earnings_surprise_percent(merged.get("Actual Revenue"), merged.get("Revenue Estimate"))
+    if merged.get("EPS Surprise %") is None:
+        merged["EPS Surprise %"] = earnings_surprise_percent(merged.get("Actual EPS"), merged.get("EPS Estimate"), eps=True)
+    notes = [str(item).strip() for item in (merged.get("Data Notes"), calendar_row.get("Data Notes")) if str(item or "").strip()]
+    merged["Data Notes"] = "; ".join(dict.fromkeys(notes))
+    return merged
+
+
+def nasdaq_session_label(value: object) -> str:
+    text = clean_text(str(value or "")).replace("_", "-").replace(" ", "-").lower()
+    if any(token in text for token in ("before", "pre-market", "premarket", "bmo")):
+        return "Before Open"
+    if any(token in text for token in ("after", "after-hours", "post-market", "postmarket", "amc")):
+        return "After Close"
+    if any(token in text for token in ("during", "market-hours")):
+        return "During Market"
+    return "Time Not Supplied"
+
+
+def nasdaq_calendar_item_to_earnings_row(item: dict, event_date: date) -> dict[str, object] | None:
+    symbol = normalize_symbol(first_present_value(item, ("symbol", "ticker", "Symbol")))
+    if not symbol:
+        return None
+    eps_actual = parse_numeric_value(first_present_value(item, ("eps", "actualEps", "reportedEPS")))
+    eps_estimate = parse_numeric_value(first_present_value(item, ("epsForecast", "epsforecast", "consensusEps")))
+    eps_surprise_pct = parse_numeric_value(first_present_value(item, ("surprise", "surprisePercent", "epsSurprisePct")))
+    if eps_surprise_pct is not None and abs(eps_surprise_pct) <= 1:
+        eps_surprise_pct *= 100
+    if eps_surprise_pct is None:
+        eps_surprise_pct = earnings_surprise_percent(eps_actual, eps_estimate, eps=True)
+    company = clean_text(str(first_present_value(item, ("name", "companyName", "companyshortname")) or symbol))
+    return {
+        "Ticker": symbol,
+        "Company": company,
+        "Earnings Date": event_date,
+        "Earnings DateTime": datetime.combine(event_date, datetime.min.time()).replace(tzinfo=EASTERN),
+        "Session": nasdaq_session_label(first_present_value(item, ("time", "startdatetimetype", "session"))),
+        "Sector": "Unknown",
+        "Market Cap": parse_numeric_value(first_present_value(item, ("marketCap", "marketcap"))),
+        "Last Price": None,
+        "Daily Change %": None,
+        "Logo URL": None,
+        "7D IV %": None,
+        "7D Implied Move %": None,
+        "Options Expiry Used": None,
+        "Options Contracts": None,
+        "Short %": None,
+        "Revenue Estimate": None,
+        "EPS Estimate": eps_estimate,
+        "Actual Revenue": None,
+        "Actual EPS": eps_actual,
+        "Revenue Surprise %": None,
+        "EPS Surprise %": eps_surprise_pct,
+        "Reported": bool(eps_actual is not None or event_date < eastern_now().date()),
+        "Data Notes": "Nasdaq earnings calendar row",
+    }
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_nasdaq_weekly_earnings_calendar(week_start_iso: str, week_end_iso: str) -> tuple[list[dict[str, object]], list[dict[str, object]], datetime]:
+    week_start = parse_date(week_start_iso) or week_monday()
+    week_end = parse_date(week_end_iso) or (week_start + timedelta(days=4))
+    url = "https://api.nasdaq.com/api/calendar/earnings"
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://www.nasdaq.com",
+        "Referer": "https://www.nasdaq.com/market-activity/earnings",
+        "User-Agent": "Mozilla/5.0 (compatible; StreamlitInvestmentDashboard/1.0)",
+    }
+    rows: list[dict[str, object]] = []
+    statuses: list[dict[str, object]] = []
+    for offset in range((week_end - week_start).days + 1):
+        day = week_start + timedelta(days=offset)
+        try:
+            response = requests.get(url, params={"date": day.isoformat()}, headers=headers, timeout=12)
+            response.raise_for_status()
+            payload = response.json()
+            day_rows = nested_value(payload, ("data", "rows"))
+            if not isinstance(day_rows, list):
+                day_rows = []
+            parsed_rows = [row for row in (nasdaq_calendar_item_to_earnings_row(item, day) for item in day_rows if isinstance(item, dict)) if row]
+            rows.extend(parsed_rows)
+            statuses.append({"source": "Nasdaq earnings calendar", "status": "OK", "message": day.isoformat(), "rows": len(parsed_rows)})
+        except Exception as exc:
+            statuses.append({"source": "Nasdaq earnings calendar", "status": "Error", "message": f"{day.isoformat()}: {exc}", "rows": 0})
+    rows.sort(key=lambda row: (row.get("Earnings Date") or date.max, row.get("Session") or "", row.get("Ticker") or ""))
+    return rows, statuses, eastern_now()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_weekly_earnings_calendar_sources(week_start_iso: str, week_end_iso: str) -> tuple[list[dict[str, object]], list[dict[str, object]], datetime]:
+    yahoo_rows, yahoo_statuses, _ = fetch_yahoo_weekly_earnings_calendar(week_start_iso, week_end_iso)
+    nasdaq_rows, nasdaq_statuses, _ = fetch_nasdaq_weekly_earnings_calendar(week_start_iso, week_end_iso)
+    merged: dict[tuple[str, date | None], dict[str, object]] = {}
+    for row in nasdaq_rows + yahoo_rows:
+        key = (str(row.get("Ticker") or ""), row.get("Earnings Date") if isinstance(row.get("Earnings Date"), date) else None)
+        if not key[0]:
+            continue
+        if key in merged:
+            merged[key] = merge_earnings_calendar_hint(merged[key], row)
+        else:
+            merged[key] = dict(row)
+    rows = sorted(merged.values(), key=lambda row: (row.get("Earnings Date") or date.max, row.get("Session") or "", row.get("Ticker") or ""))
+    return rows, list(yahoo_statuses) + list(nasdaq_statuses), eastern_now()
+
+
+def earnings_candidate_tickers(
+    scan_tickers: Iterable[str],
+    custom_tickers: Iterable[str],
+    calendar_tickers: Iterable[str],
+    max_scan: int,
+) -> tuple[str, ...]:
+    seeds: list[str] = []
+    seeds.extend(custom_tickers)
+    seeds.extend(scan_tickers)
+    seeds.extend(parse_watchlist(DEFAULT_UNIVERSE))
+    for peer_group in CURATED_PEER_GROUPS.values():
+        seeds.extend(peer_group)
+    for peer_group in INDUSTRY_PEER_SEEDS.values():
+        seeds.extend(peer_group)
+    for peer_group in SECTOR_PEER_SEEDS.values():
+        seeds.extend(peer_group)
+    seeds.extend(
+        [
+            "DIS", "SHOP", "PYPL", "UBER", "COHR", "HUT", "ARM", "APP", "CVS", "DUOL",
+            "PINS", "RBLX", "DASH", "ABNB", "ROKU", "DDOG", "AFRM", "OPEN", "RIG", "ET",
+            "PFE", "FISV", "FI", "KKR", "MPC", "WEN", "ENB", "RKLB", "SOUN", "LCID",
+            "RIVN", "SOFI", "HOOD", "BROS", "BILL", "NET", "CRWD", "PANW", "ZS", "MDB",
+        ]
+    )
+    seeds.extend(calendar_tickers)
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for ticker in seeds:
+        symbol = normalize_symbol(ticker)
+        if symbol and symbol not in seen:
+            seen.add(symbol)
+            cleaned.append(symbol)
+    cap = min(max(int(max_scan or 80) * 3, 180), 360)
+    return tuple(cleaned[:cap])
+
+
 def fetch_single_earnings_release(ticker: str, week_start: date, week_end: date) -> dict[str, object] | None:
     symbol = normalize_symbol(ticker)
     if not symbol or yf is None:
@@ -14912,15 +15247,35 @@ def fetch_single_earnings_release(ticker: str, week_start: date, week_end: date)
 def fetch_weekly_earnings_releases(tickers: tuple[str, ...], week_start_iso: str, week_end_iso: str) -> tuple[list[dict[str, object]], list[dict[str, object]], datetime]:
     week_start = parse_date(week_start_iso) or week_monday()
     week_end = parse_date(week_end_iso) or (week_start + timedelta(days=4))
-    if yf is None:
-        return [], [{"source": "Yahoo Finance/yfinance", "status": "Error", "message": yfinance_unavailable_message(), "rows": 0}], eastern_now()
+    calendar_rows, calendar_statuses, _ = fetch_weekly_earnings_calendar_sources(week_start.isoformat(), week_end.isoformat())
+    calendar_by_symbol = {str(row.get("Ticker")): row for row in calendar_rows if row.get("Ticker")}
     rows: list[dict[str, object]] = []
-    statuses: list[dict[str, object]] = []
-    clean_tickers = tuple(dict.fromkeys(normalize_symbol(ticker) for ticker in tickers if normalize_symbol(ticker)))
-    if not clean_tickers:
-        return [], [], eastern_now()
-    with ThreadPoolExecutor(max_workers=min(8, len(clean_tickers))) as executor:
-        futures = {executor.submit(fetch_single_earnings_release, ticker, week_start, week_end): ticker for ticker in clean_tickers}
+    statuses: list[dict[str, object]] = list(calendar_statuses)
+    clean_tickers = tuple(
+        dict.fromkeys(
+            normalize_symbol(ticker)
+            for ticker in tuple(tickers) + tuple(calendar_by_symbol.keys())
+            if normalize_symbol(ticker)
+        )
+    )
+    enrichment_tickers = clean_tickers[:16]
+    if yf is None:
+        statuses.append({"source": "Yahoo Finance/yfinance", "status": "Error", "message": yfinance_unavailable_message(), "rows": 0})
+        return calendar_rows, statuses, eastern_now()
+    if not enrichment_tickers:
+        return calendar_rows, statuses, eastern_now()
+    skipped_enrichment = max(len(clean_tickers) - len(enrichment_tickers), 0)
+    if skipped_enrichment:
+        statuses.append(
+            {
+                "source": "yfinance enrichment",
+                "status": "Limited",
+                "message": f"Enriched first {len(enrichment_tickers)} candidates; {skipped_enrichment} calendar rows render from calendar data only.",
+                "rows": len(enrichment_tickers),
+            }
+        )
+    with ThreadPoolExecutor(max_workers=min(8, len(enrichment_tickers))) as executor:
+        futures = {executor.submit(fetch_single_earnings_release, ticker, week_start, week_end): ticker for ticker in enrichment_tickers}
         for future in as_completed(futures):
             ticker = futures[future]
             try:
@@ -14929,19 +15284,36 @@ def fetch_weekly_earnings_releases(tickers: tuple[str, ...], week_start_iso: str
                 statuses.append({"source": ticker, "status": "Error", "message": str(exc), "rows": 0})
                 continue
             if row:
-                rows.append(row)
+                hint = calendar_by_symbol.get(str(row.get("Ticker")))
+                rows.append(merge_earnings_calendar_hint(row, hint) if hint else row)
                 statuses.append({"source": ticker, "status": "OK", "message": "", "rows": 1})
             else:
                 statuses.append({"source": ticker, "status": "No weekly earnings", "message": "", "rows": 0})
+    seen_symbols = {str(row.get("Ticker")) for row in rows if row.get("Ticker")}
+    fallback_count = 0
+    for symbol, calendar_row in calendar_by_symbol.items():
+        if symbol not in seen_symbols:
+            rows.append(calendar_row)
+            fallback_count += 1
+    if fallback_count:
+        statuses.append({"source": "Calendar fallback", "status": "OK", "message": "Rows rendered from weekly earnings calendar without per-ticker yfinance enrichment", "rows": fallback_count})
     rows.sort(key=lambda row: (row.get("Earnings Date") or date.max, row.get("Session") or "", row.get("Ticker") or ""))
     return rows, statuses, eastern_now()
 
 
-def percentile_score(series: pd.Series) -> pd.Series:
+def earnings_percentile_score(series: pd.Series) -> pd.Series:
     numeric = pd.to_numeric(series, errors="coerce")
-    if numeric.notna().sum() <= 1:
-        return pd.Series([100.0 if pd.notna(value) and value > 0 else 0.0 for value in numeric], index=series.index)
-    return numeric.fillna(0).rank(pct=True, method="average") * 100
+    valid = numeric.dropna()
+    if valid.empty:
+        return pd.Series(0.0, index=series.index, dtype="float64")
+    if valid.nunique(dropna=True) <= 1:
+        single_value = coerce_float(valid.iloc[0])
+        return pd.Series(
+            [100.0 if (coerce_float(value) is not None and single_value is not None and single_value > 0) else 0.0 for value in numeric],
+            index=series.index,
+            dtype="float64",
+        )
+    return numeric.fillna(0).astype(float).rank(pct=True, method="average") * 100
 
 
 def attach_anticipation_scores(
@@ -14966,18 +15338,19 @@ def attach_anticipation_scores(
     frame["Social Mentions"] = frame["Ticker"].map(lambda ticker: int(social_counts.get(str(ticker), 0)))
     frame["Social Engagement"] = frame["Ticker"].map(lambda ticker: int(social_engagement.get(str(ticker), 0)))
     frame["Social Discussion"] = frame["Social Mentions"] + (frame["Social Engagement"].map(lambda value: math.log1p(max(value, 0))))
-    frame["Social Score"] = percentile_score(frame["Social Discussion"])
-    frame["News Score"] = percentile_score(frame["News Mentions"])
-    frame["Implied Move Score"] = percentile_score(frame.get("7D Implied Move %", pd.Series(dtype=float)))
-    frame["Options Activity Score"] = percentile_score(frame.get("Options Contracts", pd.Series(dtype=float)))
-    frame["Short Interest Score"] = percentile_score(frame.get("Short %", pd.Series(dtype=float)))
-    frame["Market Cap Score"] = percentile_score(frame.get("Market Cap", pd.Series(dtype=float)))
+    frame["Social Score"] = earnings_percentile_score(frame["Social Discussion"])
+    frame["News Score"] = earnings_percentile_score(frame["News Mentions"])
+    frame["Implied Move Score"] = earnings_percentile_score(frame.get("7D Implied Move %", pd.Series(dtype=float)))
+    frame["Options Activity Score"] = earnings_percentile_score(frame.get("Options Contracts", pd.Series(dtype=float)))
+    frame["Short Interest Score"] = earnings_percentile_score(frame.get("Short %", pd.Series(dtype=float)))
+    frame["Market Cap Score"] = earnings_percentile_score(frame.get("Market Cap", pd.Series(dtype=float)))
     frame["Anticipation Score"] = (
-        0.40 * frame["Social Score"]
-        + 0.30 * frame["News Score"]
+        0.35 * frame["Social Score"]
+        + 0.25 * frame["News Score"]
         + 0.15 * frame["Implied Move Score"]
         + 0.10 * frame["Options Activity Score"]
         + 0.05 * frame["Short Interest Score"]
+        + 0.10 * frame["Market Cap Score"]
     ).round(1)
     return frame.sort_values(["Anticipation Score", "7D Implied Move %", "Market Cap", "Ticker"], ascending=[False, False, False, True], na_position="last")
 
@@ -15223,9 +15596,13 @@ def filter_earnings_frame(
     if upcoming_only:
         filtered = filtered[pd.to_datetime(filtered["Earnings Date"], errors="coerce").dt.date >= date.today()]
     if only_most_discussed and not filtered.empty:
-        threshold = max(35.0, float(pd.to_numeric(filtered["Anticipation Score"], errors="coerce").median() or 0))
-        most_discussed = filtered[pd.to_numeric(filtered["Anticipation Score"], errors="coerce").fillna(0) >= threshold]
-        if not most_discussed.empty:
+        score_values = pd.to_numeric(filtered["Anticipation Score"], errors="coerce")
+        median_score = coerce_float(score_values.median())
+        threshold = max(35.0, median_score or 0)
+        most_discussed = filtered[score_values.fillna(0) >= threshold]
+        if most_discussed.empty:
+            filtered = filtered.sort_values("Anticipation Score", ascending=False, na_position="last").head(100)
+        else:
             filtered = most_discussed
     sort_map = {
         "Anticipation Score": ("Anticipation Score", False),
@@ -15270,6 +15647,9 @@ def render_earnings_calendar_tab() -> None:
             refresh_clicked = st.button("Refresh", use_container_width=True, key="earnings_refresh")
         if refresh_clicked:
             fetch_weekly_earnings_releases.clear()
+            fetch_weekly_earnings_calendar_sources.clear()
+            fetch_yahoo_weekly_earnings_calendar.clear()
+            fetch_nasdaq_weekly_earnings_calendar.clear()
             fetch_market_macro_headlines.clear()
             fetch_social_mentions.clear()
 
@@ -15309,8 +15689,15 @@ def render_earnings_calendar_tab() -> None:
         int(max_scan),
         42,
     )
-    tickers = tuple(scan_universe["Ticker"].dropna().astype(str).tolist())
     week_end = week_start + timedelta(days=4)
+    calendar_preview_rows, calendar_preview_statuses, _ = fetch_weekly_earnings_calendar_sources(week_start.isoformat(), week_end.isoformat())
+    calendar_tickers = [str(row.get("Ticker")) for row in calendar_preview_rows if row.get("Ticker")]
+    tickers = earnings_candidate_tickers(
+        scan_universe["Ticker"].dropna().astype(str).tolist(),
+        custom_tickers,
+        calendar_tickers,
+        int(max_scan),
+    )
     with st.spinner("Building weekly earnings calendar from earnings dates, headlines, social mentions, and options data..."):
         articles, headline_statuses, headline_refreshed, headline_stats = fetch_market_macro_headlines(MARKET_MACRO_FEEDS, tickers)
         social_mentions, social_statuses = fetch_social_mentions(
@@ -15337,7 +15724,7 @@ def render_earnings_calendar_tab() -> None:
     )
     render_earnings_summary(filtered, week_start)
     st.caption(
-        f"Source: Yahoo Finance/yfinance earnings dates and options | Headlines: {', '.join(headline_stats.get('sources', [])) or 'RSS/API feeds'} | "
+        f"Source: Nasdaq/Yahoo earnings calendars + yfinance earnings dates/options | Headlines: {', '.join(headline_stats.get('sources', [])) or 'RSS/API feeds'} | "
         f"Last refreshed: {earnings_refreshed.strftime('%I:%M:%S %p ET').lstrip('0')}"
     )
     render_weekly_earnings_grid(filtered, week_start, session_filter, int(cards_per_session))
@@ -15378,9 +15765,11 @@ def render_earnings_calendar_tab() -> None:
             {"Metric": "number_before_open", "Value": f"{int(filtered['Session'].eq('Before Open').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
             {"Metric": "number_after_close", "Value": f"{int(filtered['Session'].eq('After Close').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
             {"Metric": "number_time_unknown", "Value": f"{int(filtered['Session'].eq('Time Not Supplied').sum()) if not filtered.empty and 'Session' in filtered else 0:,}"},
-            {"Metric": "ranking_formula_used", "Value": "0.40 social + 0.30 news + 0.15 implied move + 0.10 options activity + 0.05 short interest"},
-            {"Metric": "data_sources_used", "Value": "Yahoo Finance/yfinance, shared RSS/API headlines, social RSS/Stocktwits optional"},
+            {"Metric": "ranking_formula_used", "Value": "0.35 social + 0.25 news + 0.15 implied move + 0.10 options activity + 0.05 short interest + 0.10 market cap"},
+            {"Metric": "data_sources_used", "Value": "Nasdaq/Yahoo earnings calendars, Yahoo Finance/yfinance enrichment, shared RSS/API headlines, social RSS/Stocktwits optional"},
             {"Metric": "tickers_loaded", "Value": f"{len(tickers):,}"},
+            {"Metric": "weekly_calendar_rows", "Value": f"{len(calendar_preview_rows):,}"},
+            {"Metric": "weekly_calendar_status_rows", "Value": f"{len(calendar_preview_statuses):,}"},
             {"Metric": "top_anticipated_tickers", "Value": ", ".join(filtered.head(5)["Ticker"].astype(str).tolist()) if not filtered.empty else "N/A"},
             {"Metric": "missing_logo_count", "Value": f"{int(filtered['Logo URL'].isna().sum()) if not filtered.empty and 'Logo URL' in filtered else 0:,}"},
             {"Metric": "missing_iv_count", "Value": f"{int(pd.to_numeric(filtered.get('7D Implied Move %', pd.Series(dtype=float)), errors='coerce').isna().sum()) if not filtered.empty else 0:,}"},
