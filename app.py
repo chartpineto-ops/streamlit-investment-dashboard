@@ -136,6 +136,7 @@ HOME_MARKET_SYMBOLS = (
 
 EARNINGS_SESSIONS = ("Before Open", "After Close", "During Market", "Time Not Supplied")
 PRIMARY_EARNINGS_SESSIONS = ("Before Open", "After Close")
+EARNINGS_NEUTRAL_TOLERANCE = 0.05
 
 COMPETITIVE_PERIOD_OPTIONS = ["1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"]
 
@@ -8452,8 +8453,27 @@ def inject_css() -> None:
                 color: var(--term-green);
             }
 
+            .earnings-metric-pill.good {
+                background: rgba(73, 214, 155, 0.1);
+                border-color: rgba(73, 214, 155, 0.34);
+            }
+
             .earnings-metric-pill.bad strong {
                 color: var(--term-red);
+            }
+
+            .earnings-metric-pill.bad {
+                background: rgba(239, 111, 123, 0.1);
+                border-color: rgba(239, 111, 123, 0.34);
+            }
+
+            .earnings-metric-pill.neutral strong {
+                color: var(--term-muted);
+            }
+
+            .earnings-metric-pill.neutral {
+                background: rgba(157, 176, 184, 0.08);
+                border-color: rgba(157, 176, 184, 0.26);
             }
 
             .earnings-card-foot {
@@ -8474,6 +8494,24 @@ def inject_css() -> None:
                 line-height: 1;
                 padding: 0.23rem 0.32rem;
                 text-transform: uppercase;
+            }
+
+            .earnings-mini-badge.good {
+                background: rgba(73, 214, 155, 0.12);
+                border-color: rgba(73, 214, 155, 0.42);
+                color: var(--term-green);
+            }
+
+            .earnings-mini-badge.bad {
+                background: rgba(239, 111, 123, 0.12);
+                border-color: rgba(239, 111, 123, 0.42);
+                color: var(--term-red);
+            }
+
+            .earnings-mini-badge.neutral {
+                background: rgba(157, 176, 184, 0.1);
+                border-color: rgba(157, 176, 184, 0.32);
+                color: var(--term-muted);
             }
 
             .earnings-empty {
@@ -12868,13 +12906,46 @@ def render_company_options_metrics(snapshot: dict) -> None:
     )
 
 
+def signed_result_tone(value: object, tolerance: float = EARNINGS_NEUTRAL_TOLERANCE) -> str:
+    number = coerce_float(value)
+    if number is None or abs(number) <= tolerance:
+        return "neutral"
+    return "good" if number > 0 else "bad"
+
+
+def earnings_result_tone(delta: object = None, pct: object = None) -> str:
+    pct_value = coerce_float(pct)
+    if pct_value is not None:
+        return signed_result_tone(pct_value)
+    delta_value = coerce_float(delta)
+    if delta_value is None:
+        return "neutral"
+    return signed_result_tone(delta_value, tolerance=1e-9)
+
+
+def earnings_result_label(prefix: str, pct: object) -> str:
+    tone = earnings_result_tone(pct=pct)
+    if tone == "good":
+        return f"{prefix} Beat {format_percent(pct, 1, signed=True)}"
+    if tone == "bad":
+        return f"{prefix} Missed {format_percent(pct, 1, signed=True)}"
+    if coerce_float(pct) is None:
+        return f"{prefix} N/A"
+    return f"{prefix} In line"
+
+
+def earnings_mini_badge(label: str, tone: str = "neutral") -> str:
+    safe_tone = tone if tone in {"good", "bad", "neutral"} else "neutral"
+    return f"<span class='earnings-mini-badge {safe_tone}'>{html.escape(label)}</span>"
+
+
 def earnings_badge(delta: float | None, pct: float | None, *, unit: str) -> str:
     if delta is None:
         return "<span class='earnings-badge neutral'>Estimate unavailable</span>"
-    if abs(delta) < 1e-9:
+    tone = earnings_result_tone(delta, pct)
+    if tone == "neutral":
         return "<span class='earnings-badge neutral'>In line</span>"
-    tone = "good" if delta > 0 else "bad"
-    verb = "Beat" if delta > 0 else "Missed"
+    verb = "Beat" if tone == "good" else "Missed"
     if unit == "eps":
         amount = format_currency(abs(delta), 2)
     else:
@@ -12886,10 +12957,10 @@ def earnings_badge(delta: float | None, pct: float | None, *, unit: str) -> str:
 def yoy_badge(delta: float | None, pct: float | None, *, unit: str) -> str:
     if delta is None:
         return "<span class='earnings-badge neutral'>Prior-year unavailable</span>"
-    if abs(delta) < 1e-9:
+    tone = earnings_result_tone(delta, pct)
+    if tone == "neutral":
         return "<span class='earnings-badge neutral'>Flat YoY</span>"
-    tone = "good" if delta > 0 else "bad"
-    verb = "Up YoY" if delta > 0 else "Down YoY"
+    verb = "Up YoY" if tone == "good" else "Down YoY"
     amount = format_currency(abs(delta), 2) if unit == "eps" else format_compact_currency(abs(delta), 2)
     pct_text = f" ({format_percent(abs(pct), 1)})" if pct is not None else ""
     return f"<span class='earnings-badge {tone}'>{verb} {html.escape(amount)}{html.escape(pct_text)}</span>"
@@ -13154,8 +13225,8 @@ def render_quarterly_actuals_consensus_section(ticker: str, quarterly_frame: pd.
         latest = frame.iloc[-1]
         render_metric_strip(
             [
-                {"label": "Revenue Surprise", "value": format_percent(latest.get("Revenue Surprise %"), 1, signed=True), "context": "latest quarter", "tone": quote_tone(latest.get("Revenue Surprise %"))},
-                {"label": "EPS Surprise", "value": format_percent(latest.get("EPS Surprise %"), 1, signed=True), "context": "latest quarter", "tone": quote_tone(latest.get("EPS Surprise %"))},
+                {"label": "Revenue Surprise", "value": format_percent(latest.get("Revenue Surprise %"), 1, signed=True), "context": "latest quarter", "tone": earnings_result_tone(pct=latest.get("Revenue Surprise %"))},
+                {"label": "EPS Surprise", "value": format_percent(latest.get("EPS Surprise %"), 1, signed=True), "context": "latest quarter", "tone": earnings_result_tone(pct=latest.get("EPS Surprise %"))},
                 {"label": "Actual Revenue", "value": format_compact_currency(latest.get("Revenue"), 2), "context": str(latest.get("Period") or "latest")},
                 {"label": "Actual EPS", "value": format_currency(latest.get("EPS"), 2), "context": str(latest.get("Period") or "latest")},
             ],
@@ -14912,19 +14983,93 @@ def attach_anticipation_scores(
 
 
 def earnings_surprise_tone(value: object) -> str:
-    number = coerce_float(value)
-    if number is None or abs(number) < 0.05:
-        return "neutral"
-    return "good" if number > 0 else "bad"
+    return signed_result_tone(value)
 
 
 def earnings_metric(label: str, value: str, tone: str = "neutral") -> str:
+    safe_tone = tone if tone in {"good", "bad", "neutral"} else "neutral"
     return (
-        f"<div class='earnings-metric-pill {html.escape(tone)}'>"
+        f"<div class='earnings-metric-pill {html.escape(safe_tone)}'>"
         f"<span>{html.escape(label)}</span>"
         f"<strong>{html.escape(value)}</strong>"
         "</div>"
     )
+
+
+def earnings_detail_cell_style(value: object) -> str:
+    tone = earnings_result_tone(pct=parse_percent_value(value))
+    if tone == "good":
+        return "background-color: rgba(73, 214, 155, 0.12); color: #7ee0ad; border-color: rgba(73, 214, 155, 0.4); font-weight: 800;"
+    if tone == "bad":
+        return "background-color: rgba(239, 111, 123, 0.12); color: #ff8e97; border-color: rgba(239, 111, 123, 0.4); font-weight: 800;"
+    return "background-color: rgba(157, 176, 184, 0.08); color: #9db0b8; border-color: rgba(157, 176, 184, 0.28); font-weight: 800;"
+
+
+def earnings_result_text_style(value: object) -> str:
+    text = str(value or "").casefold()
+    if "beat" in text:
+        return "background-color: rgba(73, 214, 155, 0.12); color: #7ee0ad; border-color: rgba(73, 214, 155, 0.4); font-weight: 800;"
+    if "miss" in text:
+        return "background-color: rgba(239, 111, 123, 0.12); color: #ff8e97; border-color: rgba(239, 111, 123, 0.4); font-weight: 800;"
+    return "background-color: rgba(157, 176, 184, 0.08); color: #9db0b8; border-color: rgba(157, 176, 184, 0.28); font-weight: 800;"
+
+
+def render_earnings_detail_table(frame: pd.DataFrame, height: int) -> None:
+    if frame.empty:
+        st.info("No earnings rows match the current filters.")
+        return
+    display = frame.copy()
+    percent_columns = [
+        column
+        for column in ("Revenue Surprise %", "EPS Surprise %", "Surprise %", "Short %", "7D Implied Move %")
+        if column in display
+    ]
+    currency_columns = [
+        column
+        for column in ("Revenue Estimate", "Actual Revenue")
+        if column in display
+    ]
+    eps_columns = [
+        column
+        for column in ("EPS Estimate", "Reported EPS", "Actual EPS", "EPS Surprise")
+        if column in display
+    ]
+    for column in percent_columns:
+        display[column] = pd.to_numeric(display[column], errors="coerce").map(
+            lambda value: format_percent(value, 1, signed=column in {"Revenue Surprise %", "EPS Surprise %"})
+        )
+    for column in currency_columns:
+        display[column] = pd.to_numeric(display[column], errors="coerce").map(lambda value: format_compact_currency(value, 1))
+    for column in eps_columns:
+        display[column] = pd.to_numeric(display[column], errors="coerce").map(lambda value: format_currency(value, 2))
+    display = display.astype("object").where(pd.notna(display), "N/A")
+    styles = [
+        {
+            "selector": "th",
+            "props": [
+                ("background-color", "#10212a"),
+                ("color", "#d7e7e9"),
+                ("border-color", "#19313a"),
+                ("font-weight", "800"),
+            ],
+        },
+        {
+            "selector": "td",
+            "props": [
+                ("background-color", "#0b171c"),
+                ("color", "#d7e7e9"),
+                ("border-color", "#19313a"),
+            ],
+        },
+    ]
+    styled = display.style.set_table_styles(styles)
+    surprise_columns = [column for column in ("Revenue Surprise %", "EPS Surprise %", "Surprise %") if column in display]
+    if surprise_columns:
+        styled = styled.map(earnings_detail_cell_style, subset=surprise_columns)
+    result_columns = [column for column in ("Result", "Revenue Result", "EPS Result") if column in display]
+    if result_columns:
+        styled = styled.map(earnings_result_text_style, subset=result_columns)
+    st.dataframe(styled, hide_index=True, use_container_width=True, height=height)
 
 
 def render_earnings_card(row: pd.Series) -> str:
@@ -14940,21 +15085,25 @@ def render_earnings_card(row: pd.Series) -> str:
             earnings_metric("7D Move", format_move(row.get("7D Implied Move %"), 1)),
             earnings_metric("Rev Est", format_compact_currency(row.get("Revenue Estimate"), 1)),
             earnings_metric("EPS Est", format_currency(row.get("EPS Estimate"), 2)),
-            earnings_metric("Act Rev", format_compact_currency(actual_revenue, 1) if actual_revenue is not None else "-"),
+            earnings_metric(
+                "Act Rev",
+                format_compact_currency(actual_revenue, 1) if actual_revenue is not None else "-",
+                earnings_result_tone(pct=revenue_surprise),
+            ),
             earnings_metric("Act EPS", format_currency(actual_eps, 2) if actual_eps is not None else "-", earnings_surprise_tone(eps_surprise)),
             earnings_metric("Score", format_number(row.get("Anticipation Score"), 0)),
         ]
     )
     surprise_badges = []
     if revenue_surprise is not None:
-        surprise_badges.append(f"<span class='earnings-mini-badge'>{html.escape('Rev ' + format_percent(revenue_surprise, 1, signed=True))}</span>")
+        surprise_badges.append(earnings_mini_badge(earnings_result_label("Rev", revenue_surprise), earnings_result_tone(pct=revenue_surprise)))
     if eps_surprise is not None:
-        surprise_badges.append(f"<span class='earnings-mini-badge'>{html.escape('EPS ' + format_percent(eps_surprise, 1, signed=True))}</span>")
+        surprise_badges.append(earnings_mini_badge(earnings_result_label("EPS", eps_surprise), earnings_result_tone(pct=eps_surprise)))
     if not surprise_badges:
-        surprise_badges.append("<span class='earnings-mini-badge'>Actuals pending</span>")
+        surprise_badges.append(earnings_mini_badge("Actuals pending"))
     expiry = row.get("Options Expiry Used")
     expiry_text = expiry.strftime("%Y-%m-%d") if isinstance(expiry, date) else str(expiry or "IV N/A")
-    surprise_badges.append(f"<span class='earnings-mini-badge'>{html.escape(expiry_text)}</span>")
+    surprise_badges.append(earnings_mini_badge(expiry_text))
     return (
         "<article class='earnings-card'>"
         "<div class='earnings-card-top'>"
@@ -15208,12 +15357,14 @@ def render_earnings_calendar_tab() -> None:
                 "EPS Estimate",
                 "Actual Revenue",
                 "Actual EPS",
+                "Revenue Surprise %",
+                "EPS Surprise %",
                 "News Mentions",
                 "Social Mentions",
                 "Short %",
             ]
             detail = filtered[[column for column in detail_cols if column in filtered]].copy()
-            render_dashboard_table(detail, height=table_height_for_rows(detail, max_height=360))
+            render_earnings_detail_table(detail, height=table_height_for_rows(detail, max_height=360))
             selected_ticker = st.selectbox("Open ticker in Company Analysis", filtered["Ticker"].astype(str).unique().tolist(), key="earnings_open_ticker")
             if st.button("Open Company Analysis", key="earnings_open_company_analysis"):
                 st.session_state["three_statement_ticker_input"] = selected_ticker
@@ -17176,7 +17327,7 @@ def render_home_financials() -> None:
                             "label": "Avg Surprise",
                             "value": format_percent(avg_surprise, signed=True),
                             "context": "EPS actual vs est.",
-                            "tone": "good" if avg_surprise is not None and avg_surprise >= 0 else "bad",
+                            "tone": earnings_result_tone(pct=avg_surprise),
                         },
                     ],
                     columns=3,
@@ -17187,14 +17338,7 @@ def render_home_financials() -> None:
                     display_expectations["Report Date"],
                     errors="coerce",
                 ).dt.strftime("%Y-%m-%d").fillna("N/A")
-                for column in ["EPS Estimate", "Reported EPS", "EPS Surprise"]:
-                    display_expectations[column] = display_expectations[column].map(
-                        lambda value: format_number(value, 2)
-                    )
-                display_expectations["Surprise %"] = display_expectations["Surprise %"].map(
-                    lambda value: format_percent(value, 1, signed=True)
-                )
-                render_dashboard_table(display_expectations, height=table_height_for_rows(display_expectations, max_height=260))
+                render_earnings_detail_table(display_expectations, height=table_height_for_rows(display_expectations, max_height=260))
 
                 chart_expectations = earnings_expectations[["Quarter", "EPS Estimate", "Reported EPS"]].sort_values("Quarter")
                 render_multi_series_chart(
