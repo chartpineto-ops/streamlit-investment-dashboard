@@ -15358,6 +15358,9 @@ def earnings_candidate_tickers(
 ) -> tuple[str, ...]:
     seeds: list[str] = []
     seeds.extend(custom_tickers)
+    # Prioritize tickers from the selected week's earnings calendars so the
+    # scan-size cap limits supplemental discovery names, not scheduled releases.
+    seeds.extend(calendar_tickers)
     seeds.extend(scan_tickers)
     seeds.extend(parse_watchlist(DEFAULT_UNIVERSE))
     for peer_group in CURATED_PEER_GROUPS.values():
@@ -15374,7 +15377,6 @@ def earnings_candidate_tickers(
             "RIVN", "SOFI", "HOOD", "BROS", "BILL", "NET", "CRWD", "PANW", "ZS", "MDB",
         ]
     )
-    seeds.extend(calendar_tickers)
     cleaned: list[str] = []
     seen: set[str] = set()
     for ticker in seeds:
@@ -16217,6 +16219,17 @@ def earnings_visible_rows_for_grid(
     return frame.loc[list(dict.fromkeys(visible_indexes))]
 
 
+def earnings_unconfirmed_rows_for_enrichment(frame: pd.DataFrame, limit: int) -> pd.DataFrame:
+    if frame.empty or "Session" not in frame:
+        return frame.head(0)
+    if limit <= 0:
+        return frame.head(0)
+    unconfirmed = frame[frame["Session"].eq("Unconfirmed")]
+    if unconfirmed.empty:
+        return unconfirmed.head(0)
+    return sort_earnings_cards(unconfirmed).head(limit)
+
+
 def earnings_hint_from_row(row: pd.Series) -> tuple:
     event_date = parse_date(row.get("Earnings Date"))
     event_dt = row.get("Earnings DateTime")
@@ -16419,20 +16432,27 @@ def render_unconfirmed_earnings_section(frame: pd.DataFrame, show_table: bool) -
     stats["rows_unconfirmed"] = len(unconfirmed)
     if unconfirmed.empty:
         return stats
-    label = f"Earnings with Unconfirmed Report Time ({len(unconfirmed):,})"
-    with st.expander(label, expanded=False):
-        st.caption("These releases have a date but no reliable Before Open / After Close confirmation from the configured calendar or yfinance timestamp sources, so they are kept out of the main weekly grid.")
+    unconfirmed = sort_earnings_cards(unconfirmed)
+    with st.container(border=True):
+        render_section_title(
+            f"Earnings Awaiting Session Confirmation ({len(unconfirmed):,})",
+            "These names are included below instead of being hidden. The app keeps them out of Before Open / After Close until Nasdaq, Yahoo, or yfinance confirms the reporting session.",
+        )
         columns = [
             "Ticker",
             "Company",
             "Earnings Date",
+            "Source Report Time",
             "EPS Estimate",
             "Actual EPS",
             "Revenue Estimate",
             "Actual Revenue",
             "Anticipation Score",
         ]
-        render_earnings_detail_table(unconfirmed[[column for column in columns if column in unconfirmed]].head(250), height=320)
+        display_limit = 2000
+        if len(unconfirmed) > display_limit:
+            st.caption(f"Showing the top {display_limit:,} of {len(unconfirmed):,} session-unconfirmed releases. Use ticker search or sector filters to narrow the list.")
+        render_earnings_detail_table(unconfirmed[[column for column in columns if column in unconfirmed]].head(display_limit), height=360)
     return stats
 
 
@@ -16650,7 +16670,18 @@ def render_earnings_calendar_tab() -> None:
         show_time_not_supplied,
         expanded_buckets,
     )
-    visible_hints = tuple(earnings_hint_from_row(row) for _, row in visible_rows.head(EARNINGS_DISPLAY_ENRICH_LIMIT).iterrows())
+    primary_enrichment_limit = min(len(visible_rows), max(25, int(EARNINGS_DISPLAY_ENRICH_LIMIT * 0.7)))
+    primary_rows_to_check = visible_rows.head(primary_enrichment_limit)
+    unconfirmed_rows_to_check = earnings_unconfirmed_rows_for_enrichment(
+        filtered,
+        max(0, EARNINGS_DISPLAY_ENRICH_LIMIT - len(primary_rows_to_check)),
+    )
+    visible_for_enrichment = pd.concat([primary_rows_to_check, unconfirmed_rows_to_check], ignore_index=True)
+    visible_for_enrichment = visible_for_enrichment.drop_duplicates(subset=["Ticker", "Earnings Date"], keep="first")
+    visible_hints = tuple(
+        earnings_hint_from_row(row)
+        for _, row in visible_for_enrichment.head(EARNINGS_DISPLAY_ENRICH_LIMIT).iterrows()
+    )
     visible_enriched_rows, visible_enrichment_statuses = fetch_visible_earnings_enrichment(
         visible_hints,
         week_start.isoformat(),
@@ -16660,6 +16691,11 @@ def render_earnings_calendar_tab() -> None:
     filtered = normalize_earnings_dataframe(filtered)
     render_earnings_summary(filtered, week_start, earnings_df)
     with st.expander("Sources and diagnostics", expanded=False):
+        confirmed_from_enrichment = sum(
+            1
+            for row in visible_enriched_rows
+            if normalize_earnings_session(row.get("Session")) in PRIMARY_EARNINGS_SESSIONS
+        )
         diagnostic_rows = [
             {"Metric": "Source used", "Value": "Nasdaq/Yahoo earnings calendars + Yahoo Finance/yfinance enrichment"},
             {"Metric": "Headline sources", "Value": ", ".join(headline_stats.get("sources", [])) or "RSS/API feeds"},
@@ -16667,6 +16703,8 @@ def render_earnings_calendar_tab() -> None:
             {"Metric": "Rows loaded", "Value": f"{len(earnings_df):,}"},
             {"Metric": "Rows after filters", "Value": f"{len(filtered):,}"},
             {"Metric": "Visible cards enriched", "Value": f"{len(visible_enriched_rows):,} of {len(visible_hints):,} requested"},
+            {"Metric": "Unconfirmed names checked", "Value": f"{len(unconfirmed_rows_to_check):,}"},
+            {"Metric": "Confirmed sessions from enrichment", "Value": f"{confirmed_from_enrichment:,}"},
             {"Metric": "Calendar source status rows", "Value": f"{len(calendar_preview_statuses):,}"},
         ]
         render_dashboard_table(pd.DataFrame(diagnostic_rows), height=table_height_for_rows(pd.DataFrame(diagnostic_rows), max_height=220))
