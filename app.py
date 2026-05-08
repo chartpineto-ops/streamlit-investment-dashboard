@@ -8515,6 +8515,16 @@ def inject_css() -> None:
                 margin-top: 0.2rem;
             }
 
+            .earnings-card-note {
+                border: 1px dashed rgba(157, 176, 184, 0.25);
+                border-radius: 5px;
+                color: var(--term-muted);
+                font-size: 0.54rem;
+                font-weight: 850;
+                padding: 0.22rem 0.3rem;
+                text-transform: uppercase;
+            }
+
             .earnings-metric-pill {
                 background: #0b171c;
                 border: 1px solid rgba(25, 49, 58, 0.88);
@@ -16078,27 +16088,32 @@ def render_earnings_card(row: pd.Series) -> str:
     eps_surprise = coerce_float(row.get("EPS Surprise %"))
     _, _, revenue_tone = earnings_surprise_components(actual_revenue, revenue_estimate, revenue_surprise)
     _, _, eps_tone = earnings_surprise_components(actual_eps, eps_estimate, eps_surprise, eps=True)
-    expectation_html = "".join(
-        [
-            earnings_metric_box("7D Move", format_move(implied_move, 1), "neutral" if implied_move is None else "good"),
-            earnings_metric_box("Rev Est", format_compact_currency(revenue_estimate, 1), "neutral"),
-            earnings_metric_box("EPS Est", format_eps(eps_estimate), "neutral"),
-        ]
-    )
-    actual_html = "".join(
-        [
+    expectation_boxes = []
+    if implied_move is not None:
+        expectation_boxes.append(earnings_metric_box("7D Move", format_move(implied_move, 1), "good"))
+    if revenue_estimate is not None:
+        expectation_boxes.append(earnings_metric_box("Rev Est", format_compact_currency(revenue_estimate, 1), "neutral"))
+    if eps_estimate is not None:
+        expectation_boxes.append(earnings_metric_box("EPS Est", format_eps(eps_estimate), "neutral"))
+    expectation_html = "".join(expectation_boxes) or "<div class='earnings-card-note'>Estimates unavailable</div>"
+    actual_boxes = []
+    if actual_revenue is not None:
+        actual_boxes.append(
             earnings_metric_box(
                 "Actual Rev",
-                format_compact_currency(actual_revenue, 1) if actual_revenue is not None else "-",
-                revenue_tone if actual_revenue is not None and revenue_estimate is not None else "neutral",
-            ),
+                format_compact_currency(actual_revenue, 1),
+                revenue_tone if revenue_estimate is not None else "neutral",
+            )
+        )
+    if actual_eps is not None:
+        actual_boxes.append(
             earnings_metric_box(
                 "Actual EPS",
-                format_eps(actual_eps) if actual_eps is not None else "-",
-                eps_tone if actual_eps is not None and eps_estimate is not None else "neutral",
-            ),
-        ]
-    )
+                format_eps(actual_eps),
+                eps_tone if eps_estimate is not None else "neutral",
+            )
+        )
+    actual_html = "".join(actual_boxes)
     surprise_badges = []
     revenue_badge = earnings_surprise_badge("Rev", actual_revenue, revenue_estimate, revenue_surprise)
     eps_badge = earnings_surprise_badge("EPS", actual_eps, eps_estimate, eps_surprise, eps=True)
@@ -16109,9 +16124,7 @@ def render_earnings_card(row: pd.Series) -> str:
     if not surprise_badges:
         surprise_badges.append(earnings_mini_badge("Actuals pending"))
     expiry = parse_date(row.get("Options Expiry Used"))
-    if implied_move is None:
-        surprise_badges.append("<span class='earnings-mini-badge neutral iv-missing'>IV N/A</span>")
-    elif expiry is not None:
+    if implied_move is not None and expiry is not None:
         surprise_badges.append(earnings_mini_badge(f"Opt Exp {expiry.strftime('%m/%d')}", "neutral"))
     earnings_date_badge = (
         f"<span class='earnings-card-badge'>Earnings {earnings_date.strftime('%m/%d')}</span>"
@@ -16119,6 +16132,7 @@ def render_earnings_card(row: pd.Series) -> str:
         else ""
     )
     score_badge = f"<span class='earnings-card-badge'>Score {format_number(score, 0)}</span>" if score is not None else ""
+    actual_section = f"<div class='earnings-card-metrics actuals'>{actual_html}</div>" if actual_html else ""
     return (
         "<article class='earnings-card'>"
         "<div class='earnings-card-top'>"
@@ -16135,7 +16149,7 @@ def render_earnings_card(row: pd.Series) -> str:
         "</div>"
         "</div>"
         f"<div class='earnings-card-metrics expectations'>{expectation_html}</div>"
-        f"<div class='earnings-card-metrics actuals'>{actual_html}</div>"
+        f"{actual_section}"
         f"<div class='earnings-card-foot'>{''.join(surprise_badges)}</div>"
         "</article>"
     )
@@ -16455,16 +16469,33 @@ def render_weekly_earnings_grid(
     stats: dict[str, int | bool] = {
         "number_of_cards_rendered": 0,
         "number_of_hidden_cards_due_to_limit": 0,
+        "empty_days_hidden": 0,
+        "empty_buckets_hidden": 0,
         "hidden_unconfirmed": 0,
         "overflow_fix_enabled": True,
     }
     expanded_set = set(expanded_buckets or [])
     for day in days:
         day_rows = frame[frame["Earnings Date"].eq(day)] if not frame.empty and "Earnings Date" in frame else pd.DataFrame()
+        confirmed_day_count = (
+            int(day_rows["Session"].isin(PRIMARY_EARNINGS_SESSIONS).sum())
+            if not day_rows.empty and "Session" in day_rows
+            else 0
+        )
+        if confirmed_day_count == 0:
+            stats["empty_days_hidden"] = int(stats["empty_days_hidden"]) + 1
+            if not day_rows.empty and "Session" in day_rows:
+                hidden_unknown = int(day_rows["Session"].eq("Unconfirmed").sum())
+                if hidden_unknown:
+                    stats["hidden_unconfirmed"] = int(stats["hidden_unconfirmed"]) + hidden_unknown
+            continue
         session_html = []
         for session in sessions:
             subset = day_rows[day_rows["Session"].eq(session)] if not day_rows.empty and "Session" in day_rows else pd.DataFrame()
             total_in_session = len(subset)
+            if total_in_session == 0:
+                stats["empty_buckets_hidden"] = int(stats["empty_buckets_hidden"]) + 1
+                continue
             bucket_label = earnings_bucket_label(day, session, total_in_session)
             expanded = bucket_label in expanded_set
             sorted_subset = sort_earnings_cards(subset) if not subset.empty else subset.head(0)
@@ -16478,8 +16509,6 @@ def render_weekly_earnings_grid(
                 note = f"<span class='earnings-bucket-note'>Showing {len(visible_subset):,} of {total_in_session:,}</span>"
             if hidden_count:
                 cards += f"<div class='earnings-empty'>{hidden_count:,} more not shown.</div>"
-            if not cards:
-                cards = "<div class='earnings-empty'>No names.</div>"
             session_html.append(
                 "<div class='earnings-session'>"
                 f"<div class='earnings-session-title'><span>{html.escape(session)}</span><span>{total_in_session}</span></div>"
@@ -16491,15 +16520,16 @@ def render_weekly_earnings_grid(
             hidden_unknown = int(day_rows["Session"].eq("Unconfirmed").sum())
             if hidden_unknown:
                 stats["hidden_unconfirmed"] = int(stats["hidden_unconfirmed"]) + hidden_unknown
-        html_days.append(
-            "<section class='earnings-day-panel'>"
-            "<div class='earnings-day-head'>"
-            f"<span class='earnings-day-name'>{calendar.day_name[day.weekday()]}</span>"
-            f"<span class='earnings-day-date'>{html.escape(day.strftime('%b %d'))}</span>"
-            "</div>"
-            f"{''.join(session_html)}"
-            "</section>"
-        )
+        if session_html:
+            html_days.append(
+                "<section class='earnings-day-panel'>"
+                "<div class='earnings-day-head'>"
+                f"<span class='earnings-day-name'>{calendar.day_name[day.weekday()]}</span>"
+                f"<span class='earnings-day-date'>{html.escape(day.strftime('%b %d'))}</span>"
+                "</div>"
+                f"{''.join(session_html)}"
+                "</section>"
+            )
     st.markdown(
         "<div class='earnings-calendar-scroll'><div class='earnings-calendar-grid'>"
         + "".join(html_days)
