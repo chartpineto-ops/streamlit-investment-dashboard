@@ -16469,7 +16469,7 @@ def render_weekly_earnings_grid(
     stats: dict[str, int | bool] = {
         "number_of_cards_rendered": 0,
         "number_of_hidden_cards_due_to_limit": 0,
-        "empty_days_hidden": 0,
+        "empty_days_shown": 0,
         "empty_buckets_hidden": 0,
         "hidden_unconfirmed": 0,
         "overflow_fix_enabled": True,
@@ -16482,54 +16482,52 @@ def render_weekly_earnings_grid(
             if not day_rows.empty and "Session" in day_rows
             else 0
         )
-        if confirmed_day_count == 0:
-            stats["empty_days_hidden"] = int(stats["empty_days_hidden"]) + 1
-            if not day_rows.empty and "Session" in day_rows:
-                hidden_unknown = int(day_rows["Session"].eq("Unconfirmed").sum())
-                if hidden_unknown:
-                    stats["hidden_unconfirmed"] = int(stats["hidden_unconfirmed"]) + hidden_unknown
-            continue
+        hidden_unknown = int(day_rows["Session"].eq("Unconfirmed").sum()) if not day_rows.empty and "Session" in day_rows else 0
+        if hidden_unknown:
+            stats["hidden_unconfirmed"] = int(stats["hidden_unconfirmed"]) + hidden_unknown
         session_html = []
-        for session in sessions:
-            subset = day_rows[day_rows["Session"].eq(session)] if not day_rows.empty and "Session" in day_rows else pd.DataFrame()
-            total_in_session = len(subset)
-            if total_in_session == 0:
-                stats["empty_buckets_hidden"] = int(stats["empty_buckets_hidden"]) + 1
-                continue
-            bucket_label = earnings_bucket_label(day, session, total_in_session)
-            expanded = bucket_label in expanded_set
-            sorted_subset = sort_earnings_cards(subset) if not subset.empty else subset.head(0)
-            visible_subset = sorted_subset if expanded else sorted_subset.head(cards_per_session)
-            hidden_count = max(total_in_session - len(visible_subset), 0)
-            stats["number_of_cards_rendered"] = int(stats["number_of_cards_rendered"]) + len(visible_subset)
-            stats["number_of_hidden_cards_due_to_limit"] = int(stats["number_of_hidden_cards_due_to_limit"]) + hidden_count
-            cards = "".join(render_earnings_card(row) for _, row in visible_subset.iterrows())
-            note = ""
-            if total_in_session:
-                note = f"<span class='earnings-bucket-note'>Showing {len(visible_subset):,} of {total_in_session:,}</span>"
-            if hidden_count:
-                cards += f"<div class='earnings-empty'>{hidden_count:,} more not shown.</div>"
-            session_html.append(
-                "<div class='earnings-session'>"
-                f"<div class='earnings-session-title'><span>{html.escape(session)}</span><span>{total_in_session}</span></div>"
-                f"{note}"
-                f"{cards}"
-                "</div>"
-            )
-        if not day_rows.empty and "Session" in day_rows:
-            hidden_unknown = int(day_rows["Session"].eq("Unconfirmed").sum())
+        if confirmed_day_count == 0:
+            stats["empty_days_shown"] = int(stats["empty_days_shown"]) + 1
+            empty_note = "No confirmed Before Open or After Close releases."
             if hidden_unknown:
-                stats["hidden_unconfirmed"] = int(stats["hidden_unconfirmed"]) + hidden_unknown
-        if session_html:
-            html_days.append(
-                "<section class='earnings-day-panel'>"
-                "<div class='earnings-day-head'>"
-                f"<span class='earnings-day-name'>{calendar.day_name[day.weekday()]}</span>"
-                f"<span class='earnings-day-date'>{html.escape(day.strftime('%b %d'))}</span>"
-                "</div>"
-                f"{''.join(session_html)}"
-                "</section>"
-            )
+                empty_note += f" {hidden_unknown:,} unconfirmed-time release(s) are listed below."
+            session_html.append(f"<div class='earnings-empty'>{html.escape(empty_note)}</div>")
+        else:
+            for session in sessions:
+                subset = day_rows[day_rows["Session"].eq(session)] if not day_rows.empty and "Session" in day_rows else pd.DataFrame()
+                total_in_session = len(subset)
+                if total_in_session == 0:
+                    stats["empty_buckets_hidden"] = int(stats["empty_buckets_hidden"]) + 1
+                    continue
+                bucket_label = earnings_bucket_label(day, session, total_in_session)
+                expanded = bucket_label in expanded_set
+                sorted_subset = sort_earnings_cards(subset) if not subset.empty else subset.head(0)
+                visible_subset = sorted_subset if expanded else sorted_subset.head(cards_per_session)
+                hidden_count = max(total_in_session - len(visible_subset), 0)
+                stats["number_of_cards_rendered"] = int(stats["number_of_cards_rendered"]) + len(visible_subset)
+                stats["number_of_hidden_cards_due_to_limit"] = int(stats["number_of_hidden_cards_due_to_limit"]) + hidden_count
+                cards = "".join(render_earnings_card(row) for _, row in visible_subset.iterrows())
+                note = ""
+                if total_in_session:
+                    note = f"<span class='earnings-bucket-note'>Showing {len(visible_subset):,} of {total_in_session:,}</span>"
+                if hidden_count:
+                    cards += f"<div class='earnings-empty'>{hidden_count:,} more not shown.</div>"
+                session_html.append(
+                    "<div class='earnings-session'>"
+                    f"<div class='earnings-session-title'><span>{html.escape(session)}</span><span>{total_in_session}</span></div>"
+                    f"{note}"
+                    f"{cards}"
+                    "</div>"
+                )
+        html_days.append(
+            "<section class='earnings-day-panel'>"
+            "<div class='earnings-day-head'>"
+            f"<span class='earnings-day-name'>{calendar.day_name[day.weekday()]}</span>"
+            f"<span class='earnings-day-date'>{html.escape(day.strftime('%b %d'))}</span>"
+            "</div>"
+            f"{''.join(session_html)}"
+            "</section>"
+        )
     st.markdown(
         "<div class='earnings-calendar-scroll'><div class='earnings-calendar-grid'>"
         + "".join(html_days)
