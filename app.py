@@ -146,7 +146,7 @@ EARNINGS_EPS_TOLERANCE = 0.005
 EARNINGS_FILTER_DEFAULTS = {
     "earnings_universe": "All major indexes",
     "earnings_session_filter": "All",
-    "earnings_cards_per_session": 5,
+    "earnings_cards_per_session": 1000,
     "earnings_show_reported": True,
     "earnings_show_time_not_supplied": False,
     "earnings_expanded_buckets": [],
@@ -13061,7 +13061,21 @@ def earnings_missing_value(value: object) -> bool:
     if value is None:
         return True
     if isinstance(value, str):
-        return value.strip() in {"", "Unknown", "N/A", "NA", "None", "nan", "Time Not Supplied"}
+        return value.strip().casefold() in {
+            "",
+            "-",
+            "--",
+            "unknown",
+            "n/a",
+            "na",
+            "none",
+            "nan",
+            "time not supplied",
+            "time-not-supplied",
+            "not supplied",
+            "tbd",
+            "tns",
+        }
     try:
         missing = pd.isna(value)
         if isinstance(missing, bool) or type(missing).__name__ == "bool_":
@@ -13078,7 +13092,7 @@ def normalize_earnings_session(report_time_raw: object = None, earnings_datetime
         missing_raw_time = report_time_raw is None
     text = "" if missing_raw_time else clean_text(str(report_time_raw)).strip()
     normalized = re.sub(r"[\s_\-]+", " ", text).strip().casefold()
-    if normalized in {"", "nan", "none", "null", "unknown", "time not supplied", "not supplied", "tbd", "unconfirmed", "estimated"}:
+    if normalized in {"", "nan", "none", "null", "unknown", "time not supplied", "time not supplied", "not supplied", "tbd", "tns", "unconfirmed", "estimated"}:
         return "Unconfirmed"
     if earnings_datetime is None:
         earnings_datetime = parse_earnings_datetime(report_time_raw)
@@ -13238,9 +13252,250 @@ def prior_year_period_row(frame: pd.DataFrame, latest_period: pd.Timestamp | Non
     return pd.Series(dtype=object)
 
 
+def latest_quarter_period_for_event(statement_frame: pd.DataFrame, event_date: date | None) -> pd.Timestamp | None:
+    if not isinstance(statement_frame, pd.DataFrame) or statement_frame.empty:
+        return None
+    periods = [pd.Timestamp(period) for period in statement_period_options([statement_frame])]
+    if not periods:
+        return None
+    if event_date is None:
+        return sorted(periods)[-1]
+    cutoff = pd.Timestamp(event_date)
+    candidates = [period for period in periods if period <= cutoff]
+    if not candidates:
+        return sorted(periods)[-1]
+    latest = sorted(candidates)[-1]
+    if (cutoff - latest).days > 180:
+        return None
+    return latest
+
+
+def statement_value_at_period(frame: pd.DataFrame, labels: Iterable[str], period: pd.Timestamp | None) -> float | None:
+    if period is None or not isinstance(frame, pd.DataFrame) or frame.empty:
+        return None
+    series = statement_series(frame, labels)
+    if series.empty:
+        return None
+    clean = series.dropna()
+    if clean.empty:
+        return None
+    try:
+        clean.index = pd.to_datetime(clean.index, errors="coerce")
+        clean = clean[~pd.isna(clean.index)].sort_index()
+    except Exception:
+        pass
+    exact = clean[clean.index == pd.Timestamp(period)]
+    if not exact.empty:
+        return coerce_float(exact.iloc[-1])
+    same_quarter = clean[(clean.index.year == period.year) & (clean.index.quarter == period.quarter)]
+    if not same_quarter.empty:
+        return coerce_float(same_quarter.iloc[-1])
+    before = clean[clean.index <= pd.Timestamp(period)]
+    if not before.empty:
+        return coerce_float(before.iloc[-1])
+    return None
+
+
+def prior_year_statement_value(frame: pd.DataFrame, labels: Iterable[str], period: pd.Timestamp | None) -> float | None:
+    if period is None or not isinstance(frame, pd.DataFrame) or frame.empty:
+        return None
+    series = statement_series(frame, labels).dropna()
+    if series.empty:
+        return None
+    try:
+        series.index = pd.to_datetime(series.index, errors="coerce")
+        series = series[~pd.isna(series.index)].sort_index()
+    except Exception:
+        pass
+    prior = period - pd.DateOffset(years=1)
+    same_quarter = series[(series.index.year == prior.year) & (series.index.quarter == prior.quarter)]
+    if not same_quarter.empty:
+        return coerce_float(same_quarter.iloc[-1])
+    periods = list(series.index)
+    try:
+        position = periods.index(pd.Timestamp(period))
+    except ValueError:
+        position = len([candidate for candidate in periods if candidate <= pd.Timestamp(period)]) - 1
+    if position >= 4:
+        return coerce_float(series.iloc[position - 4])
+    return None
+
+
+def latest_earnings_freshness(last_updated: object) -> tuple[str, float | None]:
+    updated = last_updated if isinstance(last_updated, datetime) else parse_earnings_datetime(last_updated)
+    if updated is None:
+        return "Unavailable", None
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=EASTERN)
+    age_hours = max((eastern_now() - updated.astimezone(EASTERN)).total_seconds() / 3600, 0)
+    return ("Fresh" if age_hours <= 24 else "Stale"), age_hours
+
+
+@st.cache_data(ttl=86_400, show_spinner=False)
+def load_latest_quarterly_earnings(ticker: str) -> dict[str, object]:
+    symbol = normalize_symbol(ticker)
+    last_updated = eastern_now()
+    if not symbol:
+        return {"available": False, "ticker": "", "is_reported": False, "last_updated": last_updated, "warnings": ["Invalid ticker symbol"]}
+    if yf is None:
+        return {
+            "available": False,
+            "ticker": symbol,
+            "is_reported": False,
+            "source_actuals": "Yahoo Finance/yfinance unavailable",
+            "source_estimates": "",
+            "last_updated": last_updated,
+            "warnings": [yfinance_unavailable_message()],
+        }
+
+    warnings: list[str] = []
+    try:
+        yf_ticker = make_yf_ticker(symbol)
+        info: dict = {}
+        try:
+            fast_info = getattr(yf_ticker, "fast_info", {}) or {}
+            info.update(dict(fast_info))
+        except Exception:
+            pass
+        try:
+            full_info = yf_ticker.get_info()
+            if isinstance(full_info, dict):
+                info.update(full_info)
+        except Exception as exc:
+            warnings.append(f"Profile unavailable: {exc}")
+
+        earnings_rows = earnings_date_rows(earnings_dates_frame(yf_ticker))
+        today = eastern_now().date()
+        reported_rows = [
+            row
+            for row in earnings_rows
+            if row.get("date") and row.get("date") <= today and coerce_float(row.get("eps_actual")) is not None
+        ]
+        reported_rows.sort(key=lambda row: row.get("datetime") or datetime.min.replace(tzinfo=EASTERN), reverse=True)
+        latest_event = reported_rows[0] if reported_rows else None
+
+        quarterly_income = get_statement(yf_ticker, ("quarterly_income_stmt", "quarterly_financials"))
+        event_date = latest_event.get("date") if latest_event else latest_past_earnings_date({"earnings_dates": earnings_dates_frame(yf_ticker)})
+        period = latest_quarter_period_for_event(quarterly_income, event_date)
+        revenue_actual = statement_value_at_period(quarterly_income, ("Total Revenue", "Revenue", "Operating Revenue"), period)
+        statement_eps = statement_value_at_period(quarterly_income, ("Diluted EPS", "Basic EPS", "EPS Diluted", "EPS"), period)
+        eps_actual = coerce_float(latest_event.get("eps_actual")) if latest_event else None
+        if eps_actual is None:
+            eps_actual = statement_eps
+            if statement_eps is not None:
+                warnings.append("EPS actual is from quarterly income statement fallback.")
+        eps_estimate = coerce_float(latest_event.get("eps_estimate")) if latest_event else None
+        eps_surprise_pct_source = coerce_float(latest_event.get("eps_surprise_pct")) if latest_event else None
+
+        revenue_estimate = None
+        revenue_estimate_frame = get_estimate_frame(yf_ticker, "get_revenue_estimate", "revenue_estimate")
+        if latest_event and revenue_estimate_frame is not None and not revenue_estimate_frame.empty:
+            # yfinance revenue estimates are often forward-looking by relative period.
+            # Do not force them into a reported quarter unless they are explicitly tied to that quarter.
+            warnings.append("Quarter-matched revenue estimate unavailable from current provider.")
+
+        prior_year_revenue = prior_year_statement_value(quarterly_income, ("Total Revenue", "Revenue", "Operating Revenue"), period)
+        prior_year_eps = prior_year_statement_value(quarterly_income, ("Diluted EPS", "Basic EPS", "EPS Diluted", "EPS"), period)
+        if latest_event and period is not None and event_date is not None and (pd.Timestamp(event_date) - period).days > 180:
+            warnings.append("Statement period is too far from earnings date; revenue actual suppressed.")
+            revenue_actual = None
+        revenue_payload = earnings_surprise_payload(revenue_actual, revenue_estimate)
+        eps_payload = earnings_surprise_payload(eps_actual, eps_estimate, eps=True, supplied_pct=eps_surprise_pct_source)
+        revenue_yoy = revenue_actual - prior_year_revenue if revenue_actual is not None and prior_year_revenue is not None else None
+        revenue_yoy_pct = safe_ratio(revenue_yoy, prior_year_revenue, 100) if revenue_yoy is not None and prior_year_revenue not in (None, 0) else None
+        eps_yoy = eps_actual - prior_year_eps if eps_actual is not None and prior_year_eps is not None else None
+        eps_yoy_pct = safe_ratio(eps_yoy, abs(prior_year_eps), 100) if eps_yoy is not None and prior_year_eps not in (None, 0) else None
+        event_dt = latest_event.get("datetime") if latest_event else None
+        report_time_raw = latest_event.get("session") if latest_event else None
+        normalized_session = normalize_earnings_session(report_time_raw, event_dt)
+        is_reported = bool(eps_actual is not None or revenue_actual is not None)
+        if latest_event is None and is_reported:
+            warnings.append("Latest reported earnings date was unavailable; using latest quarterly statement period.")
+        fiscal_quarter = f"Q{period.quarter}" if isinstance(period, pd.Timestamp) else None
+        fiscal_year = int(period.year) if isinstance(period, pd.Timestamp) else None
+        source_actuals = "Yahoo Finance/yfinance earnings dates + quarterly financials" if latest_event else "Yahoo Finance/yfinance quarterly financials"
+        source_estimates = "Yahoo Finance/yfinance earnings dates" if eps_estimate is not None else "Estimate unavailable"
+        available = bool(is_reported and (event_date is not None or period is not None))
+        return {
+            "available": available,
+            "ticker": symbol,
+            "company_name": info.get("shortName") or info.get("longName") or symbol,
+            "logo_url": company_logo_url(info),
+            "fiscal_quarter": fiscal_quarter,
+            "fiscal_year": fiscal_year,
+            "period": f"{fiscal_year} {fiscal_quarter}" if fiscal_year and fiscal_quarter else "Latest reported quarter",
+            "period_date": period,
+            "earnings_date": event_date,
+            "announce_date": event_date,
+            "report_time_raw": report_time_raw,
+            "normalized_session": normalized_session,
+            "is_reported": is_reported,
+            "revenue_actual": revenue_actual,
+            "revenue": revenue_actual,
+            "revenue_estimate": revenue_estimate,
+            "consensus_revenue": revenue_estimate,
+            "revenue_surprise": revenue_payload["delta"],
+            "revenue_surprise_pct": revenue_payload["pct"],
+            "eps_actual": eps_actual,
+            "eps_normalized": eps_actual,
+            "eps_gaap": statement_eps,
+            "eps_estimate": eps_estimate,
+            "consensus_eps": eps_estimate,
+            "eps_surprise": eps_payload["delta"],
+            "eps_surprise_pct": eps_payload["pct"],
+            "eps_type": "Reported/normalized" if latest_event else "Quarterly statement EPS",
+            "prior_year_revenue": prior_year_revenue,
+            "prior_year_eps": prior_year_eps,
+            "revenue_yoy_change": revenue_yoy,
+            "revenue_yoy": revenue_yoy,
+            "revenue_yoy_change_pct": revenue_yoy_pct,
+            "revenue_yoy_pct": revenue_yoy_pct,
+            "eps_yoy_change": eps_yoy,
+            "eps_yoy": eps_yoy,
+            "eps_yoy_change_pct": eps_yoy_pct,
+            "eps_yoy_pct": eps_yoy_pct,
+            "source_actuals": source_actuals,
+            "source_estimates": source_estimates,
+            "last_updated": last_updated,
+            "warnings": warnings,
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "ticker": symbol,
+            "is_reported": False,
+            "source_actuals": "Yahoo Finance/yfinance",
+            "source_estimates": "",
+            "last_updated": last_updated,
+            "warnings": [str(exc)],
+        }
+
+
+@st.cache_data(ttl=86_400, show_spinner=False)
+def refresh_all_latest_earnings(tickers: tuple[str, ...]) -> tuple[pd.DataFrame, list[dict[str, object]], datetime]:
+    rows: list[dict[str, object]] = []
+    statuses: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for ticker in tickers:
+        symbol = normalize_symbol(ticker)
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        try:
+            row = load_latest_quarterly_earnings(symbol)
+            rows.append(row)
+            statuses.append({"source": symbol, "status": "OK" if row.get("available") else "Unavailable", "message": "; ".join(row.get("warnings", [])), "rows": 1 if row.get("available") else 0})
+        except Exception as exc:
+            statuses.append({"source": symbol, "status": "Error", "message": str(exc), "rows": 0})
+    return pd.DataFrame(rows), statuses, eastern_now()
+
+
 def latest_quarter_earnings_summary(ticker: str, income: pd.DataFrame, payload: dict, snapshot: dict) -> dict[str, object]:
+    latest_reported = load_latest_quarterly_earnings(ticker)
+    if latest_reported.get("available"):
+        return latest_reported
     if income.empty:
-        return {"available": False}
+        return latest_reported if latest_reported else {"available": False}
     ordered = income.sort_values("Period Date")
     latest = ordered.iloc[-1]
     period_date = pd.Timestamp(latest.get("Period Date")) if latest.get("Period Date") is not None else None
@@ -13296,40 +13551,64 @@ def latest_quarter_earnings_summary(ticker: str, income: pd.DataFrame, payload: 
 
 def render_latest_quarter_earnings_card(summary: dict[str, object]) -> None:
     if not summary.get("available"):
-        st.info("Latest quarter earnings data is unavailable for this ticker.")
+        attempted = summary.get("source_actuals") or "Yahoo Finance/yfinance"
+        updated = summary.get("last_updated")
+        updated_text = updated.strftime("%m/%d/%Y %I:%M %p ET").lstrip("0") if isinstance(updated, datetime) else "N/A"
+        warnings = "; ".join(str(item) for item in summary.get("warnings", []) if item) or "No reported quarterly actuals returned."
+        st.info(
+            "Latest quarterly earnings data unavailable for this ticker. "
+            f"Source attempted: {attempted}. Last refresh attempt: {updated_text}. {warnings}"
+        )
         return
     ticker = str(summary.get("ticker") or "").upper()
     logo_url = str(summary.get("logo_url") or "")
     logo_html = company_logo_markup(ticker, logo_url)
-    announce = summary.get("announce_date")
+    announce = summary.get("earnings_date") or summary.get("announce_date")
     announce_text = f"{announce.month}/{announce.day}/{announce.year}" if isinstance(announce, date) else "N/A"
+    last_updated = summary.get("last_updated")
+    freshness_status, _ = latest_earnings_freshness(last_updated)
+    updated_text = last_updated.strftime("%m/%d/%Y %I:%M %p ET").lstrip("0") if isinstance(last_updated, datetime) else "N/A"
+    session = summary.get("normalized_session") or "Unconfirmed"
+    fiscal_period = " ".join(str(part) for part in (summary.get("fiscal_year"), summary.get("fiscal_quarter")) if part) or summary.get("period") or "Latest reported quarter"
     cards = [
         {
             "label": "Announce Date",
             "value": announce_text,
-            "rows": ["<span class='earnings-badge neutral'>Reported period</span>"],
+            "rows": [f"<span class='earnings-badge neutral'>{html.escape(str(session))}</span>"],
         },
         {
-            "label": "EPS Normalized",
-            "value": format_eps(summary.get("eps_normalized")),
-            "rows": [
-                earnings_badge(summary.get("eps_surprise"), summary.get("eps_surprise_pct"), unit="eps"),
-                yoy_badge(summary.get("eps_yoy"), summary.get("eps_yoy_pct"), unit="eps"),
-            ],
+            "label": "Fiscal Quarter",
+            "value": str(fiscal_period),
+            "rows": [f"<span class='earnings-badge neutral'>{html.escape(str(summary.get('eps_type') or 'Reported/normalized'))}</span>"],
         },
         {
-            "label": "EPS GAAP",
-            "value": format_eps(summary.get("eps_gaap")),
+            "label": "Revenue Actual",
+            "value": format_compact_currency(summary.get("revenue_actual", summary.get("revenue")), 2),
             "rows": [
-                "<span class='earnings-badge neutral'>GAAP estimate unavailable</span>",
-            ],
-        },
-        {
-            "label": "Revenue",
-            "value": format_compact_currency(summary.get("revenue"), 2),
-            "rows": [
+                f"<span class='earnings-badge neutral'>Estimate {html.escape(format_compact_currency(summary.get('revenue_estimate', summary.get('consensus_revenue')), 2))}</span>",
                 earnings_badge(summary.get("revenue_surprise"), summary.get("revenue_surprise_pct"), unit="revenue"),
-                yoy_badge(summary.get("revenue_yoy"), summary.get("revenue_yoy_pct"), unit="revenue"),
+            ],
+        },
+        {
+            "label": "EPS Actual",
+            "value": format_eps(summary.get("eps_actual", summary.get("eps_normalized"))),
+            "rows": [
+                f"<span class='earnings-badge neutral'>Estimate {html.escape(format_eps(summary.get('eps_estimate', summary.get('consensus_eps'))))}</span>",
+                earnings_badge(summary.get("eps_surprise"), summary.get("eps_surprise_pct"), unit="eps"),
+            ],
+        },
+        {
+            "label": "Revenue YoY",
+            "value": format_percent(summary.get("revenue_yoy_change_pct", summary.get("revenue_yoy_pct")), 1, signed=True),
+            "rows": [
+                yoy_badge(summary.get("revenue_yoy_change", summary.get("revenue_yoy")), summary.get("revenue_yoy_change_pct", summary.get("revenue_yoy_pct")), unit="revenue"),
+            ],
+        },
+        {
+            "label": "EPS YoY",
+            "value": format_percent(summary.get("eps_yoy_change_pct", summary.get("eps_yoy_pct")), 1, signed=True),
+            "rows": [
+                yoy_badge(summary.get("eps_yoy_change", summary.get("eps_yoy")), summary.get("eps_yoy_change_pct", summary.get("eps_yoy_pct")), unit="eps"),
             ],
         },
     ]
@@ -13348,11 +13627,12 @@ def render_latest_quarter_earnings_card(summary: dict[str, object]) -> None:
         "<div class='latest-earnings-top'>"
         "<div>"
         "<span class='latest-earnings-title'>Latest Quarter's Earnings</span>"
-        f"<div class='latest-earnings-subtitle'>{html.escape(str(summary.get('period') or 'Latest reported quarter'))}</div>"
+        f"<div class='latest-earnings-subtitle'>{html.escape(str(fiscal_period))} | {html.escape(freshness_status)} | Updated {html.escape(updated_text)}</div>"
         "</div>"
         f"<div class='latest-earnings-headerline'>{logo_html}<strong>{html.escape(ticker)}</strong></div>"
         "</div>"
         f"<div class='latest-earnings-grid'>{''.join(card_html)}</div>"
+        f"<div class='latest-earnings-subtitle'>Source: {html.escape(str(summary.get('source_actuals') or 'N/A'))} | Estimates: {html.escape(str(summary.get('source_estimates') or 'N/A'))}</div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -13590,6 +13870,7 @@ def render_stock_performance_statistics_row(
 def render_three_statement_analysis_dashboard() -> None:
     st.sidebar.header("Company Analysis")
     show_debug = st.sidebar.checkbox("Show company analysis debug", value=False, key="three_statement_debug")
+    earnings_refresh_clicked = st.sidebar.button("Refresh Earnings Data", use_container_width=True, key="three_statement_earnings_refresh")
 
     st.title("Company Analysis")
     st.markdown(
@@ -13617,11 +13898,13 @@ def render_three_statement_analysis_dashboard() -> None:
         animate_charts = st.toggle("Animate charts", value=True, key="three_statement_animate")
     show_change = st.toggle("Show YoY / QoQ change", value=True, key="three_statement_show_change")
 
-    if refresh_clicked:
+    if refresh_clicked or earnings_refresh_clicked:
         fetch_company_financials.clear()
         fetch_home_stock_snapshot.clear()
         fetch_quote_snapshot.clear()
         fetch_performance_history.clear()
+        load_latest_quarterly_earnings.clear()
+        refresh_all_latest_earnings.clear()
         st.session_state["three_statement_last_manual_refresh"] = eastern_now()
 
     if not ticker:
@@ -13696,7 +13979,14 @@ def render_three_statement_analysis_dashboard() -> None:
     section_animate = bool(animate_charts and animation_triggered)
     key_suffix = safe_ui_key(signature)
 
-    latest_quarter_debug = latest_quarter_earnings_summary(ticker, quarterly_income_frame, payload, stock_snapshot)
+    latest_earnings_cache, latest_earnings_statuses, latest_earnings_refreshed = refresh_all_latest_earnings((ticker,))
+    latest_quarter_debug = (
+        latest_earnings_cache.iloc[0].dropna().to_dict()
+        if isinstance(latest_earnings_cache, pd.DataFrame) and not latest_earnings_cache.empty
+        else latest_quarter_earnings_summary(ticker, quarterly_income_frame, payload, stock_snapshot)
+    )
+    if not latest_quarter_debug.get("available"):
+        latest_quarter_debug = latest_quarter_earnings_summary(ticker, quarterly_income_frame, payload, stock_snapshot)
     render_latest_quarter_earnings_card(latest_quarter_debug)
     consensus_debug = render_quarterly_actuals_consensus_section(
         ticker,
@@ -13794,6 +14084,37 @@ def render_three_statement_analysis_dashboard() -> None:
             {"Metric": "latest_quarter_eps_yoy_pct", "Value": format_percent(latest_quarter_debug.get("eps_yoy_pct"), 2, signed=True)},
         ]
         render_dashboard_table(pd.DataFrame(validation_rows), height=380)
+
+    with st.expander("Latest Earnings Data Validation", expanded=False):
+        latest_status, cache_age_hours = latest_earnings_freshness(latest_quarter_debug.get("last_updated"))
+        latest_validation_rows = [
+            {"Metric": "selected_ticker", "Value": ticker},
+            {"Metric": "latest_earnings_date", "Value": str(latest_quarter_debug.get("earnings_date") or latest_quarter_debug.get("announce_date") or "N/A")},
+            {"Metric": "fiscal_quarter", "Value": latest_quarter_debug.get("fiscal_quarter") or "N/A"},
+            {"Metric": "fiscal_year", "Value": latest_quarter_debug.get("fiscal_year") or "N/A"},
+            {"Metric": "is_reported", "Value": str(bool(latest_quarter_debug.get("is_reported")))},
+            {"Metric": "raw_revenue_actual", "Value": latest_quarter_debug.get("revenue_actual", latest_quarter_debug.get("revenue"))},
+            {"Metric": "raw_revenue_estimate", "Value": latest_quarter_debug.get("revenue_estimate", latest_quarter_debug.get("consensus_revenue"))},
+            {"Metric": "revenue_surprise", "Value": latest_quarter_debug.get("revenue_surprise")},
+            {"Metric": "revenue_surprise_pct", "Value": latest_quarter_debug.get("revenue_surprise_pct")},
+            {"Metric": "raw_eps_actual", "Value": latest_quarter_debug.get("eps_actual", latest_quarter_debug.get("eps_normalized"))},
+            {"Metric": "raw_eps_estimate", "Value": latest_quarter_debug.get("eps_estimate", latest_quarter_debug.get("consensus_eps"))},
+            {"Metric": "eps_surprise", "Value": latest_quarter_debug.get("eps_surprise")},
+            {"Metric": "eps_surprise_pct", "Value": latest_quarter_debug.get("eps_surprise_pct")},
+            {"Metric": "eps_type", "Value": latest_quarter_debug.get("eps_type") or "N/A"},
+            {"Metric": "prior_year_revenue", "Value": latest_quarter_debug.get("prior_year_revenue")},
+            {"Metric": "prior_year_eps", "Value": latest_quarter_debug.get("prior_year_eps")},
+            {"Metric": "normalized_session", "Value": latest_quarter_debug.get("normalized_session") or "Unconfirmed"},
+            {"Metric": "source_actuals", "Value": latest_quarter_debug.get("source_actuals") or "N/A"},
+            {"Metric": "source_estimates", "Value": latest_quarter_debug.get("source_estimates") or "N/A"},
+            {"Metric": "last_updated", "Value": latest_quarter_debug.get("last_updated") or "N/A"},
+            {"Metric": "cache_age_hours", "Value": format_number(cache_age_hours, 2)},
+            {"Metric": "freshness_status", "Value": latest_status},
+            {"Metric": "warnings", "Value": "; ".join(str(item) for item in latest_quarter_debug.get("warnings", []) if item) or "None"},
+            {"Metric": "cache_rows_loaded", "Value": len(latest_earnings_cache) if isinstance(latest_earnings_cache, pd.DataFrame) else 0},
+            {"Metric": "cache_status", "Value": "; ".join(f"{row.get('source')}: {row.get('status')}" for row in latest_earnings_statuses[:5]) if latest_earnings_statuses else "N/A"},
+        ]
+        render_dashboard_table(pd.DataFrame(latest_validation_rows), height=420)
 
     if show_debug:
         with st.expander("Company analysis debug", expanded=False):
@@ -15190,6 +15511,7 @@ def yahoo_calendar_item_to_earnings_row(item: dict, week_start: date, week_end: 
         "Source Earnings": "Yahoo Finance earnings calendar",
         "Source Estimates": "Yahoo Finance earnings calendar",
         "Source Actuals": "Yahoo Finance earnings calendar" if actual_revenue is not None or eps_actual is not None else "",
+        "Source Report Time": str(item.get("Source Report Time") or "Yahoo Finance earnings calendar"),
         "Data Notes": "Yahoo weekly earnings calendar row",
     }
 
@@ -15210,49 +15532,158 @@ def yahoo_calendar_payload_items(payload: object) -> list[dict]:
     return []
 
 
+YAHOO_VISUALIZATION_EARNINGS_FIELDS = (
+    "ticker",
+    "companyshortname",
+    "eventname",
+    "startdatetime",
+    "startdatetimetype",
+    "epsestimate",
+    "epsactual",
+    "epssurprisepct",
+    "timeZoneShortName",
+    "gmtOffsetMilliSeconds",
+    "intradaymarketcap",
+)
+
+
+def yahoo_visualization_earnings_body(day: date, *, offset: int = 0, size: int = 250) -> dict[str, object]:
+    next_day = day + timedelta(days=1)
+    return {
+        "sortType": "DESC",
+        "entityIdType": "sp_earnings",
+        "sortField": "intradaymarketcap",
+        "includeFields": list(YAHOO_VISUALIZATION_EARNINGS_FIELDS),
+        "query": {
+            "operator": "and",
+            "operands": [
+                {"operator": "gte", "operands": ["startdatetime", day.isoformat()]},
+                {"operator": "lt", "operands": ["startdatetime", next_day.isoformat()]},
+                {"operator": "eq", "operands": ["region", "us"]},
+                {
+                    "operator": "or",
+                    "operands": [
+                        {"operator": "eq", "operands": ["eventtype", "EAD"]},
+                        {"operator": "eq", "operands": ["eventtype", "ERA"]},
+                    ],
+                },
+            ],
+        },
+        "offset": int(offset),
+        "size": int(size),
+    }
+
+
+def yahoo_visualization_rows(payload: object) -> tuple[list[dict[str, object]], int | None]:
+    if not isinstance(payload, dict):
+        return [], None
+    results = nested_value(payload, ("finance", "result"))
+    if not isinstance(results, list) or not results:
+        return [], None
+    result = results[0] if isinstance(results[0], dict) else {}
+    total = coerce_float(result.get("total"))
+    documents = result.get("documents")
+    if not isinstance(documents, list) or not documents:
+        return [], int(total) if total is not None else None
+    document = documents[0] if isinstance(documents[0], dict) else {}
+    columns = [
+        str(column.get("id") or "")
+        for column in document.get("columns", [])
+        if isinstance(column, dict) and column.get("id")
+    ]
+    rows = []
+    for raw_row in document.get("rows", []):
+        if not isinstance(raw_row, list):
+            continue
+        rows.append({column: raw_row[index] if index < len(raw_row) else None for index, column in enumerate(columns)})
+    return rows, int(total) if total is not None else None
+
+
+def yahoo_visualization_session() -> tuple[requests.Session, str | None]:
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; StreamlitInvestmentDashboard/1.0)"})
+    try:
+        session.get("https://fc.yahoo.com", timeout=8)
+        crumb_response = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8)
+        crumb_response.raise_for_status()
+        crumb = clean_text(crumb_response.text).strip()
+        return session, crumb or None
+    except Exception:
+        return session, None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_yahoo_weekly_earnings_calendar(week_start_iso: str, week_end_iso: str) -> tuple[list[dict[str, object]], list[dict[str, object]], datetime]:
     week_start = parse_date(week_start_iso) or week_monday()
     week_end = parse_date(week_end_iso) or (week_start + timedelta(days=4))
     rows: list[dict[str, object]] = []
     statuses: list[dict[str, object]] = []
-    url = "https://query1.finance.yahoo.com/v1/finance/calendar/earnings"
+    session, crumb = yahoo_visualization_session()
+    url = "https://query1.finance.yahoo.com/v1/finance/visualization"
+    if not crumb:
+        statuses.append({"source": "Yahoo Finance visualization earnings calendar", "status": "Error", "message": "Unable to acquire Yahoo crumb", "rows": 0})
+        return rows, statuses, eastern_now()
     seen: set[str] = set()
-    headers = {"User-Agent": "streamlit-investment-dashboard/1.0 (+https://streamlit.io)"}
-    for offset in range(0, 750, 250):
-        try:
-            response = requests.get(
-                url,
-                params={
-                    "from": week_start.isoformat(),
-                    "to": (week_end + timedelta(days=1)).isoformat(),
-                    "size": 250,
-                    "offset": offset,
-                },
-                headers=headers,
-                timeout=12,
-            )
-            response.raise_for_status()
-            items = yahoo_calendar_payload_items(response.json())
-        except Exception as exc:
-            statuses.append({"source": "Yahoo Finance earnings calendar", "status": "Error", "message": str(exc), "rows": len(rows)})
-            break
-        parsed_rows = []
-        for item in items:
-            row = yahoo_calendar_item_to_earnings_row(item, week_start, week_end)
-            if row and row["Ticker"] not in seen:
-                seen.add(str(row["Ticker"]))
-                parsed_rows.append(row)
-        rows.extend(parsed_rows)
-        statuses.append({"source": "Yahoo Finance earnings calendar", "status": "OK", "message": f"offset {offset}", "rows": len(parsed_rows)})
-        if len(items) < 250:
-            break
+    for day_offset in range((week_end - week_start).days + 1):
+        day = week_start + timedelta(days=day_offset)
+        day_total = None
+        for offset in range(0, 1000, 250):
+            try:
+                response = session.post(
+                    url,
+                    params={"lang": "en-US", "region": "US", "crumb": crumb},
+                    json=yahoo_visualization_earnings_body(day, offset=offset, size=250),
+                    timeout=15,
+                )
+                response.raise_for_status()
+                items, total = yahoo_visualization_rows(response.json())
+                day_total = total if total is not None else day_total
+            except Exception as exc:
+                statuses.append({"source": "Yahoo Finance visualization earnings calendar", "status": "Error", "message": f"{day.isoformat()}: {exc}", "rows": 0})
+                break
+            parsed_rows = []
+            for item in items:
+                item["Source Report Time"] = "Yahoo Finance visualization calendar"
+                row = yahoo_calendar_item_to_earnings_row(item, week_start, week_end)
+                if row:
+                    row["Market Cap"] = coerce_float(item.get("intradaymarketcap"))
+                    row["Source Earnings"] = "Yahoo Finance visualization earnings calendar"
+                    row["Source Estimates"] = "Yahoo Finance visualization earnings calendar"
+                    row["Source Actuals"] = "Yahoo Finance visualization earnings calendar" if row.get("Actual EPS") is not None or row.get("Actual Revenue") is not None else ""
+                    row["Source Report Time"] = "Yahoo Finance visualization calendar"
+                    row["Data Notes"] = "Yahoo visualization earnings calendar row"
+                    key = f"{row.get('Ticker')}|{row.get('Earnings Date')}"
+                    if key not in seen:
+                        seen.add(key)
+                        parsed_rows.append(row)
+            rows.extend(parsed_rows)
+            statuses.append({"source": "Yahoo Finance visualization earnings calendar", "status": "OK", "message": f"{day.isoformat()} offset {offset}; total {day_total if day_total is not None else 'N/A'}", "rows": len(parsed_rows)})
+            if len(items) < 250 or (day_total is not None and offset + 250 >= day_total):
+                break
     rows.sort(key=lambda row: (row.get("Earnings Date") or date.max, row.get("Session") or "", row.get("Ticker") or ""))
     return rows, statuses, eastern_now()
 
 
 def merge_earnings_calendar_hint(row: dict[str, object], calendar_row: dict[str, object]) -> dict[str, object]:
     merged = dict(row)
+    incoming_dt = parse_earnings_datetime(calendar_row.get("Earnings DateTime"))
+    existing_dt = parse_earnings_datetime(merged.get("Earnings DateTime"))
+    incoming_raw = calendar_row.get("Report Time Raw") if not earnings_missing_value(calendar_row.get("Report Time Raw")) else calendar_row.get("Session")
+    existing_raw = merged.get("Report Time Raw") if not earnings_missing_value(merged.get("Report Time Raw")) else merged.get("Session")
+    incoming_session = normalize_earnings_session(incoming_raw, incoming_dt)
+    existing_session = normalize_earnings_session(existing_raw, existing_dt)
+    incoming_has_intraday_time = incoming_dt is not None and not (incoming_dt.hour == 0 and incoming_dt.minute == 0)
+    existing_has_intraday_time = existing_dt is not None and not (existing_dt.hour == 0 and existing_dt.minute == 0)
+    if incoming_session in PRIMARY_EARNINGS_SESSIONS and (
+        existing_session == "Unconfirmed" or (incoming_has_intraday_time and not existing_has_intraday_time)
+    ):
+        merged["Session"] = incoming_session
+        if incoming_dt is not None:
+            merged["Earnings DateTime"] = incoming_dt
+        if not earnings_missing_value(calendar_row.get("Report Time Raw")):
+            merged["Report Time Raw"] = calendar_row.get("Report Time Raw")
+        if not earnings_missing_value(calendar_row.get("Source Report Time")):
+            merged["Source Report Time"] = calendar_row.get("Source Report Time")
     for key, value in calendar_row.items():
         if key in {"Ticker", "Earnings Date", "Earnings DateTime"}:
             continue
@@ -15969,7 +16400,7 @@ def normalize_earnings_dataframe(frame: pd.DataFrame) -> pd.DataFrame:
     for index, row in normalized.iterrows():
         event_dt = parse_earnings_datetime(row.get("Earnings DateTime"))
         raw_time = row.get("Report Time Raw")
-        if raw_time is None or pd.isna(raw_time):
+        if earnings_missing_value(raw_time):
             raw_time = row.get("Session")
         session = normalize_earnings_session(raw_time, event_dt)
         sessions.append(session)
@@ -17022,12 +17453,12 @@ def render_earnings_calendar_tab() -> None:
             st.session_state[key] = list(value) if isinstance(value, list) else value
     if "earnings_week_start" not in st.session_state:
         st.session_state["earnings_week_start"] = week_monday()
-    if st.session_state.get("earnings_filter_schema") != 4:
-        st.session_state["earnings_cards_per_session"] = 5
+    if st.session_state.get("earnings_filter_schema") != 5:
+        st.session_state["earnings_cards_per_session"] = 1000
         st.session_state["earnings_show_reported"] = True
         st.session_state["earnings_show_time_not_supplied"] = False
         st.session_state["earnings_expanded_buckets"] = []
-        st.session_state["earnings_filter_schema"] = 4
+        st.session_state["earnings_filter_schema"] = 5
 
     with st.container(border=True):
         controls = st.columns([0.5, 1.25, 0.5, 0.75, 0.9, 1.05], gap="small")
