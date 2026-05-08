@@ -8333,19 +8333,33 @@ def inject_css() -> None:
             }
 
             .earnings-calendar-scroll {
+                box-sizing: border-box;
+                margin: 0;
                 max-width: 100%;
                 overflow-x: auto;
                 overflow-y: hidden;
+                padding-left: 0;
+                padding-right: 0;
                 padding-bottom: 0.35rem;
+                width: 100%;
             }
 
             .earnings-calendar-grid {
+                box-sizing: border-box;
                 display: grid;
                 gap: 0.5rem;
-                grid-template-columns: repeat(5, minmax(220px, 1fr));
+                grid-template-columns: repeat(5, minmax(240px, 1fr));
                 margin: 0.35rem 0 0.75rem 0;
                 max-width: 100%;
-                min-width: 1120px;
+                min-width: 0;
+                width: 100%;
+            }
+
+            @media (max-width: 1240px) {
+                .earnings-calendar-grid {
+                    max-width: none;
+                    min-width: 1200px;
+                }
             }
 
             .earnings-day-panel {
@@ -13064,46 +13078,33 @@ def normalize_earnings_session(report_time_raw: object = None, earnings_datetime
     normalized = re.sub(r"[\s_\-]+", " ", text).strip().casefold()
     if normalized in {"", "nan", "none", "null", "unknown", "time not supplied", "not supplied", "tbd", "unconfirmed", "estimated"}:
         return "Unconfirmed"
-    before_tokens = {
-        "bmo",
-        "amc before market open",  # defensive for malformed feeds
-        "before market open",
-        "before open",
-        "pre market",
-        "premarket",
-        "pre market open",
-        "morning",
-        "am",
-    }
-    after_tokens = {
-        "amc",
-        "after market close",
-        "after close",
-        "post market",
-        "postmarket",
-        "post close",
-        "evening",
-        "pm",
-    }
-    during_tokens = {"dmh", "during market", "during market hours", "market hours", "midday"}
-    if normalized in before_tokens or any(token in normalized for token in ("before", "pre market", "premarket")):
+    if earnings_datetime is None:
+        earnings_datetime = parse_earnings_datetime(report_time_raw)
+    if normalized in {"bmo", "before market open", "before open", "pre market", "premarket", "pre market open", "morning"}:
         return "Before Open"
-    if normalized in after_tokens or any(token in normalized for token in ("after", "post market", "postmarket")):
+    if normalized in {"amc", "after market close", "after close", "post market", "postmarket", "post close", "evening"}:
+        return "After Close"
+    during_tokens = {"dmh", "during market", "during market hours", "market hours", "midday"}
+    if any(token in normalized for token in ("before", "pre market", "premarket")):
+        return "Before Open"
+    if any(token in normalized for token in ("after", "post market", "postmarket")):
         return "After Close"
     if normalized in during_tokens or any(token in normalized for token in ("during", "midday")):
         return "During Market"
-    if earnings_datetime is None:
-        earnings_datetime = parse_earnings_datetime(report_time_raw)
-    if earnings_datetime is None:
-        return "Unconfirmed"
-    if earnings_datetime.hour == 0 and earnings_datetime.minute == 0:
-        return "Unconfirmed"
-    minutes = earnings_datetime.hour * 60 + earnings_datetime.minute
-    if minutes < 9 * 60 + 30:
+    if earnings_datetime is not None:
+        if earnings_datetime.hour == 0 and earnings_datetime.minute == 0:
+            return "Unconfirmed"
+        minutes = earnings_datetime.hour * 60 + earnings_datetime.minute
+        if minutes < 9 * 60 + 30:
+            return "Before Open"
+        if minutes >= 16 * 60:
+            return "After Close"
+        return "During Market"
+    if normalized in {"am"} or re.search(r"\bam\b", normalized):
         return "Before Open"
-    if minutes >= 16 * 60:
+    if normalized in {"pm"} or re.search(r"\bpm\b", normalized):
         return "After Close"
-    return "During Market"
+    return "Unconfirmed"
 
 
 def earnings_surprise_payload(
@@ -14978,6 +14979,28 @@ def parse_earnings_datetime(value: object) -> datetime | None:
         pass
     if value == "":
         return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return datetime.combine(value, datetime.min.time()).replace(tzinfo=EASTERN)
+    text_value = str(value).strip() if not isinstance(value, (pd.Timestamp, datetime)) else ""
+    has_time_component = bool(
+        text_value
+        and re.search(r"(?:\b\d{1,2}:\d{2}\b|\b(?:am|pm)\b|T\d{1,2}:|\b\d{1,2}\s*(?:am|pm)\b)", text_value, flags=re.IGNORECASE)
+    )
+    if text_value and not has_time_component:
+        parsed_date = parse_date(text_value)
+        if parsed_date:
+            return datetime.combine(parsed_date, datetime.min.time()).replace(tzinfo=EASTERN)
+    if text_value and re.fullmatch(r"\d{4}-\d{2}-\d{2}[T\s]00:00(?::00(?:\.0+)?)?(?:Z|[+-]00:00)?", text_value, flags=re.IGNORECASE):
+        parsed_date = parse_date(text_value[:10])
+        if parsed_date:
+            return datetime.combine(parsed_date, datetime.min.time()).replace(tzinfo=EASTERN)
+    has_timezone_marker = bool(text_value and re.search(r"(?:Z|[+-]\d{2}:?\d{2})$", text_value, flags=re.IGNORECASE))
+    if text_value and has_time_component and not has_timezone_marker:
+        local_timestamp = pd.to_datetime(text_value, errors="coerce", utc=False)
+        if not pd.isna(local_timestamp) and isinstance(local_timestamp, pd.Timestamp):
+            if local_timestamp.tzinfo is None:
+                local_timestamp = local_timestamp.tz_localize(EASTERN)
+            return local_timestamp.tz_convert(EASTERN).to_pydatetime()
     if isinstance(value, pd.Timestamp):
         if pd.isna(value):
             return None
@@ -15234,7 +15257,13 @@ def merge_earnings_calendar_hint(row: dict[str, object], calendar_row: dict[str,
         existing = merged.get(key)
         if key == "Session":
             normalized_value = normalize_earnings_session(value)
-            if normalize_earnings_session(existing) == "Unconfirmed" and normalized_value != "Unconfirmed":
+            existing_session = normalize_earnings_session(existing)
+            source_text = f"{calendar_row.get('Source Report Time') or ''} {calendar_row.get('Data Notes') or ''}".casefold()
+            yfinance_confirmed = "yfinance earnings timestamp" in source_text or "yfinance earnings dates" in source_text
+            if (
+                normalized_value != "Unconfirmed"
+                and (existing_session == "Unconfirmed" or (yfinance_confirmed and existing_session != normalized_value))
+            ):
                 merged[key] = normalized_value
             continue
         if earnings_missing_value(existing) and not earnings_missing_value(value):
@@ -16027,7 +16056,8 @@ def render_earnings_card(row: pd.Series) -> str:
     ticker = str(row.get("Ticker") or "N/A")
     logo_html = company_logo_markup(ticker, row.get("Logo URL"))
     company = str(row.get("Company") or ticker)
-    session = str(row.get("Session") or "Unconfirmed")
+    session = normalize_earnings_session(row.get("Session"), row.get("Earnings DateTime"))
+    earnings_date = parse_date(row.get("Earnings Date"))
     score = coerce_float(row.get("Anticipation Score"))
     implied_move = coerce_float(row.get("7D Implied Move %"))
     revenue_estimate = coerce_float(row.get("Revenue Estimate"))
@@ -16068,11 +16098,16 @@ def render_earnings_card(row: pd.Series) -> str:
         surprise_badges.append(eps_badge)
     if not surprise_badges:
         surprise_badges.append(earnings_mini_badge("Actuals pending"))
-    expiry = row.get("Options Expiry Used")
+    expiry = parse_date(row.get("Options Expiry Used"))
     if implied_move is None:
         surprise_badges.append("<span class='earnings-mini-badge neutral iv-missing'>IV N/A</span>")
-    elif isinstance(expiry, date):
-        surprise_badges.append(earnings_mini_badge(f"Exp {expiry.strftime('%m/%d')}", "neutral"))
+    elif expiry is not None:
+        surprise_badges.append(earnings_mini_badge(f"Opt Exp {expiry.strftime('%m/%d')}", "neutral"))
+    earnings_date_badge = (
+        f"<span class='earnings-card-badge'>Earnings {earnings_date.strftime('%m/%d')}</span>"
+        if earnings_date
+        else ""
+    )
     score_badge = f"<span class='earnings-card-badge'>Score {format_number(score, 0)}</span>" if score is not None else ""
     return (
         "<article class='earnings-card'>"
@@ -16085,6 +16120,7 @@ def render_earnings_card(row: pd.Series) -> str:
         f"<span class='earnings-card-name'>{html.escape(company)}</span>"
         "<div class='earnings-card-meta'>"
         f"<span class='earnings-card-badge'>{html.escape(session)}</span>"
+        f"{earnings_date_badge}"
         "</div>"
         "</div>"
         "</div>"
@@ -16320,8 +16356,13 @@ def merge_visible_earnings_enrichment(frame: pd.DataFrame, enriched_rows: list[d
             existing = merged.at[index, column] if column in merged.columns else None
             if column not in merged.columns or earnings_missing_value(existing):
                 merged.at[index, column] = value
-            elif column == "Session" and normalize_earnings_session(existing) == "Unconfirmed" and normalize_earnings_session(value) != "Unconfirmed":
-                merged.at[index, column] = normalize_earnings_session(value)
+            elif column == "Session":
+                existing_session = normalize_earnings_session(existing)
+                value_session = normalize_earnings_session(value)
+                source_text = f"{enriched.get('Source Report Time') or ''} {enriched.get('Data Notes') or ''}".casefold()
+                yfinance_confirmed = "yfinance earnings timestamp" in source_text or "yfinance earnings dates" in source_text
+                if value_session != "Unconfirmed" and (existing_session == "Unconfirmed" or (yfinance_confirmed and existing_session != value_session)):
+                    merged.at[index, column] = value_session
             elif column in {
                 "Last Price",
                 "Daily Change %",
@@ -16349,6 +16390,43 @@ def merge_visible_earnings_enrichment(frame: pd.DataFrame, enriched_rows: list[d
         - pd.to_numeric(merged.get("EPS Estimate", pd.Series(index=merged.index, dtype=float)), errors="coerce")
     )
     return merged
+
+
+def earnings_grid_validation(frame: pd.DataFrame, week_start: date, week_end: date) -> dict[str, object]:
+    stats: dict[str, object] = {
+        "rows_excluded_from_main_grid": 0,
+        "rows_with_options_expiry": 0,
+        "rows_with_earnings_date": 0,
+        "rows_with_session_mismatch_warning": 0,
+        "rows_with_date_mismatch_warning": 0,
+        "warnings": [],
+    }
+    if frame.empty:
+        return stats
+    warnings: list[str] = []
+    for _, row in frame.iterrows():
+        ticker = str(row.get("Ticker") or "N/A")
+        earnings_date = parse_date(row.get("Earnings Date"))
+        session = normalize_earnings_session(row.get("Session"), row.get("Earnings DateTime"))
+        raw_session = normalize_earnings_session(row.get("Report Time Raw"), row.get("Earnings DateTime"))
+        options_expiry = parse_date(row.get("Options Expiry Used"))
+        if earnings_date is not None:
+            stats["rows_with_earnings_date"] = int(stats["rows_with_earnings_date"]) + 1
+        if options_expiry is not None:
+            stats["rows_with_options_expiry"] = int(stats["rows_with_options_expiry"]) + 1
+        if session not in PRIMARY_EARNINGS_SESSIONS:
+            stats["rows_excluded_from_main_grid"] = int(stats["rows_excluded_from_main_grid"]) + 1
+        if raw_session in PRIMARY_EARNINGS_SESSIONS and session in PRIMARY_EARNINGS_SESSIONS and raw_session != session:
+            stats["rows_with_session_mismatch_warning"] = int(stats["rows_with_session_mismatch_warning"]) + 1
+            warnings.append(f"{ticker}: raw report time normalizes to {raw_session}, row session is {session}.")
+        if session in PRIMARY_EARNINGS_SESSIONS and (earnings_date is None or earnings_date < week_start or earnings_date > week_end):
+            stats["rows_with_date_mismatch_warning"] = int(stats["rows_with_date_mismatch_warning"]) + 1
+            warnings.append(f"{ticker}: standard-session row has earnings date outside the selected week.")
+        if options_expiry is not None and earnings_date is not None and options_expiry == earnings_date:
+            stats["rows_with_date_mismatch_warning"] = int(stats["rows_with_date_mismatch_warning"]) + 1
+            warnings.append(f"{ticker}: options expiry equals earnings date; card badges should remain distinct.")
+    stats["warnings"] = warnings[:20]
+    return stats
 
 
 def render_weekly_earnings_grid(
@@ -16425,23 +16503,25 @@ def render_weekly_earnings_grid(
 
 
 def render_unconfirmed_earnings_section(frame: pd.DataFrame, show_table: bool) -> dict[str, int]:
-    stats = {"rows_unconfirmed": 0}
+    stats = {"rows_unconfirmed": 0, "rows_non_standard": 0}
     if frame.empty or "Session" not in frame:
         return stats
-    unconfirmed = frame[frame["Session"].eq("Unconfirmed")].copy()
+    unconfirmed = frame[~frame["Session"].isin(PRIMARY_EARNINGS_SESSIONS)].copy()
     stats["rows_unconfirmed"] = len(unconfirmed)
+    stats["rows_non_standard"] = len(unconfirmed)
     if unconfirmed.empty:
         return stats
     unconfirmed = sort_earnings_cards(unconfirmed)
-    with st.container(border=True):
+    with st.expander(f"Earnings with Unconfirmed or Non-Standard Report Time ({len(unconfirmed):,})", expanded=False):
         render_section_title(
-            f"Earnings Awaiting Session Confirmation ({len(unconfirmed):,})",
-            "These names are included below instead of being hidden. The app keeps them out of Before Open / After Close until Nasdaq, Yahoo, or yfinance confirms the reporting session.",
+            "Earnings with Unconfirmed or Non-Standard Report Time",
+            "These releases are excluded from the main Before Open / After Close grid until Nasdaq, Yahoo, or yfinance confirms a standard reporting session.",
         )
         columns = [
             "Ticker",
             "Company",
             "Earnings Date",
+            "Session",
             "Source Report Time",
             "EPS Estimate",
             "Actual EPS",
@@ -16717,6 +16797,7 @@ def render_earnings_calendar_tab() -> None:
         show_time_not_supplied,
         expanded_buckets,
     )
+    placement_stats = earnings_grid_validation(filtered, week_start, week_end)
     unconfirmed_stats = render_unconfirmed_earnings_section(filtered, bool(show_time_not_supplied))
 
     with st.expander("Expanded earnings detail", expanded=False):
@@ -16789,11 +16870,19 @@ def render_earnings_calendar_tab() -> None:
                     exception_messages.append(f"{label}: {error_text or status_text}")
         validation_rows = [
             {"Metric": "selected_week", "Value": f"{week_start} to {week_end}"},
+            {"Metric": "selected_week_start", "Value": str(week_start)},
+            {"Metric": "selected_week_end", "Value": str(week_end)},
             {"Metric": "total_rows_loaded", "Value": f"{len(earnings_df):,}"},
             {"Metric": "rows_after_filters", "Value": f"{len(filtered):,}"},
             {"Metric": "number_of_cards_rendered", "Value": f"{int(grid_stats.get('number_of_cards_rendered', 0)):,}"},
             {"Metric": "number_of_hidden_cards_due_to_limit", "Value": f"{int(grid_stats.get('number_of_hidden_cards_due_to_limit', 0)):,}"},
-            {"Metric": "unconfirmed_rows_kept_out_of_grid", "Value": f"{int(unconfirmed_stats.get('rows_unconfirmed', 0)):,}"},
+            {"Metric": "unconfirmed_or_nonstandard_rows_kept_out_of_grid", "Value": f"{int(unconfirmed_stats.get('rows_non_standard', 0)):,}"},
+            {"Metric": "rows_excluded_from_main_grid", "Value": f"{int(placement_stats.get('rows_excluded_from_main_grid', 0)):,}"},
+            {"Metric": "rows_with_options_expiry", "Value": f"{int(placement_stats.get('rows_with_options_expiry', 0)):,}"},
+            {"Metric": "rows_with_earnings_date", "Value": f"{int(placement_stats.get('rows_with_earnings_date', 0)):,}"},
+            {"Metric": "rows_with_session_mismatch_warning", "Value": f"{int(placement_stats.get('rows_with_session_mismatch_warning', 0)):,}"},
+            {"Metric": "rows_with_date_mismatch_warning", "Value": f"{int(placement_stats.get('rows_with_date_mismatch_warning', 0)):,}"},
+            {"Metric": "first_20_session_mismatch_warnings", "Value": "; ".join(placement_stats.get("warnings", [])[:20]) if placement_stats.get("warnings") else "None"},
             {"Metric": "visible_card_enrichment_requested", "Value": f"{len(visible_hints):,}"},
             {"Metric": "visible_card_enrichment_returned", "Value": f"{len(visible_enriched_rows):,}"},
             {"Metric": "expanded_buckets", "Value": ", ".join(expanded_buckets) if expanded_buckets else "None"},
@@ -16852,6 +16941,9 @@ def render_earnings_calendar_tab() -> None:
             "earnings_date",
             "report_time_raw",
             "session",
+            "bucket_rendered",
+            "calendar_column_date",
+            "options_expiry_used",
             "is_reported",
             "eps_estimate",
             "eps_actual",
@@ -16866,7 +16958,16 @@ def render_earnings_calendar_tab() -> None:
             "source_actuals",
         ]
         if not filtered.empty:
-            render_dashboard_table(filtered[[column for column in sample_cols if column in filtered]].head(20), height=300)
+            validation_sample = filtered.copy()
+            validation_sample["bucket_rendered"] = validation_sample.apply(
+                lambda row: normalize_earnings_session(row.get("Session"), row.get("Earnings DateTime"))
+                if parse_date(row.get("Earnings Date")) and week_start <= parse_date(row.get("Earnings Date")) <= week_end and normalize_earnings_session(row.get("Session"), row.get("Earnings DateTime")) in PRIMARY_EARNINGS_SESSIONS
+                else "Excluded from main grid",
+                axis=1,
+            )
+            validation_sample["calendar_column_date"] = validation_sample["Earnings Date"].map(lambda value: parse_date(value))
+            validation_sample["options_expiry_used"] = validation_sample.get("Options Expiry Used", pd.Series(index=validation_sample.index, dtype=object)).map(lambda value: parse_date(value) or value)
+            render_dashboard_table(validation_sample[[column for column in sample_cols if column in validation_sample]].head(20), height=300)
         st.caption("Earnings calculation self-checks")
         render_dashboard_table(earnings_calculation_test_cases(), height=360)
 
