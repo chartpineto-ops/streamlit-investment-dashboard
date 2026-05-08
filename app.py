@@ -139,24 +139,16 @@ HOME_MARKET_SYMBOLS = (
     {"label": "10Y Treasury", "symbol": "^TNX", "type": "yield"},
 )
 
-EARNINGS_SESSIONS = ("Before Open", "After Close", "During Market", "Unconfirmed")
+EARNINGS_SESSIONS = ("Before Open", "After Close", "Unconfirmed")
 PRIMARY_EARNINGS_SESSIONS = ("Before Open", "After Close")
 EARNINGS_NEUTRAL_TOLERANCE = 0.05
 EARNINGS_EPS_TOLERANCE = 0.005
 EARNINGS_FILTER_DEFAULTS = {
     "earnings_universe": "All major indexes",
     "earnings_session_filter": "All",
-    "earnings_sort_mode": "Anticipation Score",
-    "earnings_scan_size": 200,
-    "earnings_ticker_search": "",
-    "earnings_min_score": 0,
     "earnings_cards_per_session": 5,
-    "earnings_only_most_discussed": True,
-    "earnings_show_reported": False,
-    "earnings_upcoming_only": False,
+    "earnings_show_reported": True,
     "earnings_show_time_not_supplied": False,
-    "earnings_stocktwits": False,
-    "earnings_sector_filter": [],
     "earnings_expanded_buckets": [],
 }
 EARNINGS_DISPLAY_ENRICH_LIMIT = 50
@@ -13090,7 +13082,7 @@ def normalize_earnings_session(report_time_raw: object = None, earnings_datetime
     if any(token in normalized for token in ("after", "post market", "postmarket")):
         return "After Close"
     if normalized in during_tokens or any(token in normalized for token in ("during", "midday")):
-        return "During Market"
+        return "Unconfirmed"
     if earnings_datetime is not None:
         if earnings_datetime.hour == 0 and earnings_datetime.minute == 0:
             return "Unconfirmed"
@@ -13099,7 +13091,7 @@ def normalize_earnings_session(report_time_raw: object = None, earnings_datetime
             return "Before Open"
         if minutes >= 16 * 60:
             return "After Close"
-        return "During Market"
+        return "Unconfirmed"
     if normalized in {"am"} or re.search(r"\bam\b", normalized):
         return "Before Open"
     if normalized in {"pm"} or re.search(r"\bpm\b", normalized):
@@ -15677,6 +15669,23 @@ def fetch_weekly_earnings_releases(tickers: tuple[str, ...], week_start_iso: str
     return rows, statuses, eastern_now()
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_weekly_earnings_calendar(week_start_iso: str, week_end_iso: str) -> tuple[pd.DataFrame, list[dict[str, object]], datetime]:
+    """Load the selected week's earnings calendar without social/news gating."""
+    rows, statuses, refreshed = fetch_weekly_earnings_releases(tuple(), week_start_iso, week_end_iso)
+    frame = normalize_earnings_dataframe(pd.DataFrame(rows))
+    if not frame.empty and "Session" in frame:
+        frame["Session"] = frame.apply(
+            lambda row: normalize_earnings_session(
+                row.get("Report Time Raw") if not earnings_missing_value(row.get("Report Time Raw")) else row.get("Session"),
+                row.get("Earnings DateTime"),
+            ),
+            axis=1,
+        )
+        frame["session"] = frame["Session"]
+    return frame, statuses, refreshed
+
+
 def earnings_percentile_score(series: pd.Series) -> pd.Series:
     numeric = pd.to_numeric(series, errors="coerce")
     valid = numeric.dropna()
@@ -15909,6 +15918,7 @@ def earnings_card_sample_metrics(row: pd.Series | None) -> dict[str, object]:
         "selected_card_7d_move": row.get("7D Implied Move %"),
         "selected_card_iv_status": "Available" if coerce_float(row.get("7D Implied Move %")) is not None else "IV N/A",
         "selected_card_score": row.get("Anticipation Score"),
+        "selected_card_options_expiry_used": row.get("Options Expiry Used"),
     }
 
 
@@ -16046,7 +16056,7 @@ def earnings_calculation_test_cases() -> pd.DataFrame:
         ("", "Unconfirmed"),
         (datetime(2026, 5, 7, 8, 0, tzinfo=EASTERN), "Before Open"),
         (datetime(2026, 5, 7, 17, 0, tzinfo=EASTERN), "After Close"),
-        (datetime(2026, 5, 7, 12, 0, tzinfo=EASTERN), "During Market"),
+        (datetime(2026, 5, 7, 12, 0, tzinfo=EASTERN), "Unconfirmed"),
     ):
         rows.append({"Case": f"{raw} -> {expected}", "Actual": "", "Estimate": "", "Observed": normalize_earnings_session(raw)})
     return pd.DataFrame(rows)
@@ -16133,10 +16143,12 @@ def render_earnings_card(row: pd.Series) -> str:
 
 def render_earnings_summary(frame: pd.DataFrame, week_start: date, total_frame: pd.DataFrame | None = None) -> None:
     total_rows = len(total_frame) if total_frame is not None else len(frame)
-    filtered_rows = len(frame)
     if total_rows == 0:
         st.info("No earnings releases were found for the selected week.")
         return
+    confirmed = frame[frame.get("Session", pd.Series(index=frame.index, dtype=object)).isin(PRIMARY_EARNINGS_SESSIONS)] if not frame.empty else frame
+    before_count = int(frame.get("Session", pd.Series(index=frame.index, dtype=object)).eq("Before Open").sum()) if not frame.empty else 0
+    after_count = int(frame.get("Session", pd.Series(index=frame.index, dtype=object)).eq("After Close").sum()) if not frame.empty else 0
     reported_mask = (
         pd.to_numeric(frame.get("Actual Revenue", pd.Series(index=frame.index, dtype=float)), errors="coerce").notna()
         | pd.to_numeric(frame.get("Actual EPS", pd.Series(index=frame.index, dtype=float)), errors="coerce").notna()
@@ -16146,17 +16158,14 @@ def render_earnings_summary(frame: pd.DataFrame, week_start: date, total_frame: 
     upcoming_mask = (
         pd.to_datetime(frame.get("Earnings Date", pd.Series(index=frame.index, dtype=object)), errors="coerce").dt.date >= eastern_now().date()
     ) & ~reported_mask
-    most_anticipated = str(frame.iloc[0].get("Ticker") or "N/A") if not frame.empty else "N/A"
-    highest_move = pd.to_numeric(frame.get("7D Implied Move %", pd.Series(dtype=float)), errors="coerce").max()
     week_label = f"{calendar.month_abbr[week_start.month]} {week_start.day}, {week_start.year}"
     cards = [
         ("Week Of", week_label),
-        ("Total Releases", f"{total_rows:,}"),
-        ("Showing", f"{filtered_rows:,}"),
+        ("Confirmed Releases", f"{len(confirmed):,}"),
+        ("Before Open", f"{before_count:,}"),
+        ("After Close", f"{after_count:,}"),
         ("Reported", f"{int(reported_mask.sum()):,}"),
         ("Upcoming", f"{int(upcoming_mask.sum()):,}"),
-        ("Highest 7D Move", format_move(highest_move, 1)),
-        ("Most Anticipated", most_anticipated),
     ]
     st.markdown(
         "<div class='earnings-summary-strip'>"
@@ -16178,16 +16187,14 @@ def sort_earnings_cards(frame: pd.DataFrame) -> pd.DataFrame:
     actual_revenue = pd.to_numeric(sortable.get("Actual Revenue", pd.Series(index=sortable.index, dtype=float)), errors="coerce")
     actual_eps = pd.to_numeric(sortable.get("Actual EPS", pd.Series(index=sortable.index, dtype=float)), errors="coerce")
     sortable["__reported_sort"] = (actual_revenue.notna() | actual_eps.notna()).astype(int)
-    sortable["__score_sort"] = pd.to_numeric(sortable.get("Anticipation Score", pd.Series(index=sortable.index, dtype=float)), errors="coerce").fillna(-1)
-    sortable["__move_sort"] = pd.to_numeric(sortable.get("7D Implied Move %", pd.Series(index=sortable.index, dtype=float)), errors="coerce").fillna(-1)
     sortable["__market_cap_sort"] = pd.to_numeric(sortable.get("Market Cap", pd.Series(index=sortable.index, dtype=float)), errors="coerce").fillna(-1)
-    sort_columns = ["__reported_sort", "__score_sort", "__move_sort", "__market_cap_sort"]
-    ascending = [False, False, False, False]
+    sort_columns = ["__reported_sort", "__market_cap_sort"]
+    ascending = [False, False]
     if "Ticker" in sortable:
         sort_columns.append("Ticker")
         ascending.append(True)
     return sortable.sort_values(sort_columns, ascending=ascending, kind="mergesort").drop(
-        columns=["__reported_sort", "__score_sort", "__move_sort", "__market_cap_sort"],
+        columns=["__reported_sort", "__market_cap_sort"],
         errors="ignore",
     )
 
@@ -16470,7 +16477,7 @@ def render_weekly_earnings_grid(
             if total_in_session:
                 note = f"<span class='earnings-bucket-note'>Showing {len(visible_subset):,} of {total_in_session:,}</span>"
             if hidden_count:
-                cards += f"<div class='earnings-empty'>{hidden_count:,} more not shown. Add this bucket to Show all buckets to render the full list.</div>"
+                cards += f"<div class='earnings-empty'>{hidden_count:,} more not shown.</div>"
             if not cards:
                 cards = "<div class='earnings-empty'>No names.</div>"
             session_html.append(
@@ -16512,11 +16519,14 @@ def render_unconfirmed_earnings_section(frame: pd.DataFrame, show_table: bool) -
     if unconfirmed.empty:
         return stats
     unconfirmed = sort_earnings_cards(unconfirmed)
-    with st.expander(f"Earnings with Unconfirmed or Non-Standard Report Time ({len(unconfirmed):,})", expanded=False):
+    with st.expander(f"Earnings with Unconfirmed Report Time ({len(unconfirmed):,})", expanded=bool(show_table)):
         render_section_title(
-            "Earnings with Unconfirmed or Non-Standard Report Time",
-            "These releases are excluded from the main Before Open / After Close grid until Nasdaq, Yahoo, or yfinance confirms a standard reporting session.",
+            "Earnings with Unconfirmed Report Time",
+            "These releases have an earnings date but no confirmed Before Open or After Close session, so they stay out of the main grid.",
         )
+        if not show_table:
+            st.caption("Turn on Show unconfirmed times to load the full unconfirmed-time table.")
+            return stats
         columns = [
             "Ticker",
             "Company",
@@ -16527,11 +16537,10 @@ def render_unconfirmed_earnings_section(frame: pd.DataFrame, show_table: bool) -
             "Actual EPS",
             "Revenue Estimate",
             "Actual Revenue",
-            "Anticipation Score",
         ]
         display_limit = 2000
         if len(unconfirmed) > display_limit:
-            st.caption(f"Showing the top {display_limit:,} of {len(unconfirmed):,} session-unconfirmed releases. Use ticker search or sector filters to narrow the list.")
+            st.caption(f"Showing the first {display_limit:,} of {len(unconfirmed):,} session-unconfirmed releases.")
         render_earnings_detail_table(unconfirmed[[column for column in columns if column in unconfirmed]].head(display_limit), height=360)
     return stats
 
@@ -16594,7 +16603,7 @@ def reset_earnings_filter_state() -> None:
         st.session_state[key] = list(value) if isinstance(value, list) else value
 
 
-def render_earnings_calendar_tab() -> None:
+def render_earnings_calendar_tab_legacy_disabled() -> None:
     st.sidebar.header("Earnings")
     st.title("Earnings")
     st.markdown(
@@ -16967,6 +16976,262 @@ def render_earnings_calendar_tab() -> None:
             )
             validation_sample["calendar_column_date"] = validation_sample["Earnings Date"].map(lambda value: parse_date(value))
             validation_sample["options_expiry_used"] = validation_sample.get("Options Expiry Used", pd.Series(index=validation_sample.index, dtype=object)).map(lambda value: parse_date(value) or value)
+            render_dashboard_table(validation_sample[[column for column in sample_cols if column in validation_sample]].head(20), height=300)
+        st.caption("Earnings calculation self-checks")
+        render_dashboard_table(earnings_calculation_test_cases(), height=360)
+
+
+def render_earnings_calendar_tab() -> None:
+    st.sidebar.header("Earnings")
+    st.title("Earnings")
+    st.markdown(
+        "<div class='statement-page-subtitle'>Weekly earnings calendar segmented by confirmed Before Open and After Close report sessions.</div>",
+        unsafe_allow_html=True,
+    )
+
+    for key, value in EARNINGS_FILTER_DEFAULTS.items():
+        if key not in st.session_state:
+            st.session_state[key] = list(value) if isinstance(value, list) else value
+    if "earnings_week_start" not in st.session_state:
+        st.session_state["earnings_week_start"] = week_monday()
+    if st.session_state.get("earnings_filter_schema") != 4:
+        st.session_state["earnings_cards_per_session"] = 5
+        st.session_state["earnings_show_reported"] = True
+        st.session_state["earnings_show_time_not_supplied"] = False
+        st.session_state["earnings_expanded_buckets"] = []
+        st.session_state["earnings_filter_schema"] = 4
+
+    with st.container(border=True):
+        controls = st.columns([0.5, 1.25, 0.5, 0.75, 0.9, 1.05], gap="small")
+        with controls[0]:
+            if st.button("Prev", use_container_width=True, key="earnings_simple_prev_week"):
+                st.session_state["earnings_week_start"] = st.session_state["earnings_week_start"] - timedelta(days=7)
+        with controls[1]:
+            selected_week = st.date_input("Week of", value=st.session_state["earnings_week_start"], key="earnings_simple_week_input")
+            week_start = week_monday(selected_week)
+            st.session_state["earnings_week_start"] = week_start
+        with controls[2]:
+            if st.button("Next", use_container_width=True, key="earnings_simple_next_week"):
+                st.session_state["earnings_week_start"] = st.session_state["earnings_week_start"] + timedelta(days=7)
+                week_start = st.session_state["earnings_week_start"]
+        with controls[3]:
+            refresh_clicked = st.button("Refresh", use_container_width=True, key="earnings_simple_refresh")
+        with controls[4]:
+            show_reported_results = st.toggle("Show reported results", value=True, key="earnings_show_reported")
+        with controls[5]:
+            show_unconfirmed_times = st.toggle("Show unconfirmed times", value=False, key="earnings_show_time_not_supplied")
+        st.caption("Main grid uses confirmed earnings date and session only. Unconfirmed report times are kept below the calendar.")
+
+    week_end = week_start + timedelta(days=4)
+    if refresh_clicked:
+        load_weekly_earnings_calendar.clear()
+        fetch_weekly_earnings_releases.clear()
+        fetch_weekly_earnings_calendar_sources.clear()
+        fetch_yahoo_weekly_earnings_calendar.clear()
+        fetch_nasdaq_weekly_earnings_calendar.clear()
+        fetch_visible_earnings_enrichment.clear()
+
+    with st.spinner("Loading weekly earnings calendar..."):
+        earnings_df, earnings_statuses, earnings_refreshed = load_weekly_earnings_calendar(
+            week_start.isoformat(),
+            week_end.isoformat(),
+        )
+
+    earnings_df = normalize_earnings_dataframe(earnings_df)
+    if not earnings_df.empty:
+        visible_rows = earnings_visible_rows_for_grid(
+            earnings_df,
+            week_start,
+            "All",
+            int(st.session_state.get("earnings_cards_per_session", 5)),
+            False,
+            [],
+        )
+        unconfirmed_rows_to_check = earnings_unconfirmed_rows_for_enrichment(
+            earnings_df,
+            max(0, EARNINGS_DISPLAY_ENRICH_LIMIT - len(visible_rows)),
+        )
+        visible_for_enrichment = pd.concat([visible_rows, unconfirmed_rows_to_check], ignore_index=True)
+        visible_for_enrichment = visible_for_enrichment.drop_duplicates(subset=["Ticker", "Earnings Date"], keep="first")
+        visible_hints = tuple(
+            earnings_hint_from_row(row)
+            for _, row in visible_for_enrichment.head(EARNINGS_DISPLAY_ENRICH_LIMIT).iterrows()
+        )
+        visible_enriched_rows, visible_enrichment_statuses = fetch_visible_earnings_enrichment(
+            visible_hints,
+            week_start.isoformat(),
+            week_end.isoformat(),
+        )
+        earnings_df = merge_visible_earnings_enrichment(earnings_df, visible_enriched_rows)
+        earnings_df = normalize_earnings_dataframe(earnings_df)
+    else:
+        visible_hints = tuple()
+        visible_enriched_rows = []
+        visible_enrichment_statuses = []
+
+    display_frame = earnings_df.copy()
+    if not show_reported_results and not display_frame.empty:
+        for column in ("Actual Revenue", "Actual EPS", "Revenue Surprise $", "Revenue Surprise %", "EPS Surprise $", "EPS Surprise %"):
+            if column in display_frame:
+                display_frame[column] = pd.NA
+        if "Reported" in display_frame:
+            display_frame["Reported"] = False
+        if "is_reported" in display_frame:
+            display_frame["is_reported"] = False
+
+    render_earnings_summary(earnings_df, week_start, earnings_df)
+
+    status_frame = pd.DataFrame(list(earnings_statuses) + list(visible_enrichment_statuses))
+    source_used = "Nasdaq/Yahoo earnings calendars"
+    if not status_frame.empty and "source" in status_frame:
+        source_names = status_frame["source"].dropna().astype(str).drop_duplicates().head(4).tolist()
+        if source_names:
+            source_used = ", ".join(source_names)
+    with st.expander("Sources and diagnostics", expanded=False):
+        diagnostic_rows = [
+            {"Metric": "Source used", "Value": "Nasdaq/Yahoo earnings calendars + visible-card yfinance enrichment"},
+            {"Metric": "Last refreshed", "Value": earnings_refreshed.strftime("%I:%M:%S %p ET").lstrip("0")},
+            {"Metric": "Rows loaded", "Value": f"{len(earnings_df):,}"},
+            {"Metric": "Visible enrichment requested", "Value": f"{len(visible_hints):,}"},
+            {"Metric": "Visible enrichment returned", "Value": f"{len(visible_enriched_rows):,}"},
+        ]
+        render_dashboard_table(pd.DataFrame(diagnostic_rows), height=table_height_for_rows(pd.DataFrame(diagnostic_rows), max_height=180))
+        if not status_frame.empty:
+            render_dashboard_table(status_frame.head(30), height=260)
+
+    confirmed = earnings_df[earnings_df["Session"].isin(PRIMARY_EARNINGS_SESSIONS)] if not earnings_df.empty and "Session" in earnings_df else pd.DataFrame()
+    if confirmed.empty:
+        st.info("No confirmed Before Open or After Close earnings releases were found for this week.")
+        if not earnings_df.empty and "Session" in earnings_df and int(earnings_df["Session"].eq("Unconfirmed").sum()):
+            st.caption("Some earnings releases have unconfirmed report times. Open the section below to view them.")
+        grid_stats = {"number_of_cards_rendered": 0, "number_of_hidden_cards_due_to_limit": 0, "overflow_fix_enabled": True}
+    else:
+        grid_stats = render_weekly_earnings_grid(
+            display_frame,
+            week_start,
+            "All",
+            int(st.session_state.get("earnings_cards_per_session", 5)),
+            False,
+            [],
+        )
+
+    placement_stats = earnings_grid_validation(earnings_df, week_start, week_end)
+    unconfirmed_stats = render_unconfirmed_earnings_section(display_frame, bool(show_unconfirmed_times))
+
+    with st.expander("Expanded earnings detail", expanded=False):
+        if earnings_df.empty:
+            st.info("No earnings rows were returned for the selected week.")
+        else:
+            ticker_options = ["Select a ticker"] + earnings_df["Ticker"].dropna().astype(str).drop_duplicates().tolist()
+            selected_ticker = st.selectbox("Earnings card", ticker_options, key="earnings_open_ticker")
+            if selected_ticker == "Select a ticker":
+                st.caption("Select an earnings card to view details.")
+            else:
+                detail_cols = [
+                    "Ticker",
+                    "Company",
+                    "Earnings Date",
+                    "Session",
+                    "Report Time Raw",
+                    "Source Report Time",
+                    "Last Price",
+                    "7D Implied Move %",
+                    "Options Expiry Used",
+                    "Revenue Estimate",
+                    "Actual Revenue",
+                    "Revenue Surprise $",
+                    "Revenue Surprise %",
+                    "EPS Estimate",
+                    "Actual EPS",
+                    "EPS Surprise $",
+                    "EPS Surprise %",
+                    "Source Earnings",
+                    "Source Estimates",
+                    "Source Actuals",
+                ]
+                detail = earnings_df[earnings_df["Ticker"].astype(str).eq(selected_ticker)]
+                detail = detail[[column for column in detail_cols if column in detail]].head(1).copy()
+                render_earnings_detail_table(detail, height=table_height_for_rows(detail, max_height=220))
+                if st.button("Open Company Analysis", key="earnings_open_company_analysis"):
+                    st.session_state["three_statement_ticker_input"] = selected_ticker
+                    st.session_state["main_tab"] = "Company Analysis"
+                    st.rerun()
+
+    with st.expander("Earnings Data Validation", expanded=False):
+        selected_card = st.session_state.get("earnings_open_ticker", "Select a ticker")
+        selected_sample = None
+        if not earnings_df.empty:
+            if selected_card and selected_card != "Select a ticker":
+                matched_sample = earnings_df[earnings_df["Ticker"].astype(str).eq(str(selected_card))]
+                selected_sample = matched_sample.iloc[0] if not matched_sample.empty else earnings_df.iloc[0]
+            else:
+                selected_sample = earnings_df.iloc[0]
+        sample_metrics = earnings_card_sample_metrics(selected_sample)
+        before_tickers = earnings_df.loc[earnings_df["Session"].eq("Before Open"), "Ticker"].dropna().astype(str).head(20).tolist() if not earnings_df.empty and "Session" in earnings_df else []
+        after_tickers = earnings_df.loc[earnings_df["Session"].eq("After Close"), "Ticker"].dropna().astype(str).head(20).tolist() if not earnings_df.empty and "Session" in earnings_df else []
+        unconfirmed_tickers = earnings_df.loc[~earnings_df["Session"].isin(PRIMARY_EARNINGS_SESSIONS), "Ticker"].dropna().astype(str).head(20).tolist() if not earnings_df.empty and "Session" in earnings_df else []
+        reported_count = int(earnings_df["Reported"].fillna(False).sum()) if not earnings_df.empty and "Reported" in earnings_df else 0
+        pending_count = max(len(earnings_df) - reported_count, 0)
+        validation_rows = [
+            {"Metric": "selected_week_start", "Value": str(week_start)},
+            {"Metric": "selected_week_end", "Value": str(week_end)},
+            {"Metric": "total_rows_loaded", "Value": f"{len(earnings_df):,}"},
+            {"Metric": "confirmed_before_open_count", "Value": f"{int(earnings_df['Session'].eq('Before Open').sum()) if not earnings_df.empty and 'Session' in earnings_df else 0:,}"},
+            {"Metric": "confirmed_after_close_count", "Value": f"{int(earnings_df['Session'].eq('After Close').sum()) if not earnings_df.empty and 'Session' in earnings_df else 0:,}"},
+            {"Metric": "unconfirmed_count", "Value": f"{int((~earnings_df['Session'].isin(PRIMARY_EARNINGS_SESSIONS)).sum()) if not earnings_df.empty and 'Session' in earnings_df else 0:,}"},
+            {"Metric": "rows_rendered_in_main_grid", "Value": f"{int(grid_stats.get('number_of_cards_rendered', 0)):,}"},
+            {"Metric": "rows_hidden_due_to_card_limit", "Value": f"{int(grid_stats.get('number_of_hidden_cards_due_to_limit', 0)):,}"},
+            {"Metric": "reported_count", "Value": f"{reported_count:,}"},
+            {"Metric": "pending_count", "Value": f"{pending_count:,}"},
+            {"Metric": "source_used", "Value": source_used},
+            {"Metric": "first_20_tickers_before_open", "Value": ", ".join(before_tickers) or "None"},
+            {"Metric": "first_20_tickers_after_close", "Value": ", ".join(after_tickers) or "None"},
+            {"Metric": "first_20_unconfirmed_tickers", "Value": ", ".join(unconfirmed_tickers) or "None"},
+            {"Metric": "rows_with_options_expiry", "Value": f"{int(placement_stats.get('rows_with_options_expiry', 0)):,}"},
+            {"Metric": "rows_with_earnings_date", "Value": f"{int(placement_stats.get('rows_with_earnings_date', 0)):,}"},
+            {"Metric": "rows_excluded_from_main_grid", "Value": f"{int(placement_stats.get('rows_excluded_from_main_grid', 0)):,}"},
+            {"Metric": "placement_warnings", "Value": "; ".join(placement_stats.get("warnings", [])[:20]) if placement_stats.get("warnings") else "None"},
+            {"Metric": "selected_card", "Value": selected_card or "N/A"},
+            {"Metric": "selected_ticker_card_sample", "Value": sample_metrics.get("selected_ticker_card_sample", "N/A")},
+            {"Metric": "selected_card_eps_estimate", "Value": sample_metrics.get("selected_card_eps_estimate", "N/A")},
+            {"Metric": "selected_card_actual_eps", "Value": sample_metrics.get("selected_card_actual_eps", "N/A")},
+            {"Metric": "selected_card_eps_surprise", "Value": sample_metrics.get("selected_card_eps_surprise", "N/A")},
+            {"Metric": "selected_card_eps_surprise_pct", "Value": sample_metrics.get("selected_card_eps_surprise_pct", "N/A")},
+            {"Metric": "selected_card_revenue_estimate", "Value": sample_metrics.get("selected_card_revenue_estimate", "N/A")},
+            {"Metric": "selected_card_actual_revenue", "Value": sample_metrics.get("selected_card_actual_revenue", "N/A")},
+            {"Metric": "selected_card_revenue_surprise", "Value": sample_metrics.get("selected_card_revenue_surprise", "N/A")},
+            {"Metric": "selected_card_revenue_surprise_pct", "Value": sample_metrics.get("selected_card_revenue_surprise_pct", "N/A")},
+            {"Metric": "selected_card_7d_move", "Value": sample_metrics.get("selected_card_7d_move", "N/A")},
+            {"Metric": "selected_card_iv_status", "Value": sample_metrics.get("selected_card_iv_status", "N/A")},
+            {"Metric": "selected_card_options_expiry_used", "Value": sample_metrics.get("selected_card_options_expiry_used", "N/A")},
+        ]
+        render_dashboard_table(pd.DataFrame(validation_rows), height=420)
+        if not earnings_df.empty:
+            validation_sample = earnings_df.copy()
+            validation_sample["bucket_rendered"] = validation_sample.apply(
+                lambda row: normalize_earnings_session(row.get("Session"), row.get("Earnings DateTime"))
+                if parse_date(row.get("Earnings Date")) and week_start <= parse_date(row.get("Earnings Date")) <= week_end and normalize_earnings_session(row.get("Session"), row.get("Earnings DateTime")) in PRIMARY_EARNINGS_SESSIONS
+                else "Excluded from main grid",
+                axis=1,
+            )
+            sample_cols = [
+                "ticker",
+                "company_name",
+                "earnings_date",
+                "report_time_raw",
+                "session",
+                "bucket_rendered",
+                "is_reported",
+                "eps_estimate",
+                "eps_actual",
+                "revenue_estimate",
+                "revenue_actual",
+                "seven_day_implied_move",
+                "options_expiry_used",
+                "source_earnings",
+                "source_estimates",
+                "source_actuals",
+            ]
             render_dashboard_table(validation_sample[[column for column in sample_cols if column in validation_sample]].head(20), height=300)
         st.caption("Earnings calculation self-checks")
         render_dashboard_table(earnings_calculation_test_cases(), height=360)
