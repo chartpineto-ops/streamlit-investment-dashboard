@@ -73,6 +73,13 @@ If `OPENAI_API_KEY` is missing, the AI Due Diligence tab shows a clean disabled 
 
 The signal engine is transparent and deterministic. It is not a black-box model.
 
+Terminology:
+
+- Technical Entry Setup = a timing/technical setup indicator based on momentum, moving averages, RSI, and 52-week positioning. It is not a standalone buy/sell rating.
+- Overall Research Signal = the broader investment research rating based on growth, profitability, balance sheet, valuation, momentum, catalysts, and data quality.
+
+A stock can have a strong Technical Entry Setup while still remaining Hold / Watchlist if valuation, profitability, balance sheet risk, or data quality are not supportive.
+
 Weights:
 
 - Growth: 20%

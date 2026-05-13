@@ -81,7 +81,13 @@ def build_research_packet(ticker: str) -> dict:
         "options": options,
         "news_catalysts": _records(news, 10),
         "filings": _records(filings, 5),
-        "signal_center": signal,
+        "technical_entry_setup": {
+            "description": "Technical setup signal based on momentum, moving averages, RSI, and 52-week positioning. Not a standalone buy/sell rating.",
+            "technical_inputs": signal.get("technicals", {}),
+            "price_52w_low": quote.get("fifty_two_week_low"),
+            "price_52w_high": quote.get("fifty_two_week_high"),
+        },
+        "overall_research_signal": signal,
         "data_quality": {
             "financials_status": financials.get("status"),
             "missing_fields": financials.get("missing_fields", []),
@@ -111,7 +117,7 @@ Include these sections:
 2. Business Overview
 3. Financial Snapshot
 4. Valuation View
-5. Signal Center Explanation
+5. Overall Research Signal Explanation
 6. Bull Case
 7. Bear Case
 8. Key Risks

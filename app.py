@@ -199,7 +199,7 @@ def render_signal_summary(ticker: str, signal: dict) -> None:
     render_metric_grid(
         [
             ("Composite Score", f"{score:.1f}/100" if isinstance(score, (int, float)) else "N/A", "Transparent factor model", tone_for_number(score)),
-            ("Signal Label", label, "Research signal, not investment advice", tone),
+            ("Overall Research Signal", label, "Full research signal based on growth, profitability, balance sheet, valuation, momentum, catalysts, and data quality.", tone),
             ("Confidence", confidence, f"{signal.get('data_completeness', 'N/A')}% weighted data completeness", "good" if confidence == "High" else "warn" if confidence == "Medium" else "neutral"),
             ("Missing Data Warnings", str(len(signal.get("missing_data_warnings", []))), signal.get("data_quality_note", ""), "warn" if signal.get("missing_data_warnings") else "good"),
         ],
@@ -360,11 +360,15 @@ def render_entry_signal(ticker: str, quote: dict, latest: dict, options: dict, s
     rationale = f"{ticker} setup quality is driven by " + ", ".join(reasons[:3]) + "." if reasons else "Insufficient market and financial inputs are available."
     render_metric_grid(
         [
-            ("Entry Quality Signal", label, "Dashboard signal, not financial advice", tone),
+            ("Technical Entry Setup", label, "Technical setup signal based on momentum, moving averages, RSI, and 52-week positioning. Not a standalone buy/sell rating.", tone),
             ("Rationale", rationale, f"Signal score input: {score}", "neutral"),
-            ("Composite Signal", signal.get("signal_label", "N/A"), f"{signal.get('composite_score', 'N/A')}/100 | Confidence {signal.get('confidence', 'N/A')}", tone_for_number(signal.get("composite_score"))),
+            ("Overall Research Signal", signal.get("signal_label", "N/A"), "Full research signal based on growth, profitability, balance sheet, valuation, momentum, catalysts, and data quality.", tone_for_number(signal.get("composite_score"))),
         ],
         columns=3,
+    )
+    st.caption(
+        "Technical Entry Setup reflects timing quality. Overall Research Signal reflects the broader investment profile. "
+        "A stock can have a strong entry setup while still remaining Hold / Watchlist if valuation, profitability, or data quality are not supportive."
     )
 
 
@@ -558,7 +562,7 @@ def company_page(ticker: str) -> None:
     )
     section("Signal Center", "Transparent research score with factor breakdown, confidence, and missing-data warnings.")
     render_signal_summary(ticker, signal)
-    section("Entry Quality Signal")
+    section("Technical Entry Setup")
     render_entry_signal(ticker, quote, latest, options, signal)
     section("7D Options Metrics", "Nearest-expiry options are used when available; values are annualized IV converted to the expiry window.")
     seven = options.get("seven_day", {})
