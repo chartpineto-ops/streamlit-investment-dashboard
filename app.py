@@ -92,12 +92,20 @@ def reset_data_caches() -> None:
         fetch_news,
         fetch_sec_filings,
         fetch_latest_sec_filing,
+        fetch_latest_periodic_sec_filing,
         compute_signal,
     ):
         try:
             cached.clear()
         except Exception:
             pass
+
+
+def normalize_global_ticker_input() -> None:
+    normalized = clean_ticker(st.session_state.get("global_ticker_input", ""))
+    if normalized:
+        st.session_state["global_ticker_input"] = normalized
+        st.session_state["global_ticker"] = normalized
 
 
 def plotly_layout(fig: go.Figure, height: int = 340) -> go.Figure:
@@ -428,7 +436,7 @@ def render_latest_quarterly_release(financials: dict) -> None:
             ("Free Cash Flow", fmt_currency(release.get("free_cash_flow"), 1), "OCF less normalized capex", tone_for_number(release.get("free_cash_flow"))),
             ("Cash", fmt_currency(release.get("cash"), 1), "Nearest matching balance sheet", "neutral"),
             ("Total Debt", fmt_currency(release.get("total_debt"), 1), "Nearest matching balance sheet", "neutral"),
-            ("Source Status", status, release.get("period_alignment_status") or release.get("data_quality_note", ""), tone),
+            ("Source Status", status, release.get("source_status_reason") or release.get("period_alignment_status") or release.get("data_quality_note", ""), tone),
         ]
     )
     render_metric_grid(cards, columns=3, small=True)
@@ -440,6 +448,52 @@ def render_latest_quarterly_release(financials: dict) -> None:
     missing = release.get("missing_fields") or []
     if missing:
         st.caption("Missing fields: " + ", ".join(missing))
+
+
+def _reconciliation_display_value(metric: str, value) -> str:
+    if metric == "eps":
+        return fmt_eps(value)
+    if metric == "shares_outstanding":
+        return fmt_compact(value)
+    return fmt_currency(value, 1)
+
+
+def render_financial_reconciliation(financials: dict) -> None:
+    reconciliation = financials.get("reconciliation") or {}
+    if reconciliation.get("has_mismatch"):
+        st.warning("Financial period mismatch detected. Review reconciliation details.")
+    with st.expander("Financial Data Reconciliation"):
+        rows = reconciliation.get("rows") or []
+        if rows:
+            display_rows = []
+            for row in rows:
+                display_rows.append(
+                    {
+                        "Metric": row.get("Metric"),
+                        "Displayed Value": _reconciliation_display_value(row.get("metric"), row.get("value")),
+                        "Period": row.get("Period"),
+                        "Period End Date": row.get("Period End Date"),
+                        "Source": row.get("Source"),
+                        "Form": row.get("Form"),
+                        "Filed Date": row.get("Filed Date"),
+                        "Accession": row.get("Accession"),
+                        "Status": row.get("Status"),
+                        "Missing / Note": row.get("Missing / Note"),
+                    }
+                )
+            df_display(pd.DataFrame(display_rows), height=360)
+        else:
+            empty_state("No financial reconciliation rows available.")
+        checks = reconciliation.get("checks") or []
+        if checks:
+            st.markdown("#### Consistency Checks")
+            df_display(pd.DataFrame(checks), height=220)
+        missing_chart = reconciliation.get("missing_chart_fields") or []
+        if missing_chart:
+            st.info("Some chart periods have missing values: " + "; ".join(missing_chart))
+        margin_notes = reconciliation.get("margin_notes") or []
+        if margin_notes:
+            st.caption("Margin validation: " + " ".join(margin_notes))
 
 
 def render_price_chart(ticker: str) -> None:
@@ -604,6 +658,7 @@ def company_page(ticker: str) -> None:
     render_52w_position(quote)
     section("Latest Quarterly Release", "Newest available quarterly statement values plus latest SEC filing metadata where available.")
     render_latest_quarterly_release(financials)
+    render_financial_reconciliation(financials)
     section("Financial Summary")
     view = st.radio("Financial statement view", ["Quarterly", "Annual"], index=0, horizontal=True, key="company_financial_view")
     history = view_history(financials, view)
@@ -879,6 +934,7 @@ def data_health_page(ticker: str) -> None:
             {"Source": "Company identity / logo", "Status": identity.get("logo_status"), "Last Refresh": identity.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": identity.get("error", "")},
             {"Source": "Yahoo Finance/yfinance financials", "Status": financials.get("status"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(financials.get("missing_fields", [])), "Error": financials.get("error", "")},
             {"Source": "Latest quarterly release", "Status": latest_release.get("source_status"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("data_quality_note", "")},
+            {"Source": "Latest cards source", "Status": latest_release.get("source_status"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("reported_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("source_status_reason", "")},
             {"Source": "Yahoo Finance/yfinance options", "Status": opts.get("status"), "Last Refresh": opts.get("last_updated"), "Cache TTL": "30 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": opts.get("debug_error", "")},
             {"Source": "Yahoo Finance/RSS news", "Status": "OK" if not news.empty else "Partial", "Last Refresh": now_et(), "Cache TTL": "30 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
             {"Source": "SEC ticker-to-CIK mapping", "Status": cik_status.get("Status"), "Last Refresh": cik_status.get("Last Updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": cik_status.get("Error", "")},
@@ -888,6 +944,8 @@ def data_health_page(ticker: str) -> None:
             {"Source": "SEC structured value extraction", "Status": latest_release.get("sec_value_extraction_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("data_quality_note", "")},
             {"Source": "Period alignment", "Status": latest_release.get("period_alignment_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": latest_release.get("data_quality_note", "")},
             {"Source": "Financial chart source", "Status": financials.get("source_metadata", {}).get("chart_source_status", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": financials.get("source_metadata", {}).get("chart_source_note", "")},
+            {"Source": "Missing metric periods", "Status": "Partial" if reconciliation.get("missing_chart_fields") or reconciliation.get("missing_metric_periods") else "OK", "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "; ".join((reconciliation.get("missing_chart_fields") or []) + (reconciliation.get("missing_metric_periods") or [])), "Error": ""},
+            {"Source": "Margin calculation validity", "Status": financials.get("source_metadata", {}).get("margin_validity", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": " ".join(reconciliation.get("margin_notes", []))},
             {"Source": filing_status.get("Source"), "Status": filing_status.get("Status"), "Last Refresh": filing_status.get("Last Updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": filing_status.get("Error", "")},
             {"Source": "SQLite watchlist", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "Persistent local DB", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
             {"Source": "OpenAI API", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "OPENAI_API_KEY not configured" if openai_status == "Missing" else ""},
@@ -954,8 +1012,9 @@ def render_page(page: str, ticker: str) -> None:
 def main() -> None:
     st.sidebar.markdown("## Research Terminal 2.0")
     st.sidebar.caption("V1 MVP")
-    default_ticker = st.session_state.get("global_ticker", "IONQ")
-    ticker_input = st.sidebar.text_input("Global ticker", value=default_ticker, placeholder="IONQ")
+    if "global_ticker_input" not in st.session_state:
+        st.session_state["global_ticker_input"] = clean_ticker(st.session_state.get("global_ticker", "IONQ")) or "IONQ"
+    ticker_input = st.sidebar.text_input("Global ticker", placeholder="IONQ", key="global_ticker_input", on_change=normalize_global_ticker_input)
     ticker = clean_ticker(ticker_input) or "IONQ"
     st.session_state["global_ticker"] = ticker
     if st.sidebar.button("Refresh Data"):

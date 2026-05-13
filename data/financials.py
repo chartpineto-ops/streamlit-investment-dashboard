@@ -71,6 +71,70 @@ SEC_CONCEPTS = {
     ),
 }
 
+RECONCILIATION_METRICS = {
+    "revenue": "Revenue",
+    "gross_profit": "Gross Profit",
+    "operating_income": "Operating Income",
+    "net_income": "Net Income",
+    "eps": "EPS",
+    "operating_cash_flow": "Operating Cash Flow",
+    "capital_expenditures": "Capex",
+    "free_cash_flow": "Free Cash Flow",
+    "cash": "Cash",
+    "total_debt": "Total Debt",
+    "shares_outstanding": "Shares Outstanding",
+}
+
+INCOME_STATEMENT_METRICS = {"revenue", "gross_profit", "operating_income", "net_income", "eps"}
+BALANCE_SHEET_METRICS = {"cash", "total_debt", "shares_outstanding"}
+CASH_FLOW_METRICS = {"operating_cash_flow", "capital_expenditures", "free_cash_flow"}
+CHART_REQUIRED_METRICS = {"revenue": "Revenue", "eps": "EPS"}
+
+
+def _label_list(values: list[str], limit: int = 5) -> str:
+    cleaned = [str(value) for value in values if value]
+    if not cleaned:
+        return ""
+    if len(cleaned) <= limit:
+        return ", ".join(cleaned)
+    return ", ".join(cleaned[:limit]) + f", +{len(cleaned) - limit} more"
+
+
+def _date_label(value) -> str | None:
+    if value in (None, "", "N/A"):
+        return None
+    try:
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        return parsed.strftime("%Y-%m-%d")
+    except Exception:
+        return str(value)
+
+
+def _value_present(value) -> bool:
+    return to_float(value) is not None
+
+
+def _source_status_reason(source_status: str, values: dict, missing: list[str], source: str | None, note: str | None) -> str:
+    if source_status == "OK":
+        return "Core latest-quarter structured values are available and period-aligned."
+    if source_status == "Stale structured values":
+        return note or "Latest filing metadata is newer than the structured values currently available."
+    if source_status == "Filing metadata only":
+        return note or "Latest filing was detected, but structured values were unavailable."
+    if source_status == "Partial":
+        found = []
+        for key in ("revenue", "eps", "net_income", "cash", "operating_cash_flow"):
+            if _value_present(values.get(key)):
+                found.append(RECONCILIATION_METRICS.get(key, key))
+        missing_labels = [RECONCILIATION_METRICS.get(key, key) for key in missing or []]
+        found_text = _label_list(found) or "Some values"
+        missing_text = _label_list(missing_labels) or "some optional fields"
+        source_text = source or "structured source"
+        return f"{found_text} found from {source_text}; missing: {missing_text}."
+    return note or "Source returned incomplete or unavailable latest-quarter data."
+
 
 def _safe_margin(numerator, revenue) -> float | None:
     revenue_value = to_float(revenue)
@@ -512,6 +576,143 @@ def _chart_source_status(history: pd.DataFrame, latest_release: dict) -> dict:
     return {"label": label, "status": status, "note": note}
 
 
+def _financial_reconciliation(symbol: str, latest_release: dict, latest_row: dict, history: pd.DataFrame, chart_source: dict) -> dict:
+    chart_latest_period = None
+    chart_latest_period_end = None
+    chart_latest_source = chart_source.get("label") if chart_source else None
+    missing_chart_fields = []
+    if isinstance(history, pd.DataFrame) and not history.empty:
+        chart_row = history.iloc[-1].to_dict()
+        chart_latest_period = chart_row.get("period")
+        chart_latest_period_end = _date_label(chart_row.get("period_date"))
+        chart_latest_source = chart_row.get("structured_values_source") or chart_latest_source
+        for key, label in CHART_REQUIRED_METRICS.items():
+            missing_periods = []
+            if key in history:
+                missing_periods = [
+                    str(row.get("period") or _date_label(row.get("period_date")) or "Unknown period")
+                    for _, row in history[history[key].isna()].iterrows()
+                ]
+            elif len(history):
+                missing_periods = [str(row.get("period") or _date_label(row.get("period_date")) or "Unknown period") for _, row in history.iterrows()]
+            if missing_periods:
+                missing_chart_fields.append(f"{label}: {_label_list(missing_periods, 4)}")
+    values_period = latest_release.get("structured_values_period_label")
+    values_period_end = _date_label(latest_release.get("structured_values_period_end_date") or latest_release.get("structured_values_date") or latest_release.get("period_end_date"))
+    reported_period = latest_release.get("reported_period_label") or latest_release.get("period_label")
+    filing_period = latest_release.get("filing_period_label") or reported_period
+    source = latest_release.get("structured_values_source") or latest_release.get("source")
+    form = latest_release.get("form_type")
+    filed_date = _date_label(latest_release.get("filing_date") or latest_release.get("filing_or_release_date"))
+    accession = latest_release.get("accession_number")
+    rows = []
+    for key, label in RECONCILIATION_METRICS.items():
+        raw_value = latest_release.get(key)
+        metric_source = source
+        metric_period = values_period
+        metric_period_end = values_period_end
+        note = latest_release.get("source_status_reason") or latest_release.get("data_quality_note", "")
+        if key == "shares_outstanding":
+            raw_value = latest_release.get(key) if _value_present(latest_release.get(key)) else latest_row.get(key)
+            metric_source = "Quote metadata / latest provider"
+            metric_period = "Latest quote"
+            metric_period_end = None
+        elif not _value_present(raw_value):
+            metric_period = values_period or latest_row.get("period")
+            metric_period_end = values_period_end or _date_label(latest_row.get("period_date"))
+            note = f"{label} unavailable from {metric_source or 'structured source'}."
+        rows.append(
+            {
+                "metric": key,
+                "Metric": label,
+                "value": raw_value,
+                "Period": metric_period or "N/A",
+                "Period End Date": metric_period_end or "N/A",
+                "Source": metric_source or "N/A",
+                "Form": form or "N/A",
+                "Filed Date": filed_date or "N/A",
+                "Accession": accession or "N/A",
+                "Status": "OK" if _value_present(raw_value) else "Missing",
+                "Missing / Note": note,
+            }
+        )
+
+    checks = []
+
+    def add_check(name: str, passed: bool | None, note: str) -> None:
+        checks.append({"Check": name, "Status": "OK" if passed else "Warning" if passed is False else "N/A", "Note": note})
+
+    cards_period = values_period or reported_period
+    add_check(
+        "Latest cards period equals chart latest period",
+        None if not cards_period or not chart_latest_period else cards_period == chart_latest_period,
+        f"Cards: {cards_period or 'N/A'} | Chart: {chart_latest_period or 'N/A'}",
+    )
+    revenue_period = next((row["Period"] for row in rows if row["metric"] == "revenue" and row["Status"] == "OK"), None)
+    eps_period = next((row["Period"] for row in rows if row["metric"] == "eps" and row["Status"] == "OK"), None)
+    add_check(
+        "Revenue period equals EPS period",
+        None if not revenue_period or not eps_period else revenue_period == eps_period,
+        f"Revenue: {revenue_period or 'N/A'} | EPS: {eps_period or 'N/A'}",
+    )
+    income_periods = {row["Period"] for row in rows if row["metric"] in INCOME_STATEMENT_METRICS and row["Status"] == "OK"}
+    balance_periods = {row["Period"] for row in rows if row["metric"] in BALANCE_SHEET_METRICS and row["Status"] == "OK" and row["metric"] != "shares_outstanding"}
+    if income_periods and balance_periods:
+        add_check(
+            "Income statement period equals balance sheet period",
+            len(income_periods | balance_periods) == 1,
+            f"Income: {_label_list(sorted(income_periods))} | Balance sheet: {_label_list(sorted(balance_periods))}",
+        )
+    else:
+        add_check("Income statement period equals balance sheet period", None, "Insufficient income statement or balance sheet fields.")
+    comparison = compare_periods(filing_period, values_period)
+    add_check(
+        "Filing period is not older than structured values period",
+        None if comparison is None else comparison >= 0,
+        f"Filing/reported: {filing_period or 'N/A'} | Structured: {values_period or 'N/A'}",
+    )
+    period_end = _date_label(latest_release.get("period_end_date"))
+    add_check(
+        "Period end date is not filing date",
+        None if not period_end or not filed_date else period_end != filed_date,
+        f"Period end: {period_end or 'N/A'} | Filed: {filed_date or 'N/A'}",
+    )
+    margin_notes = []
+    revenue = to_float(latest_row.get("revenue"))
+    for metric, label in (("gross_profit", "Gross margin"), ("operating_income", "Operating margin"), ("net_income", "Net margin"), ("free_cash_flow", "FCF margin")):
+        numerator = to_float(latest_row.get(metric))
+        if revenue is None or abs(revenue) < MIN_MEANINGFUL_REVENUE:
+            margin_notes.append(f"{label}: N/A because revenue denominator is missing or too small.")
+        elif numerator is None:
+            margin_notes.append(f"{label}: N/A because numerator is missing.")
+        else:
+            margin = numerator / revenue * 100
+            if abs(margin) > 300:
+                margin_notes.append(f"{label}: NM because calculated margin is {margin:.1f}%.")
+    add_check(
+        "Margin calculations use same-period values",
+        True,
+        "Margins are calculated from the latest normalized row; extreme or unsupported margins are suppressed as NM/N/A.",
+    )
+    check_warnings = [check["Note"] for check in checks if check["Status"] == "Warning"]
+    warnings = list(check_warnings)
+    if missing_chart_fields:
+        warnings.append("Missing chart fields: " + "; ".join(missing_chart_fields))
+    return {
+        "ticker": symbol,
+        "rows": rows,
+        "checks": checks,
+        "has_mismatch": bool(check_warnings),
+        "warnings": warnings,
+        "missing_chart_fields": missing_chart_fields,
+        "missing_metric_periods": [row["Metric"] for row in rows if row["Status"] == "Missing"],
+        "margin_notes": margin_notes,
+        "chart_latest_period": chart_latest_period,
+        "chart_latest_period_end": chart_latest_period_end,
+        "chart_latest_source": chart_latest_source,
+    }
+
+
 def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_filing: dict, annual: bool = False) -> dict:
     updated = now_et()
     filing_label, sec_fiscal_year, sec_fiscal_period, period_end = _sec_period_label(sec_filing, annual)
@@ -546,6 +747,7 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
             "period_end_date": release_period_end,
             "missing_fields": ["quarterly financial statements"],
             "data_quality_note": note,
+            "source_status_reason": note,
             "last_updated": updated,
         }
         return _with_latest_period(symbol, release)
@@ -622,6 +824,7 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
         "accession_number": sec_filing.get("accession_number"),
         "missing_fields": missing,
         "data_quality_note": note,
+        "source_status_reason": _source_status_reason(source_status, values, missing, structured_source, note),
         "last_updated": updated,
     }
     return _with_latest_period(symbol, release)
@@ -757,13 +960,18 @@ def load_latest_company_financials(ticker: str) -> dict:
             revenue_estimate = pd.DataFrame()
         missing = []
         for key in ("revenue", "gross_profit", "gross_margin", "operating_income", "net_income", "cash", "total_debt", "operating_cash_flow"):
-            if latest.get(key) is None:
+            if to_float(latest.get(key)) is None:
                 missing.append(key)
         if missing:
             warnings.append("Missing latest quarterly fields: " + ", ".join(missing))
         if latest.get("revenue_yoy_base_effect"):
             warnings.append("Latest revenue growth may be not meaningful due to small-base effect.")
         chart_source = _chart_source_status(quarterly_history, latest_release)
+        reconciliation = _financial_reconciliation(symbol, latest_release, latest, quarterly_history, chart_source)
+        if reconciliation.get("warnings"):
+            warnings.extend(reconciliation.get("warnings", []))
+        if reconciliation.get("margin_notes"):
+            warnings.extend(reconciliation.get("margin_notes", []))
         status = status_from_warnings(warnings, required_ok=bool(not quarterly_history.empty or not annual_history.empty))
         return {
             "ticker": symbol,
@@ -794,14 +1002,22 @@ def load_latest_company_financials(ticker: str) -> dict:
             "source_metadata": {
                 "financials": "Mixed SEC XBRL/companyfacts + Yahoo Finance/yfinance quarterly and annual statements" if sec_values.get("has_values") else "Yahoo Finance/yfinance quarterly and annual statements",
                 "latest_release": latest_release.get("source"),
+                "latest_cards_source": latest_release.get("structured_values_source"),
+                "latest_cards_period": latest_release.get("structured_values_period_label"),
                 "sec_companyfacts": (sec_values.get("sec_companyfacts_status") or {}).get("Status"),
                 "sec_value_extraction": sec_values.get("sec_value_extraction_status"),
                 "chart_source": chart_source.get("label"),
                 "chart_source_status": chart_source.get("status"),
                 "chart_source_note": chart_source.get("note"),
+                "chart_latest_period": reconciliation.get("chart_latest_period"),
+                "chart_latest_period_end": reconciliation.get("chart_latest_period_end"),
+                "missing_chart_fields": reconciliation.get("missing_chart_fields", []),
+                "missing_metric_periods": reconciliation.get("missing_metric_periods", []),
+                "margin_validity": "Partial" if reconciliation.get("margin_notes") else "OK",
                 "earnings": earnings.get("source", "Yahoo Finance/yfinance financial statement fallback"),
                 "estimates": "Yahoo Finance/yfinance analyst estimate tables",
             },
+            "reconciliation": reconciliation,
             "validation_warnings": warnings,
             "missing_fields": missing,
             "last_updated": updated,
