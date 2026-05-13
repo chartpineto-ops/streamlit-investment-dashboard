@@ -399,19 +399,39 @@ def render_latest_quarterly_release(financials: dict) -> None:
         st.info("Latest quarterly release data unavailable for this ticker.")
         return
     status = release.get("source_status", "N/A")
-    tone = "good" if status == "OK" else "warn" if status in {"Partial", "Not applicable"} else "neutral" if status in {"Insufficient data", "Missing"} else "bad"
+    tone = (
+        "good"
+        if status == "OK"
+        else "warn"
+        if status in {"Partial", "Not applicable", "Stale structured values", "Filing metadata only"}
+        else "neutral"
+        if status in {"Insufficient data", "Missing"}
+        else "bad"
+    )
+    reported_period = str(release.get("reported_period_label") or release.get("period_label") or "N/A")
+    structured_period = release.get("structured_values_period_label")
+    show_structured_period = bool(structured_period and structured_period != reported_period and structured_period != "N/A")
     cards = [
-        ("Reported Period", str(release.get("period_label") or "N/A"), f"Form: {release.get('form_type') or 'N/A'}", "neutral"),
-        ("Release / Filing Date", fmt_date(release.get("filing_or_release_date")), release.get("source", "N/A"), "neutral"),
-        ("Revenue", fmt_currency(release.get("revenue"), 1), "Latest structured period", "neutral"),
-        ("EPS", fmt_eps(release.get("eps")), "N/A if unavailable", tone_for_number(release.get("eps"))),
-        ("Net Income", fmt_currency(release.get("net_income"), 1), "Latest structured period", tone_for_number(release.get("net_income"))),
-        ("Free Cash Flow", fmt_currency(release.get("free_cash_flow"), 1), "OCF less normalized capex", tone_for_number(release.get("free_cash_flow"))),
-        ("Cash", fmt_currency(release.get("cash"), 1), "Nearest matching balance sheet", "neutral"),
-        ("Total Debt", fmt_currency(release.get("total_debt"), 1), "Nearest matching balance sheet", "neutral"),
-        ("Source Status", status, release.get("data_quality_note", ""), tone),
+        ("Reported Period", reported_period, f"Form: {release.get('form_type') or 'N/A'}", "neutral"),
+        ("Release / Filing Date", fmt_date(release.get("filing_date") or release.get("filing_or_release_date")), release.get("source", "N/A"), "neutral"),
     ]
+    if show_structured_period:
+        cards.append(("Structured Values Period", str(structured_period), "Yahoo Finance quarterly statements", "warn"))
+    value_period_caption = f"Structured values period: {structured_period}" if show_structured_period else "Latest structured period"
+    cards.extend(
+        [
+            ("Revenue", fmt_currency(release.get("revenue"), 1), value_period_caption, "neutral"),
+            ("EPS", fmt_eps(release.get("eps")), "N/A if unavailable", tone_for_number(release.get("eps"))),
+            ("Net Income", fmt_currency(release.get("net_income"), 1), value_period_caption, tone_for_number(release.get("net_income"))),
+            ("Free Cash Flow", fmt_currency(release.get("free_cash_flow"), 1), "OCF less normalized capex", tone_for_number(release.get("free_cash_flow"))),
+            ("Cash", fmt_currency(release.get("cash"), 1), "Nearest matching balance sheet", "neutral"),
+            ("Total Debt", fmt_currency(release.get("total_debt"), 1), "Nearest matching balance sheet", "neutral"),
+            ("Source Status", status, release.get("period_alignment_status") or release.get("data_quality_note", ""), tone),
+        ]
+    )
     render_metric_grid(cards, columns=3, small=True)
+    if show_structured_period or release.get("period_alignment_status") == "Filing newer than structured values":
+        st.warning(release.get("data_quality_note") or f"Latest filing detected for {reported_period}; structured financial values may still reflect {structured_period}.")
     filing_url = release.get("filing_url")
     if filing_url:
         st.link_button("Open filing", filing_url)
@@ -881,6 +901,12 @@ def data_health_page(ticker: str) -> None:
                 "company_identity": identity,
                 "quote_error": quote.get("error"),
                 "latest_quarterly_release": latest_release,
+                "latest_filing_period": latest_release.get("filing_period_label"),
+                "structured_values_period": latest_release.get("structured_values_period_label"),
+                "period_alignment_status": latest_release.get("period_alignment_status"),
+                "latest_quarter_source_status": latest_release.get("source_status"),
+                "latest_quarter_missing_fields": latest_release.get("missing_fields", []),
+                "latest_quarter_last_error_summary": latest_release.get("data_quality_note"),
                 "financial_missing_fields": financials.get("missing_fields", []),
                 "financial_warnings": financials.get("validation_warnings", []),
                 "options_debug": opts,

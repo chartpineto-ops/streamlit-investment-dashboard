@@ -10,6 +10,57 @@ HEADERS = {"User-Agent": "Research Terminal 2.0 V1 contact@example.com"}
 RELEVANT_FORMS = {"10-Q", "10-K", "8-K", "6-K", "20-F"}
 
 
+def _value_at(values, index: int):
+    try:
+        value = values[index]
+        if value in ("", None):
+            return None
+        return value
+    except Exception:
+        return None
+
+
+def _quarter_from_report_date(report_date: str | None, form_type: str | None) -> str | None:
+    if not report_date:
+        return None
+    try:
+        ts = pd.Timestamp(report_date)
+    except Exception:
+        return None
+    if form_type in {"10-K", "20-F"}:
+        return "FY"
+    if form_type == "10-Q":
+        return f"Q{ts.quarter}"
+    return None
+
+
+def _filing_period_label(fiscal_year, fiscal_period, report_date, form_type: str | None) -> str | None:
+    year = None
+    try:
+        year = int(fiscal_year) if fiscal_year not in ("", None) else None
+    except Exception:
+        year = None
+    period = str(fiscal_period or "").strip().upper() or _quarter_from_report_date(report_date, form_type)
+    if period in {"1", "QTR1"}:
+        period = "Q1"
+    elif period in {"2", "QTR2"}:
+        period = "Q2"
+    elif period in {"3", "QTR3"}:
+        period = "Q3"
+    elif period in {"4", "QTR4"}:
+        period = "Q4"
+    elif period in {"YEAR", "Y"}:
+        period = "FY"
+    if year is None and report_date:
+        try:
+            year = pd.Timestamp(report_date).year
+        except Exception:
+            year = None
+    if year is None or not period:
+        return None
+    return f"{year} FY" if period == "FY" else f"{year} {period}"
+
+
 @st.cache_data(ttl=86_400, show_spinner=False)
 def ticker_to_cik(ticker: str) -> tuple[str | None, dict]:
     symbol = clean_ticker(ticker)
@@ -50,13 +101,14 @@ def fetch_latest_sec_filing(ticker: str) -> dict:
         payload = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json", headers=HEADERS, timeout=12).json()
         recent = payload.get("filings", {}).get("recent", {})
         rows = []
-        for form, filed, report, accession, doc in zip(
-            recent.get("form", []),
-            recent.get("filingDate", []),
-            recent.get("reportDate", []),
-            recent.get("accessionNumber", []),
-            recent.get("primaryDocument", []),
-        ):
+        forms = recent.get("form", [])
+        for index, form in enumerate(forms):
+            filed = _value_at(recent.get("filingDate", []), index)
+            report = _value_at(recent.get("reportDate", []), index)
+            accession = _value_at(recent.get("accessionNumber", []), index)
+            doc = _value_at(recent.get("primaryDocument", []), index)
+            fiscal_year = _value_at(recent.get("fiscalYear", []), index)
+            fiscal_period = _value_at(recent.get("fiscalPeriod", []), index)
             if form in RELEVANT_FORMS:
                 rows.append(
                     {
@@ -65,6 +117,10 @@ def fetch_latest_sec_filing(ticker: str) -> dict:
                         "form_type": form,
                         "filing_date": filed,
                         "report_date": report,
+                        "period_end_date": report,
+                        "fiscal_year": fiscal_year,
+                        "fiscal_period": fiscal_period or _quarter_from_report_date(report, form),
+                        "filing_period_label": _filing_period_label(fiscal_year, fiscal_period, report, form),
                         "accession_number": accession,
                         "primary_document": doc,
                         "filing_url": _filing_url(cik, accession, doc),
