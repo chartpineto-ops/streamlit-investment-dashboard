@@ -67,9 +67,9 @@ def quote_header(quote: dict) -> None:
         logo = f'<img src="{escape(str(logo_url))}" alt="{escape(ticker)} logo" onerror="this.style.display=\'none\'; this.parentNode.textContent=\'{escape(initials)}\';">'
     else:
         logo = escape(initials)
-    from utils.formatting import fmt_daily_move, fmt_price
+    from utils.formatting import fmt_percent, fmt_price
 
-    change_text = fmt_daily_move(change_pct) if change_pct is not None else "N/A"
+    change_text = fmt_percent(change_pct, decimals=2, signed=True) if change_pct is not None else "N/A"
     price_text = fmt_price(price)
     change_abs = f"{'+' if change > 0 else '-' if change < 0 else ''}{fmt_price(abs(change))}" if change is not None else ""
     st.markdown(

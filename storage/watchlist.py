@@ -8,7 +8,11 @@ import pandas as pd
 from data.market_data import DEFAULT_TICKERS, fetch_quote
 from signals.signal_engine import compute_signal
 from storage.db import connect, init_db
-from utils.formatting import clean_ticker, fmt_daily_move, fmt_price, now_et
+from utils.formatting import clean_ticker, fmt_percent, fmt_price, now_et
+
+
+def fmt_daily_move(value) -> str:
+    return fmt_percent(value, decimals=2, signed=True)
 
 
 def ensure_default_watchlist() -> None:

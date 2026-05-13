@@ -31,11 +31,8 @@ from utils.formatting import (
     clean_ticker,
     fmt_compact,
     fmt_currency,
-    fmt_daily_move,
     fmt_date,
     fmt_eps,
-    fmt_growth,
-    fmt_meaningful_percent,
     fmt_multiple,
     fmt_percent,
     fmt_price,
@@ -44,6 +41,28 @@ from utils.formatting import (
     tone_for_number,
     to_float,
 )
+
+
+def fmt_daily_move(value) -> str:
+    return fmt_percent(value, decimals=2, signed=True)
+
+
+def fmt_meaningful_percent(value, decimals: int = 1, signed: bool = False, nm_threshold: float = 300) -> str:
+    number = to_float(value)
+    if number is None:
+        return "N/A"
+    if abs(number) > nm_threshold:
+        return "NM"
+    return fmt_percent(number, decimals=decimals, signed=signed)
+
+
+def fmt_growth(value, base_effect: bool = False, signed: bool = True) -> str:
+    number = to_float(value)
+    if number is None:
+        return "N/A"
+    if base_effect or abs(number) > 500:
+        return "NM / base effect"
+    return fmt_percent(number, signed=signed)
 
 
 PAGES = [
