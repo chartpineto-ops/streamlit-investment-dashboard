@@ -67,10 +67,11 @@ def quote_header(quote: dict) -> None:
         logo = f'<img src="{escape(str(logo_url))}" alt="{escape(ticker)} logo" onerror="this.style.display=\'none\'; this.parentNode.textContent=\'{escape(initials)}\';">'
     else:
         logo = escape(initials)
-    from utils.formatting import fmt_percent, fmt_price
+    from utils.formatting import fmt_daily_move, fmt_price
 
-    change_text = fmt_percent(change_pct, signed=True) if change_pct is not None else "N/A"
+    change_text = fmt_daily_move(change_pct) if change_pct is not None else "N/A"
     price_text = fmt_price(price)
+    change_abs = f"{'+' if change > 0 else '-' if change < 0 else ''}{fmt_price(abs(change))}" if change is not None else ""
     st.markdown(
         f"""
         <div class="quote-card">
@@ -78,7 +79,7 @@ def quote_header(quote: dict) -> None:
           <div>
             <div class="quote-main">{escape(ticker)} <span class="{ {'good':'rt-good','bad':'rt-bad'}.get(tone, 'rt-neutral') }" style="font-size:1.05rem;">{escape(change_text)}</span></div>
             <div class="quote-sub">{escape(name)}</div>
-            <div class="quote-sub" style="color:#e8f2f4;">{escape(price_text)} <span class="rt-neutral">{escape(str(change) if change is not None else '')}</span></div>
+            <div class="quote-sub" style="color:#e8f2f4;">{escape(price_text)} <span class="rt-neutral">{escape(change_abs)}</span></div>
           </div>
         </div>
         """,

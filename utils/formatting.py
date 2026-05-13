@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from math import isfinite
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -21,9 +22,14 @@ def to_float(value) -> float | None:
     except Exception:
         pass
     try:
-        return float(value)
+        number = float(value)
+        return number if isfinite(number) else None
     except Exception:
         return None
+
+
+def is_missing(value) -> bool:
+    return to_float(value) is None if not isinstance(value, str) else value.strip() in {"", "N/A", "NM", "None", "nan"}
 
 
 def clean_ticker(value: str | None) -> str:
@@ -69,10 +75,40 @@ def fmt_percent(value, decimals: int = 1, signed: bool = False) -> str:
     return f"{prefix}{number:,.{decimals}f}%"
 
 
+def fmt_daily_move(value) -> str:
+    return fmt_percent(value, decimals=2, signed=True)
+
+
+def fmt_bps(value, signed: bool = True) -> str:
+    number = to_float(value)
+    if number is None:
+        return "N/A"
+    prefix = "+" if signed and number > 0 else ""
+    return f"{prefix}{number:,.0f} bps"
+
+
+def fmt_meaningful_percent(value, decimals: int = 1, signed: bool = False, nm_threshold: float = 300) -> str:
+    number = to_float(value)
+    if number is None:
+        return "N/A"
+    if abs(number) > nm_threshold:
+        return "NM"
+    return fmt_percent(number, decimals=decimals, signed=signed)
+
+
+def fmt_growth(value, base_effect: bool = False, signed: bool = True) -> str:
+    number = to_float(value)
+    if number is None:
+        return "N/A"
+    if base_effect or abs(number) > 500:
+        return "NM / base effect"
+    return fmt_percent(number, signed=signed)
+
+
 def fmt_multiple(value) -> str:
     number = to_float(value)
     if number is None or number <= 0:
-        return "N/A"
+        return "NM" if number is not None else "N/A"
     return f"{number:,.1f}x"
 
 
@@ -120,4 +156,3 @@ def as_percent_from_ratio(value) -> float | None:
     if number is None:
         return None
     return number * 100 if abs(number) <= 2 else number
-

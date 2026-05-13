@@ -1,20 +1,33 @@
-# Research Terminal 2.0 — V1 MVP
+# Research Terminal 2.0 - V1 MVP
 
 A Bloomberg-style personal investment research terminal built with Streamlit.
 
 V1 focuses on clean architecture, reliable fail-soft data flows, transparent scoring, SQLite-backed watchlists, in-app signal alerts, and optional OpenAI-powered due diligence summaries.
 
+## Current Tab Structure
+
+The cleanup pass consolidates the app into five primary tabs:
+
+1. Home / Market Monitor
+2. Company Analysis
+3. Watchlist
+4. AI Due Diligence
+5. Data Health / Settings
+
+Signal Center and Macro & Catalysts are now part of Company Analysis so a user can understand a company, its score, and recent catalysts in one workflow.
+
+Volatility Radar is now part of Watchlist so options/implied-move monitoring lives next to watchlist signals and alerts.
+
 ## Features
 
 - Dark market-terminal UI
 - Global ticker search
-- Home / Market Monitor with major ETF/index proxies
-- Company Analysis with quote, price chart, financials, valuation, balance sheet risk, filings, and options metrics
-- Transparent Signal Center with category scores and explainable strengths/weaknesses
+- Home / Market Monitor with SPY, QQQ, DIA, IWM, VIX, BTC-USD, and 10Y proxy
+- Company Analysis with quote, financials, valuation, balance sheet risk, filings, signal output, and catalysts
+- Transparent signal model with factor scores, confidence, strengths, weaknesses, and triggers
 - SQLite Watchlist with signal history and exact `Alert (D/D Change)` column
 - In-app alert center for signal/score/confidence changes
-- Volatility Radar with 7D and 30D implied move where options data exists
-- Macro & Catalysts headline view
+- Watchlist options monitor with 7D and 30D implied move where options data exists
 - AI Due Diligence memo generation when `OPENAI_API_KEY` is configured
 - Data Health / Settings panel
 
@@ -71,14 +84,48 @@ Weights:
 
 Signal labels:
 
-- `80–100`: Buy
-- `65–79`: Buy or Speculative Buy depending on risk
-- `45–64`: Hold / Watchlist
-- `25–44`: Sell / Trim
+- `80-100`: Buy
+- `65-79`: Buy or Speculative Buy depending on risk
+- `45-64`: Hold / Watchlist
+- `25-44`: Sell / Trim
 - `<25`: Avoid
 - Sparse data: No Rating / Insufficient Data
 
+Confidence is based on weighted data completeness and source quality:
+
+- High: 80%+ weighted inputs available, valuation present, and financials valid
+- Medium: 55-79% weighted inputs available
+- Low: less than 55% weighted inputs available or major source gaps
+
+Valuation and financial statement gaps reduce confidence. Momentum alone should not produce High confidence.
+
 Signals are research indicators only, not investment advice.
+
+## Financial Metric Quality
+
+V1 suppresses misleading extreme ratios:
+
+- Margins above 300% or below -300% are shown as `NM`
+- Margins with tiny revenue denominators are shown as `NM`
+- Revenue growth above 500% is shown as `NM / base effect`
+- Missing values show `N/A`
+- Not meaningful ratios show `NM`
+- Raw `NaN`, `None`, `inf`, and long floats should not appear in the UI
+
+Balance sheet risk now considers cash, debt, current ratio, free cash flow, debt/equity, and an approximate cash runway when FCF is negative. Cash greater than debt alone does not automatically mean Low risk.
+
+## Options Statuses
+
+The Watchlist options monitor uses friendlier statuses:
+
+- OK
+- No listed options
+- Options unavailable from source
+- No suitable expiration
+- No suitable ATM strike
+- Source error
+
+Raw provider exceptions are kept in debug/data-health areas instead of being the main user-facing status.
 
 ## Watchlist Alerts And D/D Change
 
@@ -108,7 +155,7 @@ Alert (D/D Change)
 python scripts/smoke_test.py
 ```
 
-The smoke test initializes SQLite, loads a quote, computes a signal, checks options handling, and verifies the watchlist alert column exists.
+The smoke test initializes SQLite, loads quotes, computes signals, checks options handling, verifies invalid ticker handling, and confirms the watchlist alert column exists.
 
 ## Known Limitations
 

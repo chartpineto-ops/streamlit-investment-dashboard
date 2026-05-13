@@ -8,7 +8,7 @@ import pandas as pd
 from data.market_data import DEFAULT_TICKERS, fetch_quote
 from signals.signal_engine import compute_signal
 from storage.db import connect, init_db
-from utils.formatting import clean_ticker, fmt_percent, fmt_price, now_et
+from utils.formatting import clean_ticker, fmt_daily_move, fmt_price, now_et
 
 
 def ensure_default_watchlist() -> None:
@@ -158,7 +158,7 @@ def refresh_watchlist() -> pd.DataFrame:
             {
                 "Ticker": ticker,
                 "Price": fmt_price(quote.get("price")),
-                "Daily Move": fmt_percent(quote.get("daily_change_pct"), signed=True),
+                "Daily Move": fmt_daily_move(quote.get("daily_change_pct")),
                 "Signal": signal.get("signal_label", "No Rating / Insufficient Data"),
                 "Score": signal.get("composite_score", "N/A"),
                 "Confidence": signal.get("confidence", "Low"),
@@ -179,7 +179,7 @@ def latest_watchlist_table() -> pd.DataFrame:
             {
                 "Ticker": ticker,
                 "Price": fmt_price(quote.get("price")),
-                "Daily Move": fmt_percent(quote.get("daily_change_pct"), signed=True),
+                "Daily Move": fmt_daily_move(quote.get("daily_change_pct")),
                 "Signal": prior.get("signal_label") if prior else "Not refreshed",
                 "Score": prior.get("composite_score") if prior else "N/A",
                 "Confidence": prior.get("confidence") if prior else "N/A",

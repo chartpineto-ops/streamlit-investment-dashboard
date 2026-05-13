@@ -31,8 +31,11 @@ from utils.formatting import (
     clean_ticker,
     fmt_compact,
     fmt_currency,
+    fmt_daily_move,
     fmt_date,
     fmt_eps,
+    fmt_growth,
+    fmt_meaningful_percent,
     fmt_multiple,
     fmt_percent,
     fmt_price,
@@ -46,10 +49,7 @@ from utils.formatting import (
 PAGES = [
     "Home / Market Monitor",
     "Company Analysis",
-    "Signal Center",
     "Watchlist",
-    "Volatility Radar",
-    "Macro & Catalysts",
     "AI Due Diligence",
     "Data Health / Settings",
 ]
@@ -96,7 +96,10 @@ def df_display(frame: pd.DataFrame, height: int = 320) -> None:
     if frame is None or frame.empty:
         empty_state("No data available.")
         return
-    st.dataframe(clean_dataframe(frame), use_container_width=True, hide_index=True, height=height)
+    config = {}
+    if "Link" in frame.columns:
+        config["Link"] = st.column_config.LinkColumn("Link", display_text="Open")
+    st.dataframe(clean_dataframe(frame), use_container_width=True, hide_index=True, height=height, column_config=config)
 
 
 def latest_row(financials: dict, view: str = "Quarterly") -> dict:
@@ -115,13 +118,25 @@ def balance_sheet_risk_label(latest: dict) -> tuple[str, str]:
     debt = to_float(latest.get("total_debt"))
     current_ratio = to_float(latest.get("current_ratio"))
     fcf = to_float(latest.get("free_cash_flow"))
+    equity = to_float(latest.get("shareholders_equity"))
     score = 50
+    if cash is None and debt is None:
+        return "Insufficient data", "neutral"
+    runway_years = cash / abs(fcf) if cash is not None and fcf is not None and fcf < 0 else None
+    if runway_years is not None:
+        if runway_years < 1:
+            return "High", "bad"
+        if runway_years < 2:
+            return "Elevated", "warn"
+        score -= 5
     if cash is not None and debt is not None:
-        score += 20 if cash >= debt else -20
+        score += 15 if cash >= debt else -20
     if current_ratio is not None:
         score += 15 if current_ratio >= 1.5 else -15 if current_ratio < 1 else 0
     if fcf is not None and fcf < 0:
         score -= 12
+    if debt is not None and equity is not None and equity > 0 and debt / equity > 2:
+        score -= 20
     if score >= 72:
         return "Low", "good"
     if score >= 52:
@@ -129,6 +144,98 @@ def balance_sheet_risk_label(latest: dict) -> tuple[str, str]:
     if score >= 35:
         return "Elevated", "warn"
     return "High", "bad"
+
+
+def cash_runway_caption(latest: dict) -> str:
+    cash = to_float(latest.get("cash"))
+    fcf = to_float(latest.get("free_cash_flow"))
+    if cash is not None and fcf is not None and fcf < 0:
+        years = cash / abs(fcf) if fcf else None
+        return f"Approx. {years:.1f} years runway" if years is not None else "Runway unavailable"
+    if fcf is not None and fcf >= 0:
+        return "FCF positive or breakeven"
+    return "Runway unavailable"
+
+
+def clean_news_table(news: pd.DataFrame) -> pd.DataFrame:
+    if news is None or news.empty:
+        return pd.DataFrame()
+    display = news.copy()
+    if "Published" in display:
+        display["Published"] = display["Published"].map(fmt_date)
+    display["Link"] = display.get("Link", "").map(lambda value: value if isinstance(value, str) and value.startswith("http") else None)
+    cols = [col for col in ["Headline", "Scope", "Tag", "Source", "Published", "Link"] if col in display]
+    return display[cols]
+
+
+def render_signal_summary(ticker: str, signal: dict) -> None:
+    label = signal.get("signal_label", "N/A")
+    score = signal.get("composite_score", 0)
+    confidence = signal.get("confidence", "Low")
+    tone = "good" if "Buy" in label else "bad" if label in {"Avoid", "Sell / Trim"} else "neutral"
+    render_metric_grid(
+        [
+            ("Composite Score", f"{score:.1f}/100" if isinstance(score, (int, float)) else "N/A", "Transparent factor model", tone_for_number(score)),
+            ("Signal Label", label, "Research signal, not investment advice", tone),
+            ("Confidence", confidence, f"{signal.get('data_completeness', 'N/A')}% weighted data completeness", "good" if confidence == "High" else "warn" if confidence == "Medium" else "neutral"),
+            ("Missing Data Warnings", str(len(signal.get("missing_data_warnings", []))), signal.get("data_quality_note", ""), "warn" if signal.get("missing_data_warnings") else "good"),
+        ],
+        columns=4,
+        small=True,
+    )
+    score_frame = pd.DataFrame(
+        [
+            ("Growth", signal.get("growth_score")),
+            ("Profitability / Margins", signal.get("profitability_score")),
+            ("Balance Sheet / Liquidity", signal.get("balance_sheet_score")),
+            ("Valuation", signal.get("valuation_score")),
+            ("Momentum / Technicals", signal.get("momentum_score")),
+            ("Catalysts / News", signal.get("catalyst_score")),
+        ],
+        columns=["Category", "Score"],
+    )
+    fig = go.Figure(go.Bar(x=score_frame["Category"], y=score_frame["Score"], marker_color="#7dd3fc", text=score_frame["Score"].round(1), textposition="outside", cliponaxis=False))
+    fig = plotly_layout(fig, height=330)
+    fig.update_yaxes(range=[0, 105], title="Score")
+    st.plotly_chart(fig, use_container_width=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("#### Strengths")
+        for item in signal.get("strengths", []):
+            st.success(item)
+        st.markdown("#### Upgrade Triggers")
+        for item in signal.get("upgrade_triggers", []):
+            st.write(f"- {item}")
+    with col2:
+        st.markdown("#### Weaknesses")
+        for item in signal.get("weaknesses", []):
+            st.warning(item)
+        st.markdown("#### Downgrade Triggers")
+        for item in signal.get("downgrade_triggers", []):
+            st.write(f"- {item}")
+
+
+def options_monitor_frame(tickers: list[str]) -> pd.DataFrame:
+    rows = []
+    for symbol in tickers:
+        quote = fetch_quote(symbol)
+        opts = fetch_options_summary(symbol, quote.get("price"))
+        seven = opts.get("seven_day", {})
+        thirty = opts.get("thirty_day", {})
+        rows.append(
+            {
+                "Ticker": symbol,
+                "Last Price": fmt_price(quote.get("price")),
+                "7D Implied Move": "+/-" + fmt_percent(seven.get("implied_move_pct")) if seven.get("implied_move_pct") is not None else "N/A",
+                "7D IV": fmt_percent(seven.get("annual_iv")),
+                "7D Expiry Used": fmt_date(seven.get("expiry")),
+                "30D Implied Move": "+/-" + fmt_percent(thirty.get("implied_move_pct")) if thirty.get("implied_move_pct") is not None else "N/A",
+                "30D IV": fmt_percent(thirty.get("annual_iv")),
+                "30D Expiry Used": fmt_date(thirty.get("expiry")),
+                "Options Status": opts.get("status", "N/A"),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def render_52w_position(quote: dict) -> None:
@@ -350,7 +457,9 @@ def home_page(ticker: str) -> None:
     snapshot, statuses = fetch_market_snapshot()
     cards = []
     for _, row in snapshot.iterrows():
-        cards.append((row["Ticker"], fmt_price(row["Last"]) if row["Ticker"] != "^TNX" else fmt_percent(row["Last"]), row["Name"], tone_for_number(row["Daily Move %"])))
+        value = fmt_percent(row["Last"], decimals=2) if row["Ticker"] == "^TNX" else fmt_price(row["Last"])
+        caption = f"{row['Name']} | {fmt_daily_move(row['Daily Move %'])}"
+        cards.append((row["Ticker"], value, caption, tone_for_number(row["Daily Move %"])))
     render_metric_grid(cards[:7], columns=7, small=True)
     source_line("Yahoo Finance/yfinance market snapshot", now_et(), "Delayed / cached")
     col1, col2 = st.columns([1.15, 1])
@@ -369,8 +478,8 @@ def home_page(ticker: str) -> None:
             df_display(news[["Headline", "Source", "Published", "Tag", "Link"]], height=360)
     section("Market Snapshot Table")
     display = snapshot.copy()
-    display["Last"] = display.apply(lambda r: fmt_percent(r["Last"]) if r["Ticker"] == "^TNX" else fmt_price(r["Last"]), axis=1)
-    display["Daily Move %"] = display["Daily Move %"].map(lambda x: fmt_percent(x, signed=True))
+    display["Last"] = display.apply(lambda r: fmt_percent(r["Last"], decimals=2) if r["Ticker"] == "^TNX" else fmt_price(r["Last"]), axis=1)
+    display["Daily Move %"] = display["Daily Move %"].map(fmt_daily_move)
     df_display(display, height=300)
 
 
@@ -387,6 +496,18 @@ def company_page(ticker: str) -> None:
     options = fetch_options_summary(ticker, quote.get("price"))
     quote_header(quote)
     source_line(financials.get("source_metadata", {}).get("financials", "Yahoo Finance/yfinance"), financials.get("last_updated"), financials.get("status"))
+    render_metric_grid(
+        [
+            ("Market Cap", fmt_currency(quote.get("market_cap"), 1), "Quote metadata", "neutral"),
+            ("Volume / Avg", f"{fmt_compact(quote.get('volume'))} / {fmt_compact(quote.get('average_volume'))}", "Latest daily volume", "neutral"),
+            ("Sector", str(quote.get("sector") or "N/A"), str(quote.get("industry") or "N/A"), "neutral"),
+            ("52W Range", f"{fmt_price(quote.get('fifty_two_week_low'))} - {fmt_price(quote.get('fifty_two_week_high'))}", "Latest provider range", "neutral"),
+        ],
+        columns=4,
+        small=True,
+    )
+    section("Signal Center", "Transparent research score with factor breakdown, confidence, and missing-data warnings.")
+    render_signal_summary(ticker, signal)
     section("Entry Quality Signal")
     render_entry_signal(ticker, quote, latest, options, signal)
     section("7D Options Metrics", "Nearest-expiry options are used when available; values are annualized IV converted to the expiry window.")
@@ -414,13 +535,13 @@ def company_page(ticker: str) -> None:
     render_metric_grid(
         [
             ("Revenue", fmt_currency(latest.get("revenue"), 1), period, "neutral"),
-            ("Revenue Growth", fmt_percent(latest.get("revenue_yoy_growth") if view == "Quarterly" else latest.get("revenue_qoq_growth"), signed=True), "YoY where available", tone_for_number(latest.get("revenue_yoy_growth"))),
-            ("Gross Margin", fmt_percent(latest.get("gross_margin")), period, tone_for_number(latest.get("gross_margin"))),
-            ("Operating Margin", fmt_percent(latest.get("operating_margin")), period, tone_for_number(latest.get("operating_margin"))),
-            ("Net Margin", fmt_percent(latest.get("net_margin")), period, tone_for_number(latest.get("net_margin"))),
+            ("Revenue Growth", fmt_growth(latest.get("revenue_yoy_growth") if view == "Quarterly" else latest.get("revenue_qoq_growth"), bool(latest.get("revenue_yoy_base_effect"))), "YoY where available; NM flags base effects", tone_for_number(latest.get("revenue_yoy_growth"))),
+            ("Gross Margin", fmt_meaningful_percent(latest.get("gross_margin")), period, tone_for_number(latest.get("gross_margin"))),
+            ("Operating Margin", fmt_meaningful_percent(latest.get("operating_margin")), period, tone_for_number(latest.get("operating_margin"))),
+            ("Net Margin", fmt_meaningful_percent(latest.get("net_margin")), period, tone_for_number(latest.get("net_margin"))),
             ("Free Cash Flow", fmt_currency(latest.get("free_cash_flow"), 1), period, tone_for_number(latest.get("free_cash_flow"))),
             ("Cash", fmt_currency(latest.get("cash"), 1), period, "neutral"),
-            ("Balance Sheet Risk", risk_label, "V1 liquidity heuristic", risk_tone),
+            ("Balance Sheet Risk", risk_label, cash_runway_caption(latest), risk_tone),
         ],
         columns=4,
     )
@@ -446,6 +567,21 @@ def company_page(ticker: str) -> None:
     filings, status = fetch_sec_filings(ticker)
     source_line(status.get("Source"), status.get("Last Updated"), status.get("Status"))
     df_display(filings, height=180)
+    section("News, Catalysts, And Macro Context", "Company-specific headlines are separated from broad market context where the source supports it.")
+    news, news_statuses = fetch_news(ticker, 24)
+    company_news = news[news.get("Scope", pd.Series(dtype=str)).eq("Company")] if not news.empty and "Scope" in news else pd.DataFrame()
+    macro_news = news[news.get("Scope", pd.Series(dtype=str)).eq("Macro")] if not news.empty and "Scope" in news else pd.DataFrame()
+    left, right = st.columns(2)
+    with left:
+        st.markdown("#### Company Headlines")
+        df_display(clean_news_table(company_news), height=300)
+    with right:
+        st.markdown("#### Macro / Market Headlines")
+        df_display(clean_news_table(macro_news), height=300)
+    macro, macro_status = fetch_macro_catalysts()
+    render_metric_grid([(row["Theme"], row["Status"], row["Catalyst"], "neutral") for _, row in macro.iterrows()], columns=3, small=True)
+    with st.expander("Catalyst source status"):
+        st.json({"news_sources": news_statuses, "macro_source": macro_status})
     with st.expander("Company Financials Data Validation"):
         st.json(
             {
@@ -509,9 +645,9 @@ def signal_page(ticker: str) -> None:
         st.json(signal)
 
 
-def watchlist_page() -> None:
+def watchlist_page(ticker: str) -> None:
     st.title("Watchlist")
-    st.markdown('<div class="terminal-subtitle">SQLite-backed watchlist with in-app signal-change alerts. Alerts update when the watchlist is refreshed.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="terminal-subtitle">SQLite watchlist, signal-change alerts, and options/volatility monitor.</div>', unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
         new_ticker = st.text_input("Add ticker", placeholder="CRWV")
@@ -544,6 +680,19 @@ def watchlist_page() -> None:
         if st.button("Dismiss Alert", disabled=dismiss_id <= 0):
             dismiss_alert(int(dismiss_id))
             st.rerun()
+    section("Volatility / Options Monitor", "Scans the selected ticker plus watchlist tickers. Missing options data is shown as a clean status, not a crash.")
+    watch = list_watchlist()
+    universe = [ticker] + [t for t in watch.get("ticker", pd.Series(dtype=str)).tolist() if t != ticker]
+    max_names = st.slider("Max tickers to scan", 5, 30, min(12, len(universe) or 12), step=1, key="watchlist_options_max")
+    with st.spinner("Loading options summaries..."):
+        df_display(options_monitor_frame(universe[:max_names]), height=460)
+    with st.expander("Options debug details"):
+        debug = []
+        for symbol in universe[:max_names]:
+            quote = fetch_quote(symbol)
+            opts = fetch_options_summary(symbol, quote.get("price"))
+            debug.append({"ticker": symbol, "status": opts.get("status"), "seven_day": opts.get("seven_day"), "thirty_day": opts.get("thirty_day")})
+        st.json(debug)
 
 
 def volatility_page(ticker: str) -> None:
@@ -627,14 +776,21 @@ def data_health_page(ticker: str) -> None:
     quote = fetch_quote(ticker)
     financials = load_latest_company_financials(ticker)
     opts = fetch_options_summary(ticker, quote.get("price"))
+    news, news_statuses = fetch_news(ticker, 8)
     filings, filing_status = fetch_sec_filings(ticker)
+    try:
+        openai_status = "OK" if st.secrets.get("OPENAI_API_KEY") else "Missing"
+    except Exception:
+        openai_status = "Missing"
     health = pd.DataFrame(
         [
             {"Source": "Yahoo Finance/yfinance quote", "Status": quote.get("status"), "Last Refresh": quote.get("last_updated"), "Cache TTL": "5 minutes", "Error": quote.get("error", "")},
             {"Source": "Yahoo Finance/yfinance financials", "Status": financials.get("status"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Error": financials.get("error", "")},
-            {"Source": "Yahoo Finance/yfinance options", "Status": opts.get("status"), "Last Refresh": opts.get("last_updated"), "Cache TTL": "30 minutes", "Error": opts.get("error", "")},
+            {"Source": "Yahoo Finance/yfinance options", "Status": opts.get("status"), "Last Refresh": opts.get("last_updated"), "Cache TTL": "30 minutes", "Error": opts.get("debug_error", "")},
+            {"Source": "Yahoo Finance/RSS news", "Status": "OK" if not news.empty else "Partial", "Last Refresh": now_et(), "Cache TTL": "30 minutes", "Error": ""},
             {"Source": filing_status.get("Source"), "Status": filing_status.get("Status"), "Last Refresh": filing_status.get("Last Updated"), "Cache TTL": "24 hours", "Error": filing_status.get("Error", "")},
             {"Source": "SQLite watchlist", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "Persistent local DB", "Error": ""},
+            {"Source": "OpenAI API", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "On demand", "Error": "OPENAI_API_KEY not configured" if openai_status == "Missing" else ""},
         ]
     )
     df_display(health, height=260)
@@ -656,6 +812,18 @@ def data_health_page(ticker: str) -> None:
         - Research signals are transparent indicators, not automatic trade instructions or investment advice.
         """
     )
+    with st.expander("Debug source diagnostics"):
+        st.json(
+            {
+                "selected_ticker": ticker,
+                "quote_error": quote.get("error"),
+                "financial_missing_fields": financials.get("missing_fields", []),
+                "financial_warnings": financials.get("validation_warnings", []),
+                "options_debug": opts,
+                "news_sources": news_statuses,
+                "filings_status": filing_status,
+            }
+        )
 
 
 def render_page(page: str, ticker: str) -> None:
@@ -664,14 +832,8 @@ def render_page(page: str, ticker: str) -> None:
             home_page(ticker)
         elif page == "Company Analysis":
             company_page(ticker)
-        elif page == "Signal Center":
-            signal_page(ticker)
         elif page == "Watchlist":
-            watchlist_page()
-        elif page == "Volatility Radar":
-            volatility_page(ticker)
-        elif page == "Macro & Catalysts":
-            macro_page(ticker)
+            watchlist_page(ticker)
         elif page == "AI Due Diligence":
             ai_due_diligence_page(ticker)
         elif page == "Data Health / Settings":

@@ -31,9 +31,14 @@ def _score_growth(latest: dict) -> tuple[float, list[str], list[str]]:
     growth = to_float(latest.get("revenue_yoy_growth") or latest.get("revenue_qoq_growth"))
     if growth is None:
         return 45, [], ["Revenue growth unavailable"]
+    base_effect = bool(latest.get("revenue_yoy_base_effect") or latest.get("revenue_qoq_base_effect") or abs(growth) > 500)
     score = 50 + min(max(growth, -50), 80) * 0.7
-    strengths = [f"Revenue growth is {growth:.1f}%"] if growth > 0 else []
+    if base_effect:
+        score = min(score, 62)
+    strengths = [f"Revenue growth is {growth:.1f}%"] if growth > 0 and not base_effect else []
     weaknesses = [f"Revenue growth is {growth:.1f}%"] if growth < 0 else []
+    if base_effect:
+        weaknesses.append("Revenue growth may be distorted by a small base")
     return _bounded(score), strengths, weaknesses
 
 
@@ -41,6 +46,8 @@ def _score_profitability(latest: dict) -> tuple[float, list[str], list[str]]:
     gross = to_float(latest.get("gross_margin"))
     op = to_float(latest.get("operating_margin"))
     net = to_float(latest.get("net_margin"))
+    fcf = to_float(latest.get("free_cash_flow"))
+    revenue = to_float(latest.get("revenue"))
     score = 40
     if gross is not None:
         score += min(max(gross, 0), 80) * 0.25
@@ -48,12 +55,22 @@ def _score_profitability(latest: dict) -> tuple[float, list[str], list[str]]:
         score += min(max(op, -40), 40) * 0.45
     if net is not None:
         score += min(max(net, -40), 40) * 0.30
+    if op is not None and op < 0:
+        score -= 10
+    if net is not None and net < 0:
+        score -= 10
+    if fcf is not None and fcf < 0:
+        score -= 10
     strengths = []
     weaknesses = []
     if op is not None and op > 15:
         strengths.append("Operating margin is healthy")
     if net is not None and net < 0:
         weaknesses.append("Net margin is negative")
+    if fcf is not None and fcf < 0:
+        weaknesses.append("Free cash flow is negative")
+    if revenue is not None and revenue < 1_000_000:
+        weaknesses.append("Margins may be not meaningful due to small revenue base")
     return _bounded(score), strengths, weaknesses
 
 
@@ -61,31 +78,51 @@ def _score_balance(latest: dict) -> tuple[float, list[str], list[str]]:
     cash = to_float(latest.get("cash"))
     debt = to_float(latest.get("total_debt"))
     current_ratio = to_float(latest.get("current_ratio"))
+    fcf = to_float(latest.get("free_cash_flow"))
+    equity = to_float(latest.get("shareholders_equity"))
     score = 50
     strengths = []
     weaknesses = []
+    runway_years = cash / abs(fcf) if cash is not None and fcf is not None and fcf < 0 else None
     if cash is not None and debt is not None:
         if cash >= debt:
-            score += 20
+            score += 12
             strengths.append("Cash is greater than total debt")
         else:
             score -= min(25, (debt - cash) / max(debt, 1) * 25)
             weaknesses.append("Debt exceeds cash")
+    if runway_years is not None:
+        if runway_years < 1:
+            score -= 35
+            weaknesses.append("Cash runway proxy is below 12 months")
+        elif runway_years < 2:
+            score -= 20
+            weaknesses.append("Cash runway proxy is 12-24 months")
+        else:
+            score -= 5
+            strengths.append("Cash runway proxy is above 24 months")
     if current_ratio is not None:
         score += 10 if current_ratio >= 1.5 else -10 if current_ratio < 1 else 0
+    if debt is not None and equity is not None and equity > 0 and debt / equity > 2:
+        score -= 15
+        weaknesses.append("Debt/equity is elevated")
     return _bounded(score), strengths, weaknesses
 
 
 def _score_valuation(quote: dict, latest: dict) -> tuple[float, list[str], list[str], str]:
     ps = to_float(quote.get("price_to_sales"))
+    ev_sales = to_float(quote.get("enterprise_value"))
+    revenue = to_float(latest.get("revenue"))
+    ev_to_sales = ev_sales / revenue if ev_sales is not None and revenue not in (None, 0) else None
     pe = to_float(quote.get("trailing_pe"))
     growth = to_float(latest.get("revenue_yoy_growth") or latest.get("revenue_qoq_growth"))
     profitable = to_float(latest.get("net_income")) is not None and to_float(latest.get("net_income")) > 0
-    if ps is None and pe is None:
+    if ps is None and pe is None and ev_to_sales is None:
         return 45, [], ["Valuation metrics unavailable"], "Not meaningful / insufficient data"
     if not profitable:
-        score = 65 - min((ps or 8) * 4, 45)
-        label = "Cheap" if ps is not None and ps < 3 else "Reasonable" if ps is not None and ps < 8 else "Expensive" if ps is not None and ps < 15 else "Very expensive"
+        sales_multiple = ps if ps is not None else ev_to_sales
+        score = 62 - min((sales_multiple or 8) * 4, 42)
+        label = "Cheap" if sales_multiple is not None and sales_multiple < 3 else "Reasonable" if sales_multiple is not None and sales_multiple < 8 else "Expensive" if sales_multiple is not None and sales_multiple < 15 else "Very expensive"
     else:
         score = 70 - min((pe or 30) * 0.8, 45)
         label = "Cheap" if pe is not None and pe < 15 else "Reasonable" if pe is not None and pe < 30 else "Expensive" if pe is not None and pe < 60 else "Very expensive"
@@ -138,12 +175,43 @@ def _score_catalysts(ticker: str) -> tuple[float, list[str], list[str]]:
     news, _ = fetch_news(ticker, 12)
     if news.empty:
         return 45, [], ["Recent catalyst data unavailable"]
-    negative_tags = news["Tag"].isin(["Financing/Dilution", "Regulation"]).sum()
-    positive_tags = news["Tag"].isin(["Earnings", "Product", "M&A", "Analyst"]).sum()
+    company_news = news[news.get("Scope", "Company").eq("Company")] if "Scope" in news else news
+    if company_news.empty:
+        return 48, [], ["No recent company-specific catalysts found"]
+    negative_tags = company_news["Tag"].isin(["Financing/Dilution", "Regulation"]).sum()
+    positive_tags = company_news["Tag"].isin(["Earnings", "Product", "M&A", "Analyst"]).sum()
     score = 50 + positive_tags * 4 - negative_tags * 6
     strengths = [f"{positive_tags} recent catalyst headline(s)"] if positive_tags else []
     weaknesses = [f"{negative_tags} risk-related headline(s)"] if negative_tags else []
     return _bounded(score), strengths, weaknesses
+
+
+def _weighted_data_completeness(quote: dict, latest: dict, financials: dict, technicals: dict) -> tuple[float, list[str]]:
+    required = {
+        "growth_score": ["revenue", "revenue_yoy_growth"],
+        "profitability_score": ["gross_margin", "operating_margin", "net_margin", "free_cash_flow"],
+        "balance_sheet_score": ["cash", "total_debt", "free_cash_flow", "current_ratio"],
+        "valuation_score": ["price_to_sales", "enterprise_value", "trailing_pe", "forward_pe"],
+        "momentum_score": ["price", "sma50", "sma200"],
+        "catalyst_score": ["news"],
+    }
+    sources = {**latest, **quote, **technicals}
+    missing = list(financials.get("missing_fields", []))
+    availability = {}
+    for category, fields in required.items():
+        present = 0
+        for field in fields:
+            if field == "news":
+                present += 1
+            elif to_float(sources.get(field)) is not None:
+                present += 1
+        availability[category] = present / len(fields)
+    completeness = sum(availability[key] * WEIGHTS[key] for key in WEIGHTS)
+    if availability["valuation_score"] < 0.35:
+        missing.append("valuation metrics")
+    if financials.get("status") in {"Partial", "Invalid", "Error"}:
+        missing.append(f"financials status: {financials.get('status')}")
+    return completeness, sorted(set(missing))
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -168,9 +236,9 @@ def compute_signal(ticker: str) -> dict:
         "momentum_score": momentum,
         "catalyst_score": catalysts,
     }
-    missing = list(financials.get("missing_fields", []))
+    completeness, missing = _weighted_data_completeness(quote, latest, financials, technicals)
     composite = sum(scores[key] * WEIGHTS[key] for key in WEIGHTS)
-    if len(missing) >= 5:
+    if completeness < 0.40 or len(missing) >= 7:
         label = "No Rating / Insufficient Data"
     elif composite >= 80:
         label = "Buy"
@@ -182,7 +250,12 @@ def compute_signal(ticker: str) -> dict:
         label = "Sell / Trim"
     else:
         label = "Avoid"
-    confidence = "High" if len(missing) <= 2 else "Medium" if len(missing) <= 5 else "Low"
+    if completeness >= 0.80 and "valuation metrics" not in missing and financials.get("status") == "Valid":
+        confidence = "High"
+    elif completeness >= 0.55:
+        confidence = "Medium"
+    else:
+        confidence = "Low"
     strengths = (s1 + s2 + s3 + s4 + s5 + s6)[:6]
     weaknesses = (w1 + w2 + w3 + w4 + w5 + w6 + [f"Missing {field}" for field in missing])[:8]
     return {
@@ -197,6 +270,8 @@ def compute_signal(ticker: str) -> dict:
         "upgrade_triggers": ["Revenue growth improves", "Margins expand", "Balance sheet risk declines", "Valuation multiple compresses"],
         "downgrade_triggers": ["Revenue growth decelerates", "Cash burn accelerates", "Debt rises", "Price breaks below key moving averages"],
         "missing_data_warnings": missing,
+        "data_completeness": round(completeness * 100, 1),
+        "data_quality_note": "Confidence is based on weighted availability of financial, valuation, balance sheet, momentum, and catalyst inputs.",
         "technicals": technicals,
         "financials_status": financials.get("status"),
         "source": "Transparent V1 scoring engine",
@@ -205,4 +280,3 @@ def compute_signal(ticker: str) -> dict:
 
 def signal_to_json(signal: dict) -> str:
     return json.dumps(signal, default=str)
-

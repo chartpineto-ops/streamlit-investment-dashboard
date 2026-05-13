@@ -33,6 +33,20 @@ def catalyst_tag(text: str) -> str:
     return "Other"
 
 
+def _published_value(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return pd.to_datetime(value, unit="s", utc=True)
+        except Exception:
+            return value
+    try:
+        return pd.to_datetime(value, utc=True, errors="coerce")
+    except Exception:
+        return value
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_news(ticker: str, limit: int = 20) -> tuple[pd.DataFrame, list[dict]]:
     symbol = clean_ticker(ticker)
@@ -46,7 +60,7 @@ def fetch_news(ticker: str, limit: int = 20) -> tuple[pd.DataFrame, list[dict]]:
                 link = item.get("link") or item.get("content", {}).get("canonicalUrl", {}).get("url")
                 provider = item.get("publisher") or item.get("content", {}).get("provider", {}).get("displayName")
                 published = item.get("providerPublishTime") or item.get("content", {}).get("pubDate")
-                rows.append({"Headline": title, "Source": provider or "Yahoo Finance", "Published": published, "Ticker": symbol, "Tag": catalyst_tag(str(title)), "Link": link})
+                rows.append({"Headline": title, "Source": provider or "Yahoo Finance", "Published": _published_value(published), "Ticker": symbol, "Scope": "Company", "Tag": catalyst_tag(str(title)), "Link": link, "Open": "Open" if link else ""})
             statuses.append({"Source": f"Yahoo Finance news {symbol}", "Status": "OK", "Last Updated": now_et(), "Error": ""})
         except Exception as exc:
             statuses.append({"Source": f"Yahoo Finance news {symbol}", "Status": "Error", "Last Updated": now_et(), "Error": str(exc)})
@@ -55,12 +69,13 @@ def fetch_news(ticker: str, limit: int = 20) -> tuple[pd.DataFrame, list[dict]]:
             feed = feedparser.parse(url)
             for entry in feed.entries[: max(3, limit // 3)]:
                 title = getattr(entry, "title", "")
-                if symbol and symbol not in title.upper():
-                    pass
-                rows.append({"Headline": title, "Source": source, "Published": getattr(entry, "published", ""), "Ticker": symbol or "", "Tag": catalyst_tag(title), "Link": getattr(entry, "link", "")})
+                scope = "Company" if symbol and symbol in title.upper() else "Macro"
+                rows.append({"Headline": title, "Source": source, "Published": _published_value(getattr(entry, "published", "")), "Ticker": symbol or "", "Scope": scope, "Tag": catalyst_tag(title), "Link": getattr(entry, "link", ""), "Open": "Open" if getattr(entry, "link", "") else ""})
             statuses.append({"Source": source, "Status": "OK", "Last Updated": now_et(), "Error": ""})
         except Exception as exc:
             statuses.append({"Source": source, "Status": "Error", "Last Updated": now_et(), "Error": str(exc)})
-    frame = pd.DataFrame(rows).dropna(subset=["Headline"]).drop_duplicates(subset=["Headline"]).head(limit)
+    frame = pd.DataFrame(rows).dropna(subset=["Headline"]).drop_duplicates(subset=["Headline"])
+    if not frame.empty and "Published" in frame:
+        frame = frame.sort_values("Published", ascending=False, na_position="last")
+    frame = frame.head(limit)
     return frame, statuses
-

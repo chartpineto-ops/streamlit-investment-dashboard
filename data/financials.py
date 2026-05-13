@@ -32,6 +32,17 @@ FIELD_MAP = {
     "cash_change": ("Changes In Cash", "Net Change In Cash"),
 }
 
+MIN_MEANINGFUL_REVENUE = 1_000_000
+
+
+def _safe_margin(numerator, revenue) -> float | None:
+    revenue_value = to_float(revenue)
+    numerator_value = to_float(numerator)
+    if revenue_value is None or numerator_value is None or abs(revenue_value) < MIN_MEANINGFUL_REVENUE:
+        return None
+    margin = numerator_value / revenue_value * 100
+    return margin if abs(margin) <= 300 else None
+
 
 def _statement(obj: yf.Ticker, names: tuple[str, ...]) -> pd.DataFrame:
     for name in names:
@@ -91,18 +102,22 @@ def _normalize_history(income: pd.DataFrame, balance: pd.DataFrame, cashflow: pd
             row[key] = _line(source, period, aliases)
         if row.get("free_cash_flow") is None and row.get("operating_cash_flow") is not None and row.get("capital_expenditures") is not None:
             row["free_cash_flow"] = row["operating_cash_flow"] - abs(row["capital_expenditures"])
-        row["gross_margin"] = safe_div(row.get("gross_profit"), row.get("revenue"), 100)
-        row["operating_margin"] = safe_div(row.get("operating_income"), row.get("revenue"), 100)
-        row["net_margin"] = safe_div(row.get("net_income"), row.get("revenue"), 100)
-        row["fcf_margin"] = safe_div(row.get("free_cash_flow"), row.get("revenue"), 100)
+        row["gross_margin"] = _safe_margin(row.get("gross_profit"), row.get("revenue"))
+        row["operating_margin"] = _safe_margin(row.get("operating_income"), row.get("revenue"))
+        row["net_margin"] = _safe_margin(row.get("net_income"), row.get("revenue"))
+        row["fcf_margin"] = _safe_margin(row.get("free_cash_flow"), row.get("revenue"))
         row["current_ratio"] = safe_div(row.get("current_assets"), row.get("current_liabilities"), 1)
         row["debt_to_equity"] = safe_div(row.get("total_debt"), row.get("shareholders_equity"), 1)
         row["net_debt"] = row["total_debt"] - row["cash"] if row.get("total_debt") is not None and row.get("cash") is not None else None
         rows.append(row)
     frame = pd.DataFrame(rows).sort_values("period_date") if rows else pd.DataFrame()
     if not frame.empty:
+        frame["prior_revenue_for_yoy"] = frame["revenue"].shift(4 if quarterly else 1)
+        frame["prior_revenue_for_qoq"] = frame["revenue"].shift(1)
         frame["revenue_yoy_growth"] = frame["revenue"].pct_change(4 if quarterly else 1, fill_method=None) * 100
         frame["revenue_qoq_growth"] = frame["revenue"].pct_change(1, fill_method=None) * 100
+        frame["revenue_yoy_base_effect"] = (frame["prior_revenue_for_yoy"].abs() < MIN_MEANINGFUL_REVENUE) | (frame["revenue_yoy_growth"].abs() > 500)
+        frame["revenue_qoq_base_effect"] = (frame["prior_revenue_for_qoq"].abs() < MIN_MEANINGFUL_REVENUE) | (frame["revenue_qoq_growth"].abs() > 500)
         frame["eps_yoy_growth"] = frame["eps"].pct_change(4 if quarterly else 1, fill_method=None) * 100
         frame["eps_qoq_growth"] = frame["eps"].pct_change(1, fill_method=None) * 100
     return frame
@@ -176,11 +191,13 @@ def load_latest_company_financials(ticker: str) -> dict:
         except Exception:
             revenue_estimate = pd.DataFrame()
         missing = []
-        for key in ("revenue", "gross_profit", "operating_income", "net_income", "cash", "total_debt", "operating_cash_flow"):
+        for key in ("revenue", "gross_profit", "gross_margin", "operating_income", "net_income", "cash", "total_debt", "operating_cash_flow"):
             if latest.get(key) is None:
                 missing.append(key)
         if missing:
             warnings.append("Missing latest quarterly fields: " + ", ".join(missing))
+        if latest.get("revenue_yoy_base_effect"):
+            warnings.append("Latest revenue growth may be not meaningful due to small-base effect.")
         status = status_from_warnings(warnings, required_ok=bool(not quarterly_history.empty or not annual_history.empty))
         return {
             "ticker": symbol,

@@ -14,22 +14,24 @@ from signals.signal_engine import compute_signal
 from storage.db import init_db
 from storage.watchlist import add_ticker, latest_watchlist_table, list_watchlist
 
+TEST_TICKERS = ["POET", "CRWV", "IONQ", "AMPX", "NVDA", "SPY", "FBTC", "VOLT", "INVALIDTICKER"]
+
 
 def main() -> None:
     init_db()
     add_ticker("SPY")
-    quote = fetch_quote("SPY")
-    signal = compute_signal("SPY")
-    financials = load_latest_company_financials("SPY")
-    options = fetch_options_summary("SPY", quote.get("price"))
-    invalid = fetch_quote("NOTAREALTICKERXYZ")
+    for ticker in TEST_TICKERS:
+        quote = fetch_quote(ticker)
+        signal = compute_signal(ticker)
+        financials = load_latest_company_financials(ticker)
+        options = fetch_options_summary(ticker, quote.get("price"))
+        assert isinstance(quote, dict)
+        assert "signal_label" in signal
+        assert "confidence" in signal
+        assert isinstance(financials, dict)
+        assert isinstance(options, dict)
     watch = list_watchlist()
     latest = latest_watchlist_table()
-    assert isinstance(quote, dict)
-    assert "signal_label" in signal
-    assert isinstance(financials, dict)
-    assert isinstance(options, dict)
-    assert isinstance(invalid, dict)
     assert "ticker" in watch.columns
     assert "Alert (D/D Change)" in latest.columns
     print("Research Terminal V1 smoke test completed.")
