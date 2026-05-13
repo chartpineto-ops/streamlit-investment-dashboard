@@ -10,7 +10,7 @@ import streamlit as st
 from ai.dd_generator import build_research_packet, generate_dd_memo, openai_key_from_secrets
 from data.company_identity import get_company_identity
 from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_filing, fetch_sec_filings, ticker_to_cik
-from data.financials import get_latest_quarterly_release, load_latest_company_financials, view_history
+from data.financials import build_three_statement_visual_data, get_latest_quarterly_release, load_latest_company_financials, view_history
 from data.macro import fetch_macro_catalysts
 from data.market_data import DEFAULT_TICKERS, fetch_history, fetch_market_snapshot, fetch_quote
 from data.news import fetch_news
@@ -35,6 +35,7 @@ from utils.formatting import (
     fmt_date,
     fmt_eps,
     fmt_multiple,
+    fmt_number,
     fmt_percent,
     fmt_price,
     now_et,
@@ -583,6 +584,136 @@ def render_statement_table(latest: dict) -> None:
     df_display(pd.DataFrame(rows, columns=["Statement", "Metric", "Latest Value"]), height=420)
 
 
+def _statement_tone(value) -> str:
+    number = to_float(value)
+    if number is None:
+        return "neutral"
+    if number < 0:
+        return "bad"
+    if number > 0:
+        return "good"
+    return "neutral"
+
+
+def _status_tone(status: str) -> str:
+    if status in {"Complete", "Profitable", "Cash-rich", "FCF positive", "OK"}:
+        return "good"
+    if status in {"Partial data", "Unprofitable", "Burning cash", "Net debt", "Partial"}:
+        return "warn"
+    if status in {"Insufficient data", "Debt data unavailable", "Source error", "Error"}:
+        return "bad"
+    return "neutral"
+
+
+def _compact_bar_chart(title: str, labels: list[str], values: list[float | None], *, currency: bool = True, height: int = 220) -> None:
+    rows = [(label, to_float(value)) for label, value in zip(labels, values) if to_float(value) is not None]
+    if not rows:
+        empty_state(f"{title} unavailable.")
+        return
+    y_labels = [row[0] for row in rows]
+    x_values = [row[1] for row in rows]
+    colors = ["#7bd88f" if value >= 0 else "#f87171" for value in x_values]
+    fig = go.Figure(
+        go.Bar(
+            x=x_values,
+            y=y_labels,
+            orientation="h",
+            marker_color=colors,
+            text=[fmt_currency(value, 1) if currency else fmt_number(value, 1) for value in x_values],
+            textposition="auto",
+            cliponaxis=False,
+            hovertemplate="%{y}: %{text}<extra></extra>",
+        )
+    )
+    fig = plotly_layout(fig, height=height)
+    fig.update_layout(showlegend=False, margin={"l": 112, "r": 20, "t": 18, "b": 28})
+    fig.update_xaxes(zeroline=True, zerolinecolor="#5b7782")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_three_statement_visual(ticker: str, financials: dict) -> None:
+    visual = build_three_statement_visual_data(ticker, financials)
+    income = visual.get("income_statement", {})
+    balance = visual.get("balance_sheet", {})
+    cash_flow = visual.get("cash_flow", {})
+    health = visual.get("health_summary", {})
+    render_metric_grid(
+        [
+            ("Reported Period", str(visual.get("reported_period") or "N/A"), "Latest quarterly release basis", "neutral"),
+            ("Period End Date", fmt_date(visual.get("period_end_date")), "Not filing date", "neutral"),
+            ("Source", str(visual.get("source") or "N/A"), str(visual.get("source_status") or "N/A"), _status_tone(str(visual.get("source_status") or ""))),
+        ],
+        columns=3,
+        small=True,
+    )
+    if visual.get("missing_fields") or str(visual.get("source_status")) == "Partial":
+        st.caption("Some values are unavailable or sourced from a fallback provider. Review the detailed table for source alignment.")
+    col_income, col_balance, col_cash = st.columns(3)
+    with col_income:
+        st.markdown("#### Income Statement")
+        render_metric_grid(
+            [
+                ("Revenue", fmt_currency(income.get("revenue"), 1), "Top line", "neutral"),
+                ("Gross Profit", fmt_currency(income.get("gross_profit"), 1), "After cost of revenue", _statement_tone(income.get("gross_profit"))),
+                ("Operating Income", fmt_currency(income.get("operating_income"), 1), "Operating result", _statement_tone(income.get("operating_income"))),
+                ("Net Income", fmt_currency(income.get("net_income"), 1), "Bottom line", _statement_tone(income.get("net_income"))),
+                ("EPS", fmt_eps(income.get("eps")), "Per diluted share where available", _statement_tone(income.get("eps"))),
+            ],
+            columns=1,
+            small=True,
+        )
+        _compact_bar_chart(
+            "Income Statement Flow",
+            ["Revenue", "Gross Profit", "Operating Income", "Net Income"],
+            [income.get("revenue"), income.get("gross_profit"), income.get("operating_income"), income.get("net_income")],
+        )
+    with col_balance:
+        st.markdown("#### Balance Sheet")
+        net_cash = balance.get("net_cash_or_debt")
+        render_metric_grid(
+            [
+                ("Cash & Equivalents", fmt_currency(balance.get("cash"), 1), "Latest matching balance sheet", "neutral"),
+                ("Total Debt", fmt_currency(balance.get("total_debt"), 1), "Debt data unavailable if N/A", "warn" if balance.get("total_debt") is None else "neutral"),
+                ("Net Cash / Debt", fmt_currency(net_cash, 1), "Cash less debt", _statement_tone(net_cash)),
+                ("Total Assets", fmt_currency(balance.get("total_assets"), 1), "Latest matching balance sheet", "neutral"),
+                ("Shareholders' Equity", fmt_currency(balance.get("shareholders_equity"), 1), "Book equity", _statement_tone(balance.get("shareholders_equity"))),
+            ],
+            columns=1,
+            small=True,
+        )
+        if balance.get("total_debt") is None:
+            st.caption("Debt data unavailable.")
+        _compact_bar_chart("Cash vs Debt", ["Cash", "Total Debt"], [balance.get("cash"), balance.get("total_debt")])
+    with col_cash:
+        st.markdown("#### Cash Flow")
+        runway = cash_flow.get("cash_runway")
+        runway_text = f"Approx. {runway:.1f} quarter(s)" if runway is not None else "N/A"
+        render_metric_grid(
+            [
+                ("Operating Cash Flow", fmt_currency(cash_flow.get("operating_cash_flow"), 1), "Cash from operations", _statement_tone(cash_flow.get("operating_cash_flow"))),
+                ("Capital Expenditures", fmt_currency(cash_flow.get("capex"), 1), "Normalized as cash outflow", _statement_tone(cash_flow.get("capex"))),
+                ("Free Cash Flow", fmt_currency(cash_flow.get("free_cash_flow"), 1), "OCF less capex outflow", _statement_tone(cash_flow.get("free_cash_flow"))),
+                ("Cash Runway", runway_text, "Approximation from latest quarterly FCF", "warn" if runway is not None and runway < 4 else "neutral"),
+            ],
+            columns=1,
+            small=True,
+        )
+        _compact_bar_chart("OCF To FCF Bridge", ["Operating CF", "Capex", "Free CF"], [cash_flow.get("operating_cash_flow"), cash_flow.get("capex"), cash_flow.get("free_cash_flow")])
+    st.markdown("#### 3-Statement Health Summary")
+    render_metric_grid(
+        [
+            ("Profitability", health.get("profitability_status", "N/A"), "Net income based", _status_tone(health.get("profitability_status", ""))),
+            ("Liquidity", health.get("liquidity_status", "N/A"), "Cash vs debt", _status_tone(health.get("liquidity_status", ""))),
+            ("Cash Burn", health.get("cash_burn_status", "N/A"), "Free cash flow based", _status_tone(health.get("cash_burn_status", ""))),
+            ("Data Completeness", health.get("data_completeness_status", "N/A"), visual.get("data_quality_note") or "Latest-quarter fields", _status_tone(health.get("data_completeness_status", ""))),
+        ],
+        columns=4,
+        small=True,
+    )
+    with st.expander("Detailed 3-Statement Table"):
+        render_statement_table(financials.get("latest_financials") or {})
+
+
 def home_page(ticker: str) -> None:
     st.title("Research Terminal 2.0")
     st.markdown('<div class="terminal-subtitle">Bloomberg-style V1 personal investment research terminal.</div>', unsafe_allow_html=True)
@@ -678,8 +809,8 @@ def company_page(ticker: str) -> None:
         ],
         columns=4,
     )
-    section("3-Statement Analysis", "Latest normalized statement metrics for the selected view.")
-    render_statement_table(latest)
+    section("3-Statement Analysis", "Visual latest-quarter view tying income statement, balance sheet, and cash flow together.")
+    render_three_statement_visual(ticker, financials)
     section("Revenue, EPS, And Margins")
     render_financial_charts(
         history,

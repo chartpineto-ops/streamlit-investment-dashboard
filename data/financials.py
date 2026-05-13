@@ -1026,5 +1026,85 @@ def load_latest_company_financials(ticker: str) -> dict:
         return {"ticker": symbol, "status": "Error", "error": str(exc), "validation_warnings": [str(exc)], "last_updated": updated}
 
 
+def _cash_runway(latest: dict) -> float | None:
+    cash = to_float(latest.get("cash"))
+    fcf = to_float(latest.get("free_cash_flow"))
+    if cash is None or fcf is None or fcf >= 0:
+        return None
+    return cash / abs(fcf) if fcf else None
+
+
+def build_three_statement_visual_data(ticker: str, financials: dict | None = None) -> dict:
+    symbol = clean_ticker(ticker)
+    data = financials or load_latest_company_financials(symbol)
+    latest = data.get("latest_financials") or {}
+    release = data.get("latest_quarterly_release") or {}
+    reconciliation = data.get("reconciliation") or {}
+    source_metadata = data.get("source_metadata") or {}
+    reported_period = release.get("reported_period_label") or latest.get("period") or "N/A"
+    period_end = _date_label(release.get("period_end_date") or latest.get("period_date"))
+    source = release.get("structured_values_source") or release.get("source") or source_metadata.get("financials") or "N/A"
+    source_status = release.get("source_status") or data.get("status") or "N/A"
+    income_statement = {
+        "revenue": to_float(release.get("revenue")) if _value_present(release.get("revenue")) else to_float(latest.get("revenue")),
+        "gross_profit": to_float(release.get("gross_profit")) if _value_present(release.get("gross_profit")) else to_float(latest.get("gross_profit")),
+        "operating_income": to_float(release.get("operating_income")) if _value_present(release.get("operating_income")) else to_float(latest.get("operating_income")),
+        "net_income": to_float(release.get("net_income")) if _value_present(release.get("net_income")) else to_float(latest.get("net_income")),
+        "eps": to_float(release.get("eps")) if _value_present(release.get("eps")) else to_float(latest.get("eps")),
+    }
+    total_debt = to_float(release.get("total_debt")) if _value_present(release.get("total_debt")) else to_float(latest.get("total_debt"))
+    cash = to_float(release.get("cash")) if _value_present(release.get("cash")) else to_float(latest.get("cash"))
+    balance_sheet = {
+        "cash": cash,
+        "total_debt": total_debt,
+        "net_cash_or_debt": cash - total_debt if cash is not None and total_debt is not None else None,
+        "total_assets": to_float(latest.get("total_assets")),
+        "shareholders_equity": to_float(latest.get("shareholders_equity")),
+    }
+    operating_cash_flow = to_float(release.get("operating_cash_flow")) if _value_present(release.get("operating_cash_flow")) else to_float(latest.get("operating_cash_flow"))
+    capex_raw = to_float(release.get("capital_expenditures")) if _value_present(release.get("capital_expenditures")) else to_float(latest.get("capital_expenditures"))
+    capex_outflow = -abs(capex_raw) if capex_raw is not None else None
+    free_cash_flow = (
+        operating_cash_flow + capex_outflow
+        if operating_cash_flow is not None and capex_outflow is not None
+        else to_float(release.get("free_cash_flow")) if _value_present(release.get("free_cash_flow")) else to_float(latest.get("free_cash_flow"))
+    )
+    cash_flow = {
+        "operating_cash_flow": operating_cash_flow,
+        "capex": capex_outflow,
+        "free_cash_flow": free_cash_flow,
+        "cash_runway": _cash_runway({"cash": cash, "free_cash_flow": free_cash_flow}),
+    }
+    missing_fields = []
+    for group in (income_statement, balance_sheet, cash_flow):
+        for key, value in group.items():
+            if key == "cash_runway" and free_cash_flow is not None and free_cash_flow >= 0:
+                continue
+            if value is None:
+                missing_fields.append(key)
+    net_income = income_statement.get("net_income")
+    fcf = cash_flow.get("free_cash_flow")
+    health_summary = {
+        "profitability_status": "Profitable" if net_income is not None and net_income > 0 else "Unprofitable" if net_income is not None and net_income < 0 else "Insufficient data",
+        "liquidity_status": "Cash-rich" if cash is not None and total_debt is not None and cash >= total_debt else "Net debt" if cash is not None and total_debt is not None else "Debt data unavailable",
+        "cash_burn_status": "FCF positive" if fcf is not None and fcf >= 0 else "Burning cash" if fcf is not None else "Insufficient data",
+        "data_completeness_status": "Complete" if not missing_fields else "Partial data" if len(missing_fields) <= 5 else "Insufficient data",
+    }
+    return {
+        "ticker": symbol,
+        "reported_period": reported_period,
+        "period_end_date": period_end,
+        "source": source,
+        "source_status": source_status,
+        "income_statement": income_statement,
+        "balance_sheet": balance_sheet,
+        "cash_flow": cash_flow,
+        "health_summary": health_summary,
+        "missing_fields": missing_fields,
+        "data_quality_note": release.get("source_status_reason") or release.get("data_quality_note") or source_metadata.get("chart_source_note"),
+        "reconciliation": reconciliation,
+    }
+
+
 def view_history(financials: dict, view: str) -> pd.DataFrame:
     return financials.get("annual_history" if view == "Annual" else "quarterly_history", pd.DataFrame())
