@@ -8,8 +8,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ai.dd_generator import build_research_packet, generate_dd_memo, openai_key_from_secrets
-from data.filings import fetch_sec_filings
-from data.financials import load_latest_company_financials, view_history
+from data.company_identity import get_company_identity
+from data.filings import fetch_latest_sec_filing, fetch_sec_filings, ticker_to_cik
+from data.financials import get_latest_quarterly_release, load_latest_company_financials, view_history
 from data.macro import fetch_macro_catalysts
 from data.market_data import DEFAULT_TICKERS, fetch_history, fetch_market_snapshot, fetch_quote
 from data.news import fetch_news
@@ -85,9 +86,12 @@ def reset_data_caches() -> None:
         fetch_history,
         fetch_market_snapshot,
         load_latest_company_financials,
+        get_latest_quarterly_release,
+        get_company_identity,
         fetch_options_summary,
         fetch_news,
         fetch_sec_filings,
+        fetch_latest_sec_filing,
         compute_signal,
     ):
         try:
@@ -385,6 +389,33 @@ def render_latest_earnings(financials: dict) -> None:
     render_metric_grid(cards, columns=3, small=True)
 
 
+def render_latest_quarterly_release(financials: dict) -> None:
+    release = financials.get("latest_quarterly_release") or {}
+    if not release:
+        st.info("Latest quarterly release data unavailable for this ticker.")
+        return
+    status = release.get("source_status", "N/A")
+    tone = "good" if status == "OK" else "warn" if status in {"Partial", "Not applicable"} else "neutral" if status in {"Insufficient data", "Missing"} else "bad"
+    cards = [
+        ("Reported Period", str(release.get("period_label") or "N/A"), f"Form: {release.get('form_type') or 'N/A'}", "neutral"),
+        ("Release / Filing Date", fmt_date(release.get("filing_or_release_date")), release.get("source", "N/A"), "neutral"),
+        ("Revenue", fmt_currency(release.get("revenue"), 1), "Latest structured period", "neutral"),
+        ("EPS", fmt_eps(release.get("eps")), "N/A if unavailable", tone_for_number(release.get("eps"))),
+        ("Net Income", fmt_currency(release.get("net_income"), 1), "Latest structured period", tone_for_number(release.get("net_income"))),
+        ("Free Cash Flow", fmt_currency(release.get("free_cash_flow"), 1), "OCF less normalized capex", tone_for_number(release.get("free_cash_flow"))),
+        ("Cash", fmt_currency(release.get("cash"), 1), "Nearest matching balance sheet", "neutral"),
+        ("Total Debt", fmt_currency(release.get("total_debt"), 1), "Nearest matching balance sheet", "neutral"),
+        ("Source Status", status, release.get("data_quality_note", ""), tone),
+    ]
+    render_metric_grid(cards, columns=3, small=True)
+    filing_url = release.get("filing_url")
+    if filing_url:
+        st.link_button("Open filing", filing_url)
+    missing = release.get("missing_fields") or []
+    if missing:
+        st.caption("Missing fields: " + ", ".join(missing))
+
+
 def render_price_chart(ticker: str) -> None:
     history = fetch_history(ticker, "1y", "1d")
     if history.empty or "Close" not in history:
@@ -543,8 +574,8 @@ def company_page(ticker: str) -> None:
     )
     section("52W Price Position")
     render_52w_position(quote)
-    section("Latest Quarter's Earnings", "Latest reported quarterly earnings only when the source returns actuals.")
-    render_latest_earnings(financials)
+    section("Latest Quarterly Release", "Newest available quarterly statement values plus latest SEC filing metadata where available.")
+    render_latest_quarterly_release(financials)
     section("Financial Summary")
     view = st.radio("Financial statement view", ["Quarterly", "Annual"], index=0, horizontal=True, key="company_financial_view")
     history = view_history(financials, view)
@@ -794,9 +825,13 @@ def data_health_page(ticker: str) -> None:
     st.markdown('<div class="terminal-subtitle">Source status, cache notes, database location, and V1 limitations.</div>', unsafe_allow_html=True)
     quote = fetch_quote(ticker)
     financials = load_latest_company_financials(ticker)
+    identity = get_company_identity(ticker)
+    latest_release = financials.get("latest_quarterly_release") or get_latest_quarterly_release(ticker)
     opts = fetch_options_summary(ticker, quote.get("price"))
     news, news_statuses = fetch_news(ticker, 8)
     filings, filing_status = fetch_sec_filings(ticker)
+    sec_latest = fetch_latest_sec_filing(ticker)
+    _, cik_status = ticker_to_cik(ticker)
     try:
         openai_status = "OK" if st.secrets.get("OPENAI_API_KEY") else "Missing"
     except Exception:
@@ -804,9 +839,13 @@ def data_health_page(ticker: str) -> None:
     health = pd.DataFrame(
         [
             {"Source": "Yahoo Finance/yfinance quote", "Status": quote.get("status"), "Last Refresh": quote.get("last_updated"), "Cache TTL": "5 minutes", "Error": quote.get("error", "")},
+            {"Source": "Company identity / logo", "Status": identity.get("logo_status"), "Last Refresh": identity.get("last_updated"), "Cache TTL": "24 hours", "Error": identity.get("error", "")},
             {"Source": "Yahoo Finance/yfinance financials", "Status": financials.get("status"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Error": financials.get("error", "")},
+            {"Source": "Latest quarterly release", "Status": latest_release.get("source_status"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Error": latest_release.get("data_quality_note", "")},
             {"Source": "Yahoo Finance/yfinance options", "Status": opts.get("status"), "Last Refresh": opts.get("last_updated"), "Cache TTL": "30 minutes", "Error": opts.get("debug_error", "")},
             {"Source": "Yahoo Finance/RSS news", "Status": "OK" if not news.empty else "Partial", "Last Refresh": now_et(), "Cache TTL": "30 minutes", "Error": ""},
+            {"Source": "SEC ticker-to-CIK mapping", "Status": cik_status.get("Status"), "Last Refresh": cik_status.get("Last Updated"), "Cache TTL": "24 hours", "Error": cik_status.get("Error", "")},
+            {"Source": "SEC submissions latest filing", "Status": sec_latest.get("source_status"), "Last Refresh": sec_latest.get("last_updated"), "Cache TTL": "24 hours", "Error": sec_latest.get("error", "")},
             {"Source": filing_status.get("Source"), "Status": filing_status.get("Status"), "Last Refresh": filing_status.get("Last Updated"), "Cache TTL": "24 hours", "Error": filing_status.get("Error", "")},
             {"Source": "SQLite watchlist", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "Persistent local DB", "Error": ""},
             {"Source": "OpenAI API", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "On demand", "Error": "OPENAI_API_KEY not configured" if openai_status == "Missing" else ""},
@@ -835,7 +874,9 @@ def data_health_page(ticker: str) -> None:
         st.json(
             {
                 "selected_ticker": ticker,
+                "company_identity": identity,
                 "quote_error": quote.get("error"),
+                "latest_quarterly_release": latest_release,
                 "financial_missing_fields": financials.get("missing_fields", []),
                 "financial_warnings": financials.get("validation_warnings", []),
                 "options_debug": opts,

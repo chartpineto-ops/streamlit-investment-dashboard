@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+from data.company_identity import get_company_identity
 from utils.formatting import clean_ticker, now_et, safe_div, to_float
 
 DEFAULT_TICKERS = ["CRWV", "IONQ", "AMPX", "AI", "ASTS", "NVDA", "PLTR", "SPY", "VOO", "FBTC", "VOLT", "REMX"]
@@ -83,9 +84,11 @@ def fetch_quote(symbol: str) -> dict:
         avg_volume = to_float(info.get("averageVolume") or info.get("averageVolume10days"))
         if avg_volume is None and not volume.empty:
             avg_volume = to_float(volume.tail(30).mean())
+        identity = get_company_identity(ticker)
         return {
             "ticker": ticker,
-            "company_name": info.get("shortName") or info.get("longName") or ticker,
+            "company_name": identity.get("company_name") or info.get("shortName") or info.get("longName") or ticker,
+            "short_name": identity.get("short_name"),
             "price": price,
             "previous_close": previous_close,
             "daily_change": change,
@@ -96,8 +99,10 @@ def fetch_quote(symbol: str) -> dict:
             "enterprise_value": to_float(info.get("enterpriseValue")),
             "fifty_two_week_low": to_float(info.get("fiftyTwoWeekLow")),
             "fifty_two_week_high": to_float(info.get("fiftyTwoWeekHigh")),
-            "sector": info.get("sector"),
-            "industry": info.get("industry"),
+            "sector": identity.get("sector") or info.get("sector"),
+            "industry": identity.get("industry") or info.get("industry"),
+            "exchange": identity.get("exchange"),
+            "quote_type": identity.get("quote_type"),
             "business_summary": info.get("longBusinessSummary"),
             "shares_outstanding": to_float(info.get("sharesOutstanding") or info.get("impliedSharesOutstanding")),
             "beta": to_float(info.get("beta")),
@@ -108,8 +113,12 @@ def fetch_quote(symbol: str) -> dict:
             "ev_to_ebitda": to_float(info.get("enterpriseToEbitda")),
             "target_mean_price": to_float(info.get("targetMeanPrice")),
             "recommendation": info.get("recommendationKey"),
-            "website": info.get("website"),
-            "logo_url": logo_url_from_info(info),
+            "website": identity.get("website") or info.get("website"),
+            "domain": identity.get("domain"),
+            "logo_url": identity.get("logo_url"),
+            "logo_status": identity.get("logo_status"),
+            "logo_source": identity.get("logo_source"),
+            "fallback_initials": identity.get("fallback_initials"),
             "status": "OK",
             "source": "Yahoo Finance/yfinance",
             "last_updated": updated,
@@ -147,4 +156,3 @@ def fetch_market_snapshot() -> tuple[pd.DataFrame, list[dict]]:
         )
         statuses.append({"Source": f"Quote {symbol}", "Status": quote.get("status", "Unknown"), "Last Updated": quote.get("last_updated"), "Error": quote.get("error", "")})
     return pd.DataFrame(rows), statuses
-

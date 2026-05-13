@@ -26,6 +26,7 @@ def build_research_packet(ticker: str) -> dict:
     quote = fetch_quote(symbol)
     financials = load_latest_company_financials(symbol)
     latest = financials.get("latest_financials", {})
+    latest_release = financials.get("latest_quarterly_release", {})
     signal = compute_signal(symbol)
     options = fetch_options_summary(symbol, quote.get("price"))
     news, news_status = fetch_news(symbol, 10)
@@ -36,6 +37,7 @@ def build_research_packet(ticker: str) -> dict:
             "company_name": quote.get("company_name"),
             "sector": quote.get("sector"),
             "industry": quote.get("industry"),
+            "logo_status": quote.get("logo_status"),
             "business_summary": quote.get("business_summary"),
         },
         "price_snapshot": {
@@ -53,6 +55,21 @@ def build_research_packet(ticker: str) -> dict:
             "free_cash_flow": fmt_currency(latest.get("free_cash_flow"), 1),
             "cash": fmt_currency(latest.get("cash"), 1),
             "total_debt": fmt_currency(latest.get("total_debt"), 1),
+        },
+        "latest_quarterly_release": {
+            "period": latest_release.get("period_label"),
+            "filing_date": str(latest_release.get("filing_or_release_date")),
+            "filing_type": latest_release.get("form_type"),
+            "filing_url": latest_release.get("filing_url"),
+            "source_status": latest_release.get("source_status"),
+            "missing_fields": latest_release.get("missing_fields", []),
+            "data_quality_note": latest_release.get("data_quality_note"),
+            "revenue": fmt_currency(latest_release.get("revenue"), 1),
+            "eps": latest_release.get("eps"),
+            "net_income": fmt_currency(latest_release.get("net_income"), 1),
+            "free_cash_flow": fmt_currency(latest_release.get("free_cash_flow"), 1),
+            "cash": fmt_currency(latest_release.get("cash"), 1),
+            "total_debt": fmt_currency(latest_release.get("total_debt"), 1),
         },
         "valuation": {
             "price_to_sales": quote.get("price_to_sales"),

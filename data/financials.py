@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+from data.filings import fetch_latest_sec_filing
 from data.market_data import fetch_quote
 from utils.formatting import clean_ticker, now_et, safe_div, to_float
 from utils.validation import status_from_warnings
@@ -91,15 +92,37 @@ def _line(frame: pd.DataFrame, period, aliases: tuple[str, ...]) -> float | None
     return None
 
 
+def _line_nearest(frame: pd.DataFrame, period, aliases: tuple[str, ...], max_days: int = 120) -> float | None:
+    if frame.empty or period is None:
+        return None
+    exact = _line(frame, period, aliases)
+    if exact is not None:
+        return exact
+    try:
+        target = pd.Timestamp(period)
+        candidates = []
+        for col in frame.columns:
+            col_ts = pd.Timestamp(col)
+            candidates.append((abs((col_ts - target).days), col_ts))
+        if not candidates:
+            return None
+        distance, nearest = sorted(candidates)[0]
+        if distance > max_days:
+            return None
+        return _line(frame, nearest, aliases)
+    except Exception:
+        return None
+
+
 def _normalize_history(income: pd.DataFrame, balance: pd.DataFrame, cashflow: pd.DataFrame, quarterly: bool, limit: int = 8) -> pd.DataFrame:
-    common = set(_periods(income)) & set(_periods(balance)) & set(_periods(cashflow))
-    periods = sorted(common)[-limit:] if common else _periods(income, balance, cashflow)[-limit:]
+    periods = _periods(income) or _periods(income, balance, cashflow)
+    periods = periods[-limit:]
     rows = []
     for period in periods:
         row = {"period_date": period, "period": f"{period.year} Q{period.quarter}" if quarterly else f"FY {period.year}"}
         for key, aliases in FIELD_MAP.items():
             source = income if key in {"revenue", "cost_of_revenue", "gross_profit", "operating_income", "net_income", "eps"} else balance if key in {"cash", "current_assets", "total_assets", "current_liabilities", "total_liabilities", "total_debt", "shareholders_equity"} else cashflow
-            row[key] = _line(source, period, aliases)
+            row[key] = _line(source, period, aliases) if source is income else _line_nearest(source, period, aliases)
         if row.get("free_cash_flow") is None and row.get("operating_cash_flow") is not None and row.get("capital_expenditures") is not None:
             row["free_cash_flow"] = row["operating_cash_flow"] - abs(row["capital_expenditures"])
         row["gross_margin"] = _safe_margin(row.get("gross_profit"), row.get("revenue"))
@@ -121,6 +144,114 @@ def _normalize_history(income: pd.DataFrame, balance: pd.DataFrame, cashflow: pd
         frame["eps_yoy_growth"] = frame["eps"].pct_change(4 if quarterly else 1, fill_method=None) * 100
         frame["eps_qoq_growth"] = frame["eps"].pct_change(1, fill_method=None) * 100
     return frame
+
+
+def _period_parts(period) -> tuple[int | None, int | None, str]:
+    try:
+        ts = pd.Timestamp(period)
+        return ts.year, ts.quarter, f"{ts.year} Q{ts.quarter}"
+    except Exception:
+        return None, None, "N/A"
+
+
+def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_filing: dict, annual: bool = False) -> dict:
+    updated = now_et()
+    if history is None or history.empty:
+        quote_type = str(quote.get("quote_type") or "").upper()
+        status = "Not applicable" if quote_type in {"ETF", "MUTUALFUND", "CRYPTOCURRENCY", "INDEX"} else "Insufficient data"
+        return {
+            "ticker": symbol,
+            "period_label": "N/A",
+            "source": sec_filing.get("source", "Yahoo Finance/yfinance quarterly statements"),
+            "source_status": status,
+            "filing_or_release_date": sec_filing.get("filing_date"),
+            "form_type": sec_filing.get("form_type"),
+            "filing_url": sec_filing.get("filing_url"),
+            "accession_number": sec_filing.get("accession_number"),
+            "missing_fields": ["quarterly financial statements"],
+            "data_quality_note": "Latest filing metadata may be available, but structured quarterly values were not returned.",
+            "last_updated": updated,
+        }
+    row = history.iloc[-1].to_dict()
+    fiscal_year, fiscal_quarter, period_label = _period_parts(row.get("period_date"))
+    if annual:
+        period_label = f"FY {fiscal_year}" if fiscal_year else "Latest annual filing"
+    values = {
+        "revenue": row.get("revenue"),
+        "gross_profit": row.get("gross_profit"),
+        "operating_income": row.get("operating_income"),
+        "net_income": row.get("net_income"),
+        "eps": row.get("eps"),
+        "operating_cash_flow": row.get("operating_cash_flow"),
+        "capital_expenditures": row.get("capital_expenditures"),
+        "free_cash_flow": row.get("free_cash_flow"),
+        "cash": row.get("cash"),
+        "total_debt": row.get("total_debt"),
+        "shares_outstanding": quote.get("shares_outstanding"),
+    }
+    missing = [key for key, value in values.items() if value is None and key not in {"eps", "shares_outstanding"}]
+    source_status = "OK" if not missing else "Partial"
+    note = "Latest quarterly statements from Yahoo Finance/yfinance."
+    if annual:
+        source_status = "Partial"
+        note = "Quarterly statements unavailable; showing latest annual filing data instead."
+    filing_date = sec_filing.get("filing_date")
+    period_date = row.get("period_date")
+    try:
+        if filing_date and period_date and pd.Timestamp(filing_date) > pd.Timestamp(period_date) + pd.Timedelta(days=120):
+            note = "Latest filing detected; structured financial values may lag the filing metadata."
+            if source_status == "OK":
+                source_status = "Partial"
+    except Exception:
+        pass
+    return {
+        "ticker": symbol,
+        "period_label": period_label,
+        "fiscal_year": fiscal_year,
+        "fiscal_quarter": fiscal_quarter if not annual else None,
+        "filing_or_release_date": filing_date or row.get("period_date"),
+        "form_type": sec_filing.get("form_type") or ("Annual" if annual else "Quarterly"),
+        "source": "Yahoo Finance quarterly statements + " + sec_filing.get("source", "SEC metadata"),
+        "source_status": source_status,
+        **values,
+        "filing_url": sec_filing.get("filing_url"),
+        "accession_number": sec_filing.get("accession_number"),
+        "missing_fields": missing,
+        "data_quality_note": note,
+        "last_updated": updated,
+    }
+
+
+@st.cache_data(ttl=86_400, show_spinner=False)
+def get_latest_quarterly_release(ticker: str) -> dict:
+    symbol = clean_ticker(ticker)
+    if not symbol:
+        return {"ticker": "", "period_label": "N/A", "source_status": "Invalid ticker", "missing_fields": ["ticker"], "data_quality_note": "Invalid ticker."}
+    try:
+        obj = yf.Ticker(symbol)
+        quote = fetch_quote(symbol)
+        sec_filing = fetch_latest_sec_filing(symbol)
+        quarterly_income = _statement(obj, ("quarterly_income_stmt", "quarterly_financials"))
+        quarterly_balance = _statement(obj, ("quarterly_balance_sheet",))
+        quarterly_cash = _statement(obj, ("quarterly_cashflow", "quarterly_cash_flow"))
+        quarterly_history = _normalize_history(quarterly_income, quarterly_balance, quarterly_cash, True, 12)
+        if not quarterly_history.empty:
+            return _release_from_history(symbol, quarterly_history, quote, sec_filing, annual=False)
+        annual_income = _statement(obj, ("income_stmt", "financials"))
+        annual_balance = _statement(obj, ("balance_sheet",))
+        annual_cash = _statement(obj, ("cashflow", "cash_flow"))
+        annual_history = _normalize_history(annual_income, annual_balance, annual_cash, False, 4)
+        return _release_from_history(symbol, annual_history, quote, sec_filing, annual=True)
+    except Exception as exc:
+        return {
+            "ticker": symbol,
+            "period_label": "N/A",
+            "source": "Yahoo Finance/yfinance + SEC EDGAR",
+            "source_status": "Source error",
+            "missing_fields": ["latest quarterly release"],
+            "data_quality_note": str(exc),
+            "last_updated": now_et(),
+        }
 
 
 def _latest_earnings(obj: yf.Ticker, financial_history: pd.DataFrame) -> dict:
@@ -181,6 +312,7 @@ def load_latest_company_financials(ticker: str) -> dict:
         quarterly_history = _normalize_history(quarterly_income, quarterly_balance, quarterly_cash, True, 12)
         annual_history = _normalize_history(annual_income, annual_balance, annual_cash, False, 8)
         latest = quarterly_history.iloc[-1].to_dict() if not quarterly_history.empty else {}
+        latest_release = _release_from_history(symbol, quarterly_history, quote, fetch_latest_sec_filing(symbol), annual=False) if not quarterly_history.empty else get_latest_quarterly_release(symbol)
         earnings = _latest_earnings(obj, quarterly_history)
         try:
             earnings_estimate = obj.get_earnings_estimate()
@@ -212,6 +344,7 @@ def load_latest_company_financials(ticker: str) -> dict:
             },
             "latest_quote": quote,
             "latest_reported_earnings": earnings,
+            "latest_quarterly_release": latest_release,
             "quarterly_income_statement": quarterly_income,
             "quarterly_balance_sheet": quarterly_balance,
             "quarterly_cash_flow": quarterly_cash,
@@ -226,6 +359,7 @@ def load_latest_company_financials(ticker: str) -> dict:
             "consensus_eps": earnings_estimate if isinstance(earnings_estimate, pd.DataFrame) else pd.DataFrame(),
             "source_metadata": {
                 "financials": "Yahoo Finance/yfinance quarterly and annual statements",
+                "latest_release": latest_release.get("source"),
                 "earnings": earnings.get("source", "Yahoo Finance/yfinance financial statement fallback"),
                 "estimates": "Yahoo Finance/yfinance analyst estimate tables",
             },

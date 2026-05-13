@@ -62,7 +62,7 @@ def quote_header(quote: dict) -> None:
     change = quote.get("daily_change")
     tone = tone_for_number(change_pct)
     logo_url = quote.get("logo_url")
-    initials = "".join(ch for ch in ticker if ch.isalnum())[:2] or "RT"
+    initials = quote.get("fallback_initials") or "".join(ch for ch in ticker if ch.isalnum())[:2] or "RT"
     if logo_url:
         logo = f'<img src="{escape(str(logo_url))}" alt="{escape(ticker)} logo" onerror="this.style.display=\'none\'; this.parentNode.textContent=\'{escape(initials)}\';">'
     else:
@@ -79,6 +79,7 @@ def quote_header(quote: dict) -> None:
           <div>
             <div class="quote-main">{escape(ticker)} <span class="{ {'good':'rt-good','bad':'rt-bad'}.get(tone, 'rt-neutral') }" style="font-size:1.05rem;">{escape(change_text)}</span></div>
             <div class="quote-sub">{escape(name)}</div>
+            <div class="quote-sub">{escape(str(quote.get("sector") or "N/A"))} / {escape(str(quote.get("industry") or "N/A"))}</div>
             <div class="quote-sub" style="color:#e8f2f4;">{escape(price_text)} <span class="rt-neutral">{escape(change_abs)}</span></div>
           </div>
         </div>
