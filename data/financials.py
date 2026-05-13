@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-from data.filings import extract_sec_concept_value, fetch_latest_sec_filing, get_sec_company_facts
+from data.filings import extract_sec_concept_value, fetch_latest_periodic_sec_filing, fetch_latest_sec_filing, get_sec_company_facts
 from data.market_data import fetch_quote
 from utils.formatting import clean_ticker, now_et, safe_div, to_float
 from utils.validation import status_from_warnings
@@ -195,8 +195,10 @@ def _augment_history(frame: pd.DataFrame, quarterly: bool) -> pd.DataFrame:
         if row.get("total_debt") is not None and row.get("cash") is not None:
             frame.at[idx, "net_debt"] = row.get("total_debt") - row.get("cash")
     if not frame.empty:
-        revenue_series = pd.to_numeric(frame.get("revenue"), errors="coerce")
-        eps_series = pd.to_numeric(frame.get("eps"), errors="coerce")
+        revenue_raw = frame["revenue"] if "revenue" in frame else pd.Series([pd.NA] * len(frame), index=frame.index)
+        eps_raw = frame["eps"] if "eps" in frame else pd.Series([pd.NA] * len(frame), index=frame.index)
+        revenue_series = pd.to_numeric(revenue_raw, errors="coerce")
+        eps_series = pd.to_numeric(eps_raw, errors="coerce")
         frame["prior_revenue_for_yoy"] = revenue_series.shift(4 if quarterly else 1)
         frame["prior_revenue_for_qoq"] = revenue_series.shift(1)
         frame["revenue_yoy_growth"] = revenue_series.pct_change(4 if quarterly else 1, fill_method=None) * 100
@@ -281,6 +283,28 @@ def _period_alignment(sec_label: str | None, structured_label: str | None) -> tu
     if structured_label:
         return "Structured values only", "Partial"
     return "Insufficient data", "Insufficient data"
+
+
+def _structured_sec_filing(symbol: str) -> dict:
+    latest = fetch_latest_sec_filing(symbol)
+    periodic = fetch_latest_periodic_sec_filing(symbol)
+    if periodic.get("source_status") != "OK":
+        return latest
+    if latest.get("source_status") != "OK":
+        return periodic
+    if latest.get("filing_period_label"):
+        return latest
+    latest_filed = pd.to_datetime(latest.get("filing_date"), errors="coerce")
+    periodic_filed = pd.to_datetime(periodic.get("filing_date"), errors="coerce")
+    if pd.notna(periodic_filed) and (pd.isna(latest_filed) or periodic_filed >= latest_filed - pd.Timedelta(days=14)):
+        selected = periodic.copy()
+        selected["latest_event_filing"] = latest
+        selected["data_quality_note"] = (
+            f"Using latest period-bearing {periodic.get('form_type')} for structured financial values; "
+            f"latest event filing is {latest.get('form_type')} filed {latest.get('filing_date')}."
+        )
+        return selected
+    return latest
 
 
 def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) -> dict:
@@ -516,7 +540,7 @@ def get_latest_quarterly_release(ticker: str) -> dict:
     try:
         obj = yf.Ticker(symbol)
         quote = fetch_quote(symbol)
-        sec_filing = fetch_latest_sec_filing(symbol)
+        sec_filing = _structured_sec_filing(symbol)
         sec_values = _extract_sec_structured_values(sec_filing, quote)
         quarterly_income = _statement(obj, ("quarterly_income_stmt", "quarterly_financials"))
         quarterly_balance = _statement(obj, ("quarterly_balance_sheet",))
@@ -606,7 +630,7 @@ def load_latest_company_financials(ticker: str) -> dict:
         quarterly_income = _statement(obj, ("quarterly_income_stmt", "quarterly_financials"))
         quarterly_balance = _statement(obj, ("quarterly_balance_sheet",))
         quarterly_cash = _statement(obj, ("quarterly_cashflow", "quarterly_cash_flow"))
-        sec_filing = fetch_latest_sec_filing(symbol)
+        sec_filing = _structured_sec_filing(symbol)
         sec_values = _extract_sec_structured_values(sec_filing, quote)
         annual_income = _statement(obj, ("income_stmt", "financials"))
         annual_balance = _statement(obj, ("balance_sheet",))

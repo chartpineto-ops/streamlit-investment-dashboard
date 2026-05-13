@@ -8,6 +8,7 @@ from utils.formatting import clean_ticker, now_et
 
 HEADERS = {"User-Agent": "Research Terminal 2.0 V1 contact@example.com"}
 RELEVANT_FORMS = {"10-Q", "10-K", "8-K", "6-K", "20-F"}
+PERIODIC_FORMS = {"10-Q", "10-K", "20-F"}
 
 
 def _value_at(values, index: int):
@@ -211,6 +212,55 @@ def fetch_latest_sec_filing(ticker: str) -> dict:
         return row
     except Exception as exc:
         return {"ticker": symbol, "source": "SEC EDGAR submissions", "source_status": "Source error", "last_updated": updated, "error": str(exc)}
+
+
+@st.cache_data(ttl=86_400, show_spinner=False)
+def fetch_latest_periodic_sec_filing(ticker: str) -> dict:
+    symbol = clean_ticker(ticker)
+    updated = now_et()
+    cik, cik_status = ticker_to_cik(symbol)
+    if not cik:
+        return {
+            "ticker": symbol,
+            "source": "SEC EDGAR periodic submissions",
+            "source_status": cik_status.get("Status", "Missing"),
+            "last_updated": updated,
+            "error": cik_status.get("Error", "CIK not found"),
+        }
+    try:
+        payload = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json", headers=HEADERS, timeout=12).json()
+        recent = payload.get("filings", {}).get("recent", {})
+        forms = recent.get("form", [])
+        for index, form in enumerate(forms):
+            if form not in PERIODIC_FORMS:
+                continue
+            filed = _value_at(recent.get("filingDate", []), index)
+            report = _value_at(recent.get("reportDate", []), index)
+            accession = _value_at(recent.get("accessionNumber", []), index)
+            doc = _value_at(recent.get("primaryDocument", []), index)
+            fiscal_year = _value_at(recent.get("fiscalYear", []), index)
+            fiscal_period = _value_at(recent.get("fiscalPeriod", []), index)
+            return {
+                "ticker": symbol,
+                "cik": cik,
+                "form_type": form,
+                "filing_date": filed,
+                "report_date": report,
+                "period_end_date": report,
+                "fiscal_year": fiscal_year,
+                "fiscal_period": fiscal_period or _quarter_from_report_date(report, form),
+                "filing_period_label": _filing_period_label(fiscal_year, fiscal_period, report, form),
+                "accession_number": accession,
+                "primary_document": doc,
+                "filing_url": _filing_url(cik, accession, doc),
+                "source": f"SEC EDGAR latest periodic {form}",
+                "source_status": "OK",
+                "last_updated": updated,
+                "error": "",
+            }
+        return {"ticker": symbol, "source": "SEC EDGAR periodic submissions", "source_status": "Missing", "last_updated": updated, "error": "No periodic filings found"}
+    except Exception as exc:
+        return {"ticker": symbol, "source": "SEC EDGAR periodic submissions", "source_status": "Source error", "last_updated": updated, "error": str(exc)}
 
 
 @st.cache_data(ttl=86_400, show_spinner=False)
