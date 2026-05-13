@@ -411,13 +411,15 @@ def render_latest_quarterly_release(financials: dict) -> None:
     reported_period = str(release.get("reported_period_label") or release.get("period_label") or "N/A")
     structured_period = release.get("structured_values_period_label")
     show_structured_period = bool(structured_period and structured_period != reported_period and structured_period != "N/A")
+    structured_source = release.get("structured_values_source") or "Yahoo Finance quarterly statements"
     cards = [
         ("Reported Period", reported_period, f"Form: {release.get('form_type') or 'N/A'}", "neutral"),
+        ("Period End Date", fmt_date(release.get("period_end_date")), release.get("period_alignment_status", ""), "neutral"),
         ("Release / Filing Date", fmt_date(release.get("filing_date") or release.get("filing_or_release_date")), release.get("source", "N/A"), "neutral"),
     ]
     if show_structured_period:
-        cards.append(("Structured Values Period", str(structured_period), "Yahoo Finance quarterly statements", "warn"))
-    value_period_caption = f"Structured values period: {structured_period}" if show_structured_period else "Latest structured period"
+        cards.append(("Structured Values Period", str(structured_period), structured_source, "warn"))
+    value_period_caption = structured_source if not show_structured_period else f"{structured_source}; period: {structured_period}"
     cards.extend(
         [
             ("Revenue", fmt_currency(release.get("revenue"), 1), value_period_caption, "neutral"),
@@ -870,6 +872,9 @@ def data_health_page(ticker: str) -> None:
             {"Source": "Yahoo Finance/RSS news", "Status": "OK" if not news.empty else "Partial", "Last Refresh": now_et(), "Cache TTL": "30 minutes", "Error": ""},
             {"Source": "SEC ticker-to-CIK mapping", "Status": cik_status.get("Status"), "Last Refresh": cik_status.get("Last Updated"), "Cache TTL": "24 hours", "Error": cik_status.get("Error", "")},
             {"Source": "SEC submissions latest filing", "Status": sec_latest.get("source_status"), "Last Refresh": sec_latest.get("last_updated"), "Cache TTL": "24 hours", "Error": sec_latest.get("error", "")},
+            {"Source": "SEC companyfacts", "Status": (latest_release.get("sec_companyfacts_status") or {}).get("Status", "N/A"), "Last Refresh": (latest_release.get("sec_companyfacts_status") or {}).get("Last Updated", latest_release.get("last_updated")), "Cache TTL": "24 hours", "Error": (latest_release.get("sec_companyfacts_status") or {}).get("Error", "")},
+            {"Source": "SEC value extraction", "Status": latest_release.get("sec_value_extraction_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Error": latest_release.get("data_quality_note", "")},
+            {"Source": "Period alignment", "Status": latest_release.get("period_alignment_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Error": f"Filing period: {latest_release.get('filing_period_label') or 'N/A'} | Structured period: {latest_release.get('structured_values_period_label') or 'N/A'}"},
             {"Source": filing_status.get("Source"), "Status": filing_status.get("Status"), "Last Refresh": filing_status.get("Last Updated"), "Cache TTL": "24 hours", "Error": filing_status.get("Error", "")},
             {"Source": "SQLite watchlist", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "Persistent local DB", "Error": ""},
             {"Source": "OpenAI API", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "On demand", "Error": "OPENAI_API_KEY not configured" if openai_status == "Missing" else ""},

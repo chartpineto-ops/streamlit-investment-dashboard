@@ -85,6 +85,84 @@ def _filing_url(cik: str, accession: str, doc: str) -> str | None:
 
 
 @st.cache_data(ttl=86_400, show_spinner=False)
+def get_sec_company_facts(cik: str) -> tuple[dict, dict]:
+    updated = now_et()
+    cik_clean = str(cik or "").strip().zfill(10)
+    if not cik_clean or not cik_clean.isdigit():
+        return {}, {"Source": "SEC companyfacts", "Status": "Missing", "Last Updated": updated, "Error": "Missing CIK"}
+    try:
+        payload = requests.get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik_clean}.json", headers=HEADERS, timeout=18).json()
+        if not payload.get("facts"):
+            return {}, {"Source": "SEC companyfacts", "Status": "Missing", "Last Updated": updated, "Error": "No companyfacts returned"}
+        return payload, {"Source": "SEC companyfacts", "Status": "OK", "Last Updated": updated, "Error": ""}
+    except Exception as exc:
+        return {}, {"Source": "SEC companyfacts", "Status": "Source error", "Last Updated": updated, "Error": str(exc)}
+
+
+def extract_sec_concept_value(
+    company_facts: dict,
+    concepts: tuple[str, ...],
+    form_types: tuple[str, ...],
+    period_end_date,
+    fiscal_year=None,
+    fiscal_period=None,
+    accession_number: str | None = None,
+) -> dict:
+    try:
+        target_end = pd.Timestamp(period_end_date).strftime("%Y-%m-%d")
+    except Exception:
+        target_end = None
+    fy = None
+    try:
+        fy = int(fiscal_year) if fiscal_year not in ("", None) else None
+    except Exception:
+        fy = None
+    fp = str(fiscal_period or "").strip().upper() or None
+    forms = set(form_types)
+    candidates = []
+    facts = company_facts.get("facts", {}).get("us-gaap", {})
+    for concept in concepts:
+        concept_block = facts.get(concept, {})
+        for unit, values in concept_block.get("units", {}).items():
+            for item in values:
+                if forms and item.get("form") not in forms:
+                    continue
+                if target_end and item.get("end") != target_end:
+                    continue
+                if fy is not None and item.get("fy") not in (fy, str(fy)):
+                    continue
+                if fp and str(item.get("fp") or "").upper() != fp:
+                    continue
+                score = 0
+                if accession_number and item.get("accn") == accession_number:
+                    score += 5
+                if target_end and item.get("end") == target_end:
+                    score += 4
+                if fy is not None and item.get("fy") in (fy, str(fy)):
+                    score += 2
+                if fp and str(item.get("fp") or "").upper() == fp:
+                    score += 2
+                if item.get("frame"):
+                    score += 1
+                candidates.append((score, concept, unit, item))
+    if not candidates:
+        return {"value": None, "concept": None, "unit": None, "source_note": "SEC concept not found for matching period"}
+    score, concept, unit, item = sorted(candidates, key=lambda row: (row[0], str(row[3].get("filed") or "")), reverse=True)[0]
+    return {
+        "value": item.get("val"),
+        "unit": unit,
+        "concept": concept,
+        "form": item.get("form"),
+        "filed": item.get("filed"),
+        "accession_number": item.get("accn"),
+        "fiscal_year": item.get("fy"),
+        "fiscal_period": item.get("fp"),
+        "period_end_date": item.get("end"),
+        "source_note": f"SEC companyfacts {concept}",
+    }
+
+
+@st.cache_data(ttl=86_400, show_spinner=False)
 def fetch_latest_sec_filing(ticker: str) -> dict:
     symbol = clean_ticker(ticker)
     updated = now_et()

@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-from data.filings import fetch_latest_sec_filing
+from data.filings import extract_sec_concept_value, fetch_latest_sec_filing, get_sec_company_facts
 from data.market_data import fetch_quote
 from utils.formatting import clean_ticker, now_et, safe_div, to_float
 from utils.validation import status_from_warnings
@@ -34,6 +34,42 @@ FIELD_MAP = {
 }
 
 MIN_MEANINGFUL_REVENUE = 1_000_000
+
+SEC_CONCEPTS = {
+    "revenue": (
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "Revenues",
+        "SalesRevenueNet",
+    ),
+    "gross_profit": ("GrossProfit",),
+    "operating_income": ("OperatingIncomeLoss",),
+    "net_income": ("NetIncomeLoss", "ProfitLoss"),
+    "eps": ("EarningsPerShareDiluted", "EarningsPerShareBasic"),
+    "cash": (
+        "CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+    ),
+    "total_debt": (
+        "LongTermDebt",
+        "LongTermDebtCurrent",
+        "ShortTermBorrowings",
+        "DebtCurrent",
+        "LongTermDebtAndFinanceLeaseObligations",
+        "LongTermDebtAndFinanceLeaseObligationsCurrent",
+    ),
+    "operating_cash_flow": (
+        "NetCashProvidedByUsedInOperatingActivities",
+        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
+    ),
+    "capital_expenditures": (
+        "PaymentsToAcquirePropertyPlantAndEquipment",
+        "PaymentsForProceedsFromProductiveAssets",
+    ),
+    "shares_outstanding": (
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "WeightedAverageNumberOfSharesOutstandingBasic",
+    ),
+}
 
 
 def _safe_margin(numerator, revenue) -> float | None:
@@ -134,15 +170,41 @@ def _normalize_history(income: pd.DataFrame, balance: pd.DataFrame, cashflow: pd
         row["net_debt"] = row["total_debt"] - row["cash"] if row.get("total_debt") is not None and row.get("cash") is not None else None
         rows.append(row)
     frame = pd.DataFrame(rows).sort_values("period_date") if rows else pd.DataFrame()
+    return _augment_history(frame, quarterly)
+
+
+def _augment_history(frame: pd.DataFrame, quarterly: bool) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    frame = frame.copy()
+    frame["period_date"] = pd.to_datetime(frame["period_date"], errors="coerce")
+    frame = frame.dropna(subset=["period_date"]).sort_values("period_date")
+    frame["period"] = frame.apply(
+        lambda row: row.get("period") or (f"{row['period_date'].year} Q{row['period_date'].quarter}" if quarterly else f"FY {row['period_date'].year}"),
+        axis=1,
+    )
+    for idx, row in frame.iterrows():
+        if pd.isna(row.get("free_cash_flow")) and pd.notna(row.get("operating_cash_flow")) and pd.notna(row.get("capital_expenditures")):
+            frame.at[idx, "free_cash_flow"] = row.get("operating_cash_flow") - abs(row.get("capital_expenditures"))
+        frame.at[idx, "gross_margin"] = _safe_margin(frame.at[idx, "gross_profit"] if "gross_profit" in frame else None, frame.at[idx, "revenue"] if "revenue" in frame else None)
+        frame.at[idx, "operating_margin"] = _safe_margin(frame.at[idx, "operating_income"] if "operating_income" in frame else None, frame.at[idx, "revenue"] if "revenue" in frame else None)
+        frame.at[idx, "net_margin"] = _safe_margin(frame.at[idx, "net_income"] if "net_income" in frame else None, frame.at[idx, "revenue"] if "revenue" in frame else None)
+        frame.at[idx, "fcf_margin"] = _safe_margin(frame.at[idx, "free_cash_flow"] if "free_cash_flow" in frame else None, frame.at[idx, "revenue"] if "revenue" in frame else None)
+        frame.at[idx, "current_ratio"] = safe_div(row.get("current_assets"), row.get("current_liabilities"), 1)
+        frame.at[idx, "debt_to_equity"] = safe_div(row.get("total_debt"), row.get("shareholders_equity"), 1)
+        if row.get("total_debt") is not None and row.get("cash") is not None:
+            frame.at[idx, "net_debt"] = row.get("total_debt") - row.get("cash")
     if not frame.empty:
-        frame["prior_revenue_for_yoy"] = frame["revenue"].shift(4 if quarterly else 1)
-        frame["prior_revenue_for_qoq"] = frame["revenue"].shift(1)
-        frame["revenue_yoy_growth"] = frame["revenue"].pct_change(4 if quarterly else 1, fill_method=None) * 100
-        frame["revenue_qoq_growth"] = frame["revenue"].pct_change(1, fill_method=None) * 100
+        revenue_series = pd.to_numeric(frame.get("revenue"), errors="coerce")
+        eps_series = pd.to_numeric(frame.get("eps"), errors="coerce")
+        frame["prior_revenue_for_yoy"] = revenue_series.shift(4 if quarterly else 1)
+        frame["prior_revenue_for_qoq"] = revenue_series.shift(1)
+        frame["revenue_yoy_growth"] = revenue_series.pct_change(4 if quarterly else 1, fill_method=None) * 100
+        frame["revenue_qoq_growth"] = revenue_series.pct_change(1, fill_method=None) * 100
         frame["revenue_yoy_base_effect"] = (frame["prior_revenue_for_yoy"].abs() < MIN_MEANINGFUL_REVENUE) | (frame["revenue_yoy_growth"].abs() > 500)
         frame["revenue_qoq_base_effect"] = (frame["prior_revenue_for_qoq"].abs() < MIN_MEANINGFUL_REVENUE) | (frame["revenue_qoq_growth"].abs() > 500)
-        frame["eps_yoy_growth"] = frame["eps"].pct_change(4 if quarterly else 1, fill_method=None) * 100
-        frame["eps_qoq_growth"] = frame["eps"].pct_change(1, fill_method=None) * 100
+        frame["eps_yoy_growth"] = eps_series.pct_change(4 if quarterly else 1, fill_method=None) * 100
+        frame["eps_qoq_growth"] = eps_series.pct_change(1, fill_method=None) * 100
     return frame
 
 
@@ -221,6 +283,114 @@ def _period_alignment(sec_label: str | None, structured_label: str | None) -> tu
     return "Insufficient data", "Insufficient data"
 
 
+def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) -> dict:
+    updated = now_et()
+    form_type = sec_filing.get("form_type")
+    period_end = sec_filing.get("period_end_date") or sec_filing.get("report_date")
+    filing_label, fiscal_year, fiscal_period, _ = _sec_period_label(sec_filing, form_type in {"10-K", "20-F"})
+    if form_type not in {"10-Q", "10-K", "20-F"} or not period_end or not sec_filing.get("cik"):
+        return {
+            "has_values": False,
+            "source_status": "Not applicable",
+            "missing_fields": list(SEC_CONCEPTS),
+            "data_quality_note": "SEC structured extraction is only attempted for 10-Q, 10-K, and 20-F filings with a period end date.",
+            "last_updated": updated,
+        }
+    company_facts, facts_status = get_sec_company_facts(sec_filing.get("cik"))
+    if facts_status.get("Status") != "OK":
+        return {
+            "has_values": False,
+            "source_status": facts_status.get("Status", "Source error"),
+            "missing_fields": list(SEC_CONCEPTS),
+            "data_quality_note": facts_status.get("Error", "SEC companyfacts unavailable."),
+            "last_updated": updated,
+            "sec_companyfacts_status": facts_status,
+        }
+    forms = (form_type,)
+    values = {}
+    concept_sources = {}
+    missing = []
+    for key, concepts in SEC_CONCEPTS.items():
+        result = extract_sec_concept_value(
+            company_facts,
+            concepts,
+            forms,
+            period_end,
+            fiscal_year=fiscal_year,
+            fiscal_period=fiscal_period,
+            accession_number=sec_filing.get("accession_number"),
+        )
+        value = to_float(result.get("value"))
+        values[key] = value
+        if value is None:
+            missing.append(key)
+        else:
+            concept_sources[key] = result
+    if values.get("free_cash_flow") is None and values.get("operating_cash_flow") is not None and values.get("capital_expenditures") is not None:
+        values["free_cash_flow"] = values["operating_cash_flow"] - abs(values["capital_expenditures"])
+    has_values = any(values.get(key) is not None for key in ("revenue", "net_income", "eps", "cash", "operating_cash_flow"))
+    if "free_cash_flow" not in missing and values.get("free_cash_flow") is None:
+        missing.append("free_cash_flow")
+    if quote and values.get("shares_outstanding") is None:
+        values["shares_outstanding"] = quote.get("shares_outstanding")
+    status = "OK" if has_values and not [key for key in ("revenue", "net_income", "cash") if values.get(key) is None] else "Partial" if has_values else "Missing"
+    note = "SEC XBRL/companyfacts values matched to latest filing period." if has_values else "SEC companyfacts returned no matching values for the latest filing period."
+    return {
+        **values,
+        "has_values": has_values,
+        "reported_period_label": filing_label,
+        "structured_values_period_label": filing_label if has_values else None,
+        "structured_values_source": "SEC XBRL/companyfacts",
+        "period_end_date": period_end,
+        "structured_values_date": period_end if has_values else None,
+        "fiscal_year": fiscal_year,
+        "fiscal_period": fiscal_period,
+        "source_status": status,
+        "missing_fields": missing,
+        "concept_sources": concept_sources,
+        "data_quality_note": note,
+        "sec_companyfacts_status": facts_status,
+        "sec_value_extraction_status": status,
+        "last_updated": updated,
+    }
+
+
+def _sec_row(sec_values: dict, sec_filing: dict) -> dict | None:
+    if not sec_values.get("has_values") or not sec_values.get("period_end_date"):
+        return None
+    period_date = pd.Timestamp(sec_values["period_end_date"])
+    row = {
+        "period_date": period_date,
+        "period": sec_values.get("reported_period_label") or f"{period_date.year} Q{period_date.quarter}",
+        "structured_values_source": sec_values.get("structured_values_source"),
+        "sec_missing_fields": sec_values.get("missing_fields", []),
+        "sec_companyfacts_status": sec_values.get("sec_companyfacts_status"),
+        "sec_value_extraction_status": sec_values.get("sec_value_extraction_status"),
+        "sec_data_quality_note": sec_values.get("data_quality_note"),
+    }
+    for key in FIELD_MAP:
+        row[key] = sec_values.get(key)
+    row["shares_outstanding"] = sec_values.get("shares_outstanding")
+    row["source_form_type"] = sec_filing.get("form_type")
+    row["source_accession_number"] = sec_filing.get("accession_number")
+    return row
+
+
+def _merge_sec_quarterly_history(history: pd.DataFrame, sec_values: dict, sec_filing: dict) -> pd.DataFrame:
+    row = _sec_row(sec_values, sec_filing)
+    if row is None:
+        return history
+    frame = history.copy() if isinstance(history, pd.DataFrame) and not history.empty else pd.DataFrame()
+    row_frame = pd.DataFrame([row]).dropna(axis=1, how="all")
+    frame = row_frame if frame.empty else pd.concat([frame, row_frame], ignore_index=True, sort=False)
+    frame["period_date"] = pd.to_datetime(frame["period_date"], errors="coerce")
+    frame = frame.dropna(subset=["period_date"]).sort_values("period_date")
+    source_series = frame["structured_values_source"] if "structured_values_source" in frame else pd.Series([""] * len(frame), index=frame.index)
+    frame["_sec_priority"] = source_series.eq("SEC XBRL/companyfacts").astype(int)
+    frame = frame.sort_values(["period_date", "_sec_priority"]).drop_duplicates("period_date", keep="last").drop(columns=["_sec_priority"])
+    return _augment_history(frame, True)
+
+
 def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_filing: dict, annual: bool = False) -> dict:
     updated = now_et()
     filing_label, sec_fiscal_year, sec_fiscal_period, period_end = _sec_period_label(sec_filing, annual)
@@ -256,8 +426,12 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
         }
     row = history.iloc[-1].to_dict()
     fiscal_year, fiscal_quarter, structured_label, structured_date = _structured_period_label(row.get("period_date"), annual)
+    structured_source = row.get("structured_values_source") or ("Yahoo Finance annual statements" if annual else "Yahoo Finance quarterly statements")
+    sec_structured = structured_source == "SEC XBRL/companyfacts"
+    if sec_structured:
+        filing_label = filing_label or structured_label
     reported_label = filing_label or structured_label
-    alignment_status, alignment_source_status = _period_alignment(filing_label, structured_label)
+    alignment_status, alignment_source_status = ("Aligned", "OK") if sec_structured and filing_label == structured_label else _period_alignment(filing_label, structured_label)
     values = {
         "revenue": row.get("revenue"),
         "gross_profit": row.get("gross_profit"),
@@ -271,9 +445,9 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
         "total_debt": row.get("total_debt"),
         "shares_outstanding": quote.get("shares_outstanding"),
     }
-    missing = [key for key, value in values.items() if value is None and key not in {"eps", "shares_outstanding"}]
+    missing = row.get("sec_missing_fields") if sec_structured and isinstance(row.get("sec_missing_fields"), list) else [key for key, value in values.items() if value is None and key not in {"eps", "shares_outstanding"}]
     source_status = alignment_source_status if alignment_source_status != "OK" else ("OK" if not missing else "Partial")
-    note = "Latest quarterly statements from Yahoo Finance/yfinance."
+    note = row.get("sec_data_quality_note") if sec_structured else "Latest quarterly statements from Yahoo Finance/yfinance."
     if annual:
         source_status = "Partial"
         note = "Quarterly statements unavailable; showing latest annual filing data instead."
@@ -309,7 +483,10 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
         "filing_or_release_date": filing_date or row.get("period_date"),
         "filing_date": filing_date,
         "form_type": sec_filing.get("form_type") or ("Annual" if annual else "Quarterly"),
-        "source": "Yahoo Finance quarterly statements + " + sec_filing.get("source", "SEC metadata"),
+        "source": (f"SEC XBRL/companyfacts, latest {sec_filing.get('form_type')}" if sec_structured else "Yahoo Finance quarterly statements + " + sec_filing.get("source", "SEC metadata")),
+        "structured_values_source": structured_source,
+        "sec_companyfacts_status": row.get("sec_companyfacts_status"),
+        "sec_value_extraction_status": row.get("sec_value_extraction_status"),
         "source_status": source_status,
         **values,
         "filing_url": sec_filing.get("filing_url"),
@@ -340,10 +517,12 @@ def get_latest_quarterly_release(ticker: str) -> dict:
         obj = yf.Ticker(symbol)
         quote = fetch_quote(symbol)
         sec_filing = fetch_latest_sec_filing(symbol)
+        sec_values = _extract_sec_structured_values(sec_filing, quote)
         quarterly_income = _statement(obj, ("quarterly_income_stmt", "quarterly_financials"))
         quarterly_balance = _statement(obj, ("quarterly_balance_sheet",))
         quarterly_cash = _statement(obj, ("quarterly_cashflow", "quarterly_cash_flow"))
         quarterly_history = _normalize_history(quarterly_income, quarterly_balance, quarterly_cash, True, 12)
+        quarterly_history = _merge_sec_quarterly_history(quarterly_history, sec_values, sec_filing)
         if not quarterly_history.empty:
             return _release_from_history(symbol, quarterly_history, quote, sec_filing, annual=False)
         annual_income = _statement(obj, ("income_stmt", "financials"))
@@ -427,13 +606,16 @@ def load_latest_company_financials(ticker: str) -> dict:
         quarterly_income = _statement(obj, ("quarterly_income_stmt", "quarterly_financials"))
         quarterly_balance = _statement(obj, ("quarterly_balance_sheet",))
         quarterly_cash = _statement(obj, ("quarterly_cashflow", "quarterly_cash_flow"))
+        sec_filing = fetch_latest_sec_filing(symbol)
+        sec_values = _extract_sec_structured_values(sec_filing, quote)
         annual_income = _statement(obj, ("income_stmt", "financials"))
         annual_balance = _statement(obj, ("balance_sheet",))
         annual_cash = _statement(obj, ("cashflow", "cash_flow"))
         quarterly_history = _normalize_history(quarterly_income, quarterly_balance, quarterly_cash, True, 12)
+        quarterly_history = _merge_sec_quarterly_history(quarterly_history, sec_values, sec_filing)
         annual_history = _normalize_history(annual_income, annual_balance, annual_cash, False, 8)
         latest = quarterly_history.iloc[-1].to_dict() if not quarterly_history.empty else {}
-        latest_release = _release_from_history(symbol, quarterly_history, quote, fetch_latest_sec_filing(symbol), annual=False) if not quarterly_history.empty else get_latest_quarterly_release(symbol)
+        latest_release = _release_from_history(symbol, quarterly_history, quote, sec_filing, annual=False) if not quarterly_history.empty else get_latest_quarterly_release(symbol)
         earnings = _latest_earnings(obj, quarterly_history)
         try:
             earnings_estimate = obj.get_earnings_estimate()
@@ -479,8 +661,10 @@ def load_latest_company_financials(ticker: str) -> dict:
             "consensus_revenue": revenue_estimate if isinstance(revenue_estimate, pd.DataFrame) else pd.DataFrame(),
             "consensus_eps": earnings_estimate if isinstance(earnings_estimate, pd.DataFrame) else pd.DataFrame(),
             "source_metadata": {
-                "financials": "Yahoo Finance/yfinance quarterly and annual statements",
+                "financials": "Mixed SEC XBRL/companyfacts + Yahoo Finance/yfinance quarterly and annual statements" if sec_values.get("has_values") else "Yahoo Finance/yfinance quarterly and annual statements",
                 "latest_release": latest_release.get("source"),
+                "sec_companyfacts": (sec_values.get("sec_companyfacts_status") or {}).get("Status"),
+                "sec_value_extraction": sec_values.get("sec_value_extraction_status"),
                 "earnings": earnings.get("source", "Yahoo Finance/yfinance financial statement fallback"),
                 "estimates": "Yahoo Finance/yfinance analyst estimate tables",
             },

@@ -61,6 +61,7 @@ def build_research_packet(ticker: str) -> dict:
             "reported_period_label": latest_release.get("reported_period_label"),
             "filing_period_label": latest_release.get("filing_period_label"),
             "structured_values_period_label": latest_release.get("structured_values_period_label"),
+            "structured_values_source": latest_release.get("structured_values_source"),
             "period_alignment_status": latest_release.get("period_alignment_status"),
             "filing_date": str(latest_release.get("filing_date") or latest_release.get("filing_or_release_date")),
             "filing_type": latest_release.get("form_type"),
