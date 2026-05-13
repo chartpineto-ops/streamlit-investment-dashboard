@@ -1,67 +1,122 @@
-# Market Intelligence Dashboard
+# Research Terminal 2.0 — V1 MVP
 
-A Streamlit dashboard with a sidebar tab switcher:
+A Bloomberg-style personal investment research terminal built with Streamlit.
 
-- **Home**: market dashboard landing page with index snapshot, sector performance, major news, quick stock snapshot, market catalysts, and a heuristic risk gauge.
-- **Volatility Radar**: polished volatility analytics dashboard with scan-status badges, executive summary cards, stress chips, dark themed forecast tables, and integrated catalyst/news/social/data-health tabs across configurable stock universes.
-- **Company Analysis**: three-statement analysis dashboard with profitability, balance sheet, cash-flow, stock-performance, and rule-based insight sections.
-- **Competitive Analysis**: peer-aware comp sheet with automatic or manual peer selection, normalized stock performance, valuation/growth/profitability/balance-sheet/risk charts, competitive scoring, and rule-based takeaways.
+V1 focuses on clean architecture, reliable fail-soft data flows, transparent scoring, SQLite-backed watchlists, in-app signal alerts, and optional OpenAI-powered due diligence summaries.
 
-The UI is tuned for a compact financial terminal workflow: dark market-screen styling, structured scan toolbars, compact summary cards, dense side filters, and integrated charts/tables.
+## Features
 
-The Volatility Radar ranks a stock universe by projected absolute volatility up to seven trading days ahead. It blends recent realized volatility with event-driven catalysts:
+- Dark market-terminal UI
+- Global ticker search
+- Home / Market Monitor with major ETF/index proxies
+- Company Analysis with quote, price chart, financials, valuation, balance sheet risk, filings, and options metrics
+- Transparent Signal Center with category scores and explainable strengths/weaknesses
+- SQLite Watchlist with signal history and exact `Alert (D/D Change)` column
+- In-app alert center for signal/score/confidence changes
+- Volatility Radar with 7D and 30D implied move where options data exists
+- Macro & Catalysts headline view
+- AI Due Diligence memo generation when `OPENAI_API_KEY` is configured
+- Data Health / Settings panel
 
-- Broad US exchange-listed universe loading from Nasdaq Trader symbol directories.
-- Preset filters for S&P 500, Nasdaq-100, Dow 30, S&P MidCap 400, S&P SmallCap 600, all US listed stocks, and major exchanges.
-- Market-cap, sector, price, liquidity, index, exchange, search, ETF, and random-sample filters.
-- Earnings proximity from Yahoo Finance calendars.
-- Options-implied volatility from near-horizon at-the-money chains, formatted as `+/-XX.XX%`.
-- Side-by-side tactical and 30-day options-implied move benchmarks.
-- Historical realized volatility windows for 20D, 60D, 90D, and 252D lookbacks.
-- Same-horizon trailing realized move check for a quick forecast coverage/backtest view.
-- Broad-universe scans sample across the full selected universe by default, then rank by options-implied move when available and projected move otherwise.
-- User-selectable forecast sorting for option move, IV, ATR, volume spike, social engagement, or explicit ticker A-Z.
-- Scheduled Reports pulls cached official/reputable economic-calendar sources where available, with clearly labeled fallback schedules for unavailable sources.
-- Sidebar column selector for the Highest Projected Volatility table.
-- Economic and socioeconomic stress from RSS headlines.
-- Social mention volatility from configurable social RSS feeds, with optional Stocktwits symbol streams.
-- Optional scheduled macro reports entered in the sidebar.
-- Ticker-specific news, social chatter, volume shock, beta, ATR, momentum, gaps, and analyst target dispersion.
+## Run Locally
 
-## Run
+Python version: `3.12`
 
-```powershell
-$env:UV_CACHE_DIR = ".\.uv-cache"
-uv run --python 3.12 --with-requirements requirements.txt streamlit run app.py
-```
-
-Or install the dependencies into an existing Python environment:
-
-```powershell
+```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Notes
+The app stores watchlist, signal history, and alerts in a local SQLite file:
 
-The forecast is an expected absolute move/risk ranking, not a price direction prediction or investment recommendation. The default forecast table pins Rank, Ticker, and Company, then shows Last Price, Options Move, and Direction Bias unless you choose more columns in the sidebar. Broad scans are capped in the sidebar because free data endpoints are too slow for thousands of tickers in one pass. Options IV and Stocktwits are optional live data sources because they add per-symbol requests. Feed URLs and free market-data endpoints can change, so the dashboard includes a Data Health tab for source status.
+```text
+research_terminal.db
+```
 
-## Live Data And Refresh Strategy
+This file is intentionally ignored by git.
 
-The app has global Live Refresh controls in the sidebar. Auto-refresh reruns the Streamlit app on the chosen cadence, while `st.cache_data` TTLs prevent slow-moving data from being fetched too often.
+## Streamlit Secrets
 
-Current data model:
+Create `.streamlit/secrets.toml` locally or add secrets in Streamlit Community Cloud.
 
-- Quotes, sector ETFs, price charts, options chains, financial statements, analyst expectations, and analyst report links use Yahoo Finance/yfinance.
-- Market and macro headlines use shared reputable RSS/API feeds and official sources, cached for 10 minutes.
-- Scheduled Reports / Economic Calendar uses official or reputable public calendar sources, cached for 6 hours.
-- Symbol universe and index membership data are cached daily.
+Optional AI due diligence:
 
-Refresh cadence:
+```toml
+OPENAI_API_KEY = "sk-..."
+OPENAI_MODEL = "gpt-4o-mini"
+```
 
-- Quotes and quick stock data refresh as frequently as the sidebar interval and quote cache allow.
-- Sector performance refreshes on a short cache suitable for ETF quote snapshots.
-- Volatility/options scans refresh on a slower cache to avoid excessive per-symbol option-chain calls.
-- Fundamentals, analyst data, economic calendars, and universe data refresh less frequently because those sources move slowly.
+If `OPENAI_API_KEY` is missing, the AI Due Diligence tab shows a clean disabled state and the rest of the app still works.
 
-Yahoo/yfinance is labeled as delayed or near-real-time fallback data, not true tick-by-tick market data. The dashboard is designed to feel live through safe refresh cadence and clear freshness indicators without changing the underlying data model.
+## V1 Data Sources
+
+- Market quotes, history, financials, options, analyst metadata: Yahoo Finance via `yfinance`
+- Headlines: Yahoo Finance plus public RSS feeds where available
+- Filings: SEC EDGAR company submissions API
+- Storage: local SQLite
+- AI memo: OpenAI API only when configured through Streamlit secrets
+
+## Signal Center Methodology
+
+The signal engine is transparent and deterministic. It is not a black-box model.
+
+Weights:
+
+- Growth: 20%
+- Profitability / margins: 15%
+- Balance sheet / liquidity: 15%
+- Valuation: 20%
+- Momentum / technicals: 15%
+- Catalysts / news: 15%
+
+Signal labels:
+
+- `80–100`: Buy
+- `65–79`: Buy or Speculative Buy depending on risk
+- `45–64`: Hold / Watchlist
+- `25–44`: Sell / Trim
+- `<25`: Avoid
+- Sparse data: No Rating / Insufficient Data
+
+Signals are research indicators only, not investment advice.
+
+## Watchlist Alerts And D/D Change
+
+The Watchlist tab persists tickers in SQLite. When you click **Refresh Watchlist**, the app:
+
+1. Calculates the current signal for each ticker.
+2. Compares it to the latest prior `signal_history` record.
+3. Creates an alert when a material day-over-day change occurs.
+
+Alert triggers:
+
+- Signal label changed
+- Composite score changed by 5+ points
+- Confidence changed
+- Score crossed a Buy threshold
+- Score crossed a Sell/Avoid threshold
+
+The watchlist table includes the required column:
+
+```text
+Alert (D/D Change)
+```
+
+## Smoke Test
+
+```bash
+python scripts/smoke_test.py
+```
+
+The smoke test initializes SQLite, loads a quote, computes a signal, checks options handling, and verifies the watchlist alert column exists.
+
+## Known Limitations
+
+- `yfinance` is MVP-grade and may be incomplete, delayed, or unreliable.
+- Some tickers may lack options data.
+- Some financial statement fields may be unavailable or provider-specific.
+- Some valuation metrics are not meaningful for unprofitable companies.
+- SEC filing lookup depends on SEC API availability and ticker-to-CIK mapping.
+- In-app alerts only trigger when the app is opened/refreshed or when **Refresh Watchlist** is clicked.
+- V1 is not investment advice.
+- Signals are research indicators, not automatic trade instructions.

@@ -6,3 +6,5 @@ streamlit.err
 streamlit.log
 .streamlit/secrets.toml
 .DS_Store
+*.db
+*.db-journal
