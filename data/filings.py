@@ -143,8 +143,27 @@ def extract_sec_concept_value(
                     score += 2
                 if fp and str(item.get("fp") or "").upper() == fp:
                     score += 2
-                if item.get("frame"):
+                frame = str(item.get("frame") or "").upper()
+                if frame:
                     score += 1
+                    if fp and fp != "FY" and fp in frame and "YTD" not in frame:
+                        score += 3
+                    if "YTD" in frame and fp not in {"", None, "FY"}:
+                        score -= 3
+                start = item.get("start")
+                if start and target_end:
+                    try:
+                        days = (pd.Timestamp(target_end) - pd.Timestamp(start)).days + 1
+                        if fp == "FY":
+                            if 300 <= days <= 400:
+                                score += 3
+                        else:
+                            if 70 <= days <= 110:
+                                score += 3
+                            elif days > 120:
+                                score -= 2
+                    except Exception:
+                        pass
                 candidates.append((score, concept, unit, item))
     if not candidates:
         return {"value": None, "concept": None, "unit": None, "source_note": "SEC concept not found for matching period"}

@@ -9,7 +9,7 @@ import streamlit as st
 
 from ai.dd_generator import build_research_packet, generate_dd_memo, openai_key_from_secrets
 from data.company_identity import get_company_identity
-from data.filings import fetch_latest_sec_filing, fetch_sec_filings, ticker_to_cik
+from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_filing, fetch_sec_filings, ticker_to_cik
 from data.financials import get_latest_quarterly_release, load_latest_company_financials, view_history
 from data.macro import fetch_macro_catalysts
 from data.market_data import DEFAULT_TICKERS, fetch_history, fetch_market_snapshot, fetch_quote
@@ -403,7 +403,7 @@ def render_latest_quarterly_release(financials: dict) -> None:
         "good"
         if status == "OK"
         else "warn"
-        if status in {"Partial", "Not applicable", "Stale structured values", "Filing metadata only"}
+        if status in {"Partial", "Not applicable", "Stale structured values", "Filing metadata only", "Structured values only"}
         else "neutral"
         if status in {"Insufficient data", "Missing"}
         else "bad"
@@ -454,11 +454,13 @@ def render_price_chart(ticker: str) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_financial_charts(history: pd.DataFrame, view: str) -> None:
+def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict | None = None) -> None:
     if history.empty:
         empty_state(f"{view} financial statement data unavailable.")
         return
     chart_frame = history.tail(8).copy()
+    if chart_source:
+        st.caption(f"Chart source: {chart_source.get('label', 'N/A')} | Status: {chart_source.get('status', 'N/A')} | {chart_source.get('note', '')}")
     col1, col2 = st.columns(2)
     with col1:
         fig = go.Figure()
@@ -624,7 +626,15 @@ def company_page(ticker: str) -> None:
     section("3-Statement Analysis", "Latest normalized statement metrics for the selected view.")
     render_statement_table(latest)
     section("Revenue, EPS, And Margins")
-    render_financial_charts(history, view)
+    render_financial_charts(
+        history,
+        view,
+        {
+            "label": financials.get("source_metadata", {}).get("chart_source"),
+            "status": financials.get("source_metadata", {}).get("chart_source_status"),
+            "note": financials.get("source_metadata", {}).get("chart_source_note"),
+        },
+    )
     section("Valuation")
     render_metric_grid(
         [
@@ -857,6 +867,7 @@ def data_health_page(ticker: str) -> None:
     news, news_statuses = fetch_news(ticker, 8)
     filings, filing_status = fetch_sec_filings(ticker)
     sec_latest = fetch_latest_sec_filing(ticker)
+    sec_periodic = fetch_latest_periodic_sec_filing(ticker)
     _, cik_status = ticker_to_cik(ticker)
     try:
         openai_status = "OK" if st.secrets.get("OPENAI_API_KEY") else "Missing"
@@ -864,20 +875,22 @@ def data_health_page(ticker: str) -> None:
         openai_status = "Missing"
     health = pd.DataFrame(
         [
-            {"Source": "Yahoo Finance/yfinance quote", "Status": quote.get("status"), "Last Refresh": quote.get("last_updated"), "Cache TTL": "5 minutes", "Error": quote.get("error", "")},
-            {"Source": "Company identity / logo", "Status": identity.get("logo_status"), "Last Refresh": identity.get("last_updated"), "Cache TTL": "24 hours", "Error": identity.get("error", "")},
-            {"Source": "Yahoo Finance/yfinance financials", "Status": financials.get("status"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Error": financials.get("error", "")},
-            {"Source": "Latest quarterly release", "Status": latest_release.get("source_status"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Error": latest_release.get("data_quality_note", "")},
-            {"Source": "Yahoo Finance/yfinance options", "Status": opts.get("status"), "Last Refresh": opts.get("last_updated"), "Cache TTL": "30 minutes", "Error": opts.get("debug_error", "")},
-            {"Source": "Yahoo Finance/RSS news", "Status": "OK" if not news.empty else "Partial", "Last Refresh": now_et(), "Cache TTL": "30 minutes", "Error": ""},
-            {"Source": "SEC ticker-to-CIK mapping", "Status": cik_status.get("Status"), "Last Refresh": cik_status.get("Last Updated"), "Cache TTL": "24 hours", "Error": cik_status.get("Error", "")},
-            {"Source": "SEC submissions latest filing", "Status": sec_latest.get("source_status"), "Last Refresh": sec_latest.get("last_updated"), "Cache TTL": "24 hours", "Error": sec_latest.get("error", "")},
-            {"Source": "SEC companyfacts", "Status": (latest_release.get("sec_companyfacts_status") or {}).get("Status", "N/A"), "Last Refresh": (latest_release.get("sec_companyfacts_status") or {}).get("Last Updated", latest_release.get("last_updated")), "Cache TTL": "24 hours", "Error": (latest_release.get("sec_companyfacts_status") or {}).get("Error", "")},
-            {"Source": "SEC value extraction", "Status": latest_release.get("sec_value_extraction_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Error": latest_release.get("data_quality_note", "")},
-            {"Source": "Period alignment", "Status": latest_release.get("period_alignment_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Error": f"Filing period: {latest_release.get('filing_period_label') or 'N/A'} | Structured period: {latest_release.get('structured_values_period_label') or 'N/A'}"},
-            {"Source": filing_status.get("Source"), "Status": filing_status.get("Status"), "Last Refresh": filing_status.get("Last Updated"), "Cache TTL": "24 hours", "Error": filing_status.get("Error", "")},
-            {"Source": "SQLite watchlist", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "Persistent local DB", "Error": ""},
-            {"Source": "OpenAI API", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "On demand", "Error": "OPENAI_API_KEY not configured" if openai_status == "Missing" else ""},
+            {"Source": "Yahoo Finance/yfinance quote", "Status": quote.get("status"), "Last Refresh": quote.get("last_updated"), "Cache TTL": "5 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": quote.get("error", "")},
+            {"Source": "Company identity / logo", "Status": identity.get("logo_status"), "Last Refresh": identity.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": identity.get("error", "")},
+            {"Source": "Yahoo Finance/yfinance financials", "Status": financials.get("status"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(financials.get("missing_fields", [])), "Error": financials.get("error", "")},
+            {"Source": "Latest quarterly release", "Status": latest_release.get("source_status"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("data_quality_note", "")},
+            {"Source": "Yahoo Finance/yfinance options", "Status": opts.get("status"), "Last Refresh": opts.get("last_updated"), "Cache TTL": "30 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": opts.get("debug_error", "")},
+            {"Source": "Yahoo Finance/RSS news", "Status": "OK" if not news.empty else "Partial", "Last Refresh": now_et(), "Cache TTL": "30 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
+            {"Source": "SEC ticker-to-CIK mapping", "Status": cik_status.get("Status"), "Last Refresh": cik_status.get("Last Updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": cik_status.get("Error", "")},
+            {"Source": "SEC latest filing metadata", "Status": sec_latest.get("source_status"), "Last Refresh": sec_latest.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": sec_latest.get("filing_period_label", ""), "Structured Period": "", "Missing Fields": "", "Error": sec_latest.get("error", "")},
+            {"Source": "SEC latest period-bearing filing", "Status": sec_periodic.get("source_status"), "Last Refresh": sec_periodic.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": sec_periodic.get("filing_period_label", ""), "Structured Period": "", "Missing Fields": "", "Error": sec_periodic.get("error", "")},
+            {"Source": "SEC companyfacts", "Status": (latest_release.get("sec_companyfacts_status") or {}).get("Status", "N/A"), "Last Refresh": (latest_release.get("sec_companyfacts_status") or {}).get("Last Updated", latest_release.get("last_updated")), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": (latest_release.get("sec_companyfacts_status") or {}).get("Error", "")},
+            {"Source": "SEC structured value extraction", "Status": latest_release.get("sec_value_extraction_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("data_quality_note", "")},
+            {"Source": "Period alignment", "Status": latest_release.get("period_alignment_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": latest_release.get("data_quality_note", "")},
+            {"Source": "Financial chart source", "Status": financials.get("source_metadata", {}).get("chart_source_status", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": financials.get("source_metadata", {}).get("chart_source_note", "")},
+            {"Source": filing_status.get("Source"), "Status": filing_status.get("Status"), "Last Refresh": filing_status.get("Last Updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": filing_status.get("Error", "")},
+            {"Source": "SQLite watchlist", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "Persistent local DB", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
+            {"Source": "OpenAI API", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "OPENAI_API_KEY not configured" if openai_status == "Missing" else ""},
         ]
     )
     df_display(health, height=260)

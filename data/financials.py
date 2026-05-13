@@ -218,6 +218,43 @@ def _period_parts(period) -> tuple[int | None, int | None, str]:
         return None, None, "N/A"
 
 
+def normalize_fiscal_period_label(fiscal_year=None, fiscal_period=None, period_end_date=None, form_type: str | None = None) -> str | None:
+    year = None
+    try:
+        year = int(fiscal_year) if fiscal_year not in ("", None) else None
+    except Exception:
+        year = None
+    period = str(fiscal_period or "").strip().upper()
+    if period in {"1", "QTR1"}:
+        period = "Q1"
+    elif period in {"2", "QTR2"}:
+        period = "Q2"
+    elif period in {"3", "QTR3"}:
+        period = "Q3"
+    elif period in {"4", "QTR4"}:
+        period = "Q4"
+    elif period in {"YEAR", "Y"}:
+        period = "FY"
+    if not period and period_end_date:
+        try:
+            ts = pd.Timestamp(period_end_date)
+            year = year or ts.year
+            period = "FY" if form_type in {"10-K", "20-F"} else f"Q{ts.quarter}"
+        except Exception:
+            period = ""
+    if year is None or not period:
+        return None
+    return f"{year} FY" if period == "FY" else f"{year} {period}"
+
+
+def infer_quarter_from_period_end(period_end_date) -> str | None:
+    try:
+        ts = pd.Timestamp(period_end_date)
+        return f"{ts.year} Q{ts.quarter}"
+    except Exception:
+        return None
+
+
 def _structured_period_label(period, annual: bool = False) -> tuple[int | None, int | None, str, object | None]:
     fiscal_year, fiscal_quarter, label = _period_parts(period)
     if annual:
@@ -254,35 +291,73 @@ def _sec_period_label(sec_filing: dict, fallback_annual: bool = False) -> tuple[
 def _period_sort_key(label: str | None) -> tuple[int, int] | None:
     if not label:
         return None
-    parts = str(label).upper().replace("FY", "Q4").split()
+    parts = str(label).upper().split()
     if len(parts) < 2:
         return None
     try:
         year = int(parts[0])
     except Exception:
         return None
-    quarter_text = parts[1].replace("Q", "")
-    try:
-        quarter = int(quarter_text)
-    except Exception:
-        quarter = 4
+    if parts[1] == "FY":
+        quarter = 5
+    else:
+        quarter_text = parts[1].replace("Q", "")
+        try:
+            quarter = int(quarter_text)
+        except Exception:
+            return None
     return year, quarter
+
+
+def compare_periods(period_a: str | None, period_b: str | None) -> int | None:
+    key_a = _period_sort_key(period_a)
+    key_b = _period_sort_key(period_b)
+    if key_a is None or key_b is None:
+        return None
+    return (key_a > key_b) - (key_a < key_b)
 
 
 def _period_alignment(sec_label: str | None, structured_label: str | None) -> tuple[str, str]:
     if sec_label and structured_label:
         if sec_label == structured_label:
             return "Aligned", "OK"
-        sec_key = _period_sort_key(sec_label)
-        structured_key = _period_sort_key(structured_label)
-        if sec_key and structured_key and sec_key > structured_key:
+        comparison = compare_periods(sec_label, structured_label)
+        if comparison is not None and comparison > 0:
             return "Filing newer than structured values", "Stale structured values"
+        if comparison is not None and comparison < 0:
+            return "Structured values only", "Structured values only"
         return "Filing newer than structured values", "Partial"
     if sec_label:
         return "Filing metadata only", "Filing metadata only"
     if structured_label:
         return "Structured values only", "Partial"
     return "Insufficient data", "Insufficient data"
+
+
+def _canonical_period(symbol: str, release: dict) -> dict:
+    return {
+        "ticker": symbol,
+        "reported_period_label": release.get("reported_period_label") or release.get("period_label"),
+        "reported_fiscal_year": release.get("fiscal_year"),
+        "reported_fiscal_period": release.get("fiscal_period"),
+        "period_end_date": release.get("period_end_date"),
+        "filing_date": release.get("filing_date") or release.get("filing_or_release_date"),
+        "form_type": release.get("form_type"),
+        "accession_number": release.get("accession_number"),
+        "filing_url": release.get("filing_url"),
+        "filing_source": release.get("source"),
+        "structured_values_period_label": release.get("structured_values_period_label"),
+        "structured_values_period_end_date": release.get("structured_values_period_end_date") or release.get("structured_values_date"),
+        "structured_values_source": release.get("structured_values_source"),
+        "period_alignment_status": release.get("period_alignment_status"),
+        "source_status": release.get("source_status"),
+        "data_quality_note": release.get("data_quality_note"),
+    }
+
+
+def _with_latest_period(symbol: str, release: dict) -> dict:
+    release["latest_period"] = _canonical_period(symbol, release)
+    return release
 
 
 def _structured_sec_filing(symbol: str) -> dict:
@@ -415,6 +490,28 @@ def _merge_sec_quarterly_history(history: pd.DataFrame, sec_values: dict, sec_fi
     return _augment_history(frame, True)
 
 
+def _chart_source_status(history: pd.DataFrame, latest_release: dict) -> dict:
+    if history is None or history.empty:
+        return {"label": "No quarterly chart data", "status": "Insufficient data", "note": "Quarterly financial chart data unavailable."}
+    sources = set()
+    if "structured_values_source" in history:
+        for value in history["structured_values_source"].dropna().astype(str):
+            if value:
+                sources.add(value)
+    if sources and sources == {"SEC XBRL/companyfacts"}:
+        label = "SEC XBRL/companyfacts"
+    elif "SEC XBRL/companyfacts" in sources:
+        label = "Mixed SEC + Yahoo Finance"
+    else:
+        label = "Yahoo Finance quarterly statements"
+    alignment = latest_release.get("period_alignment_status")
+    status = "Partial" if alignment in {"Filing newer than structured values", "Filing metadata only"} else "OK"
+    note = latest_release.get("data_quality_note") or label
+    if alignment == "Aligned":
+        status = latest_release.get("source_status", "OK")
+    return {"label": label, "status": status, "note": note}
+
+
 def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_filing: dict, annual: bool = False) -> dict:
     updated = now_et()
     filing_label, sec_fiscal_year, sec_fiscal_period, period_end = _sec_period_label(sec_filing, annual)
@@ -426,13 +523,16 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
         note = "Latest filing metadata may be available, but structured quarterly values were not returned."
         if filing_label:
             note = f"Latest filing detected for {filing_label}; structured financial values were not returned."
-        return {
+        release_period_end = period_end if filing_label else None
+        release = {
             "ticker": symbol,
             "period_label": filing_label or "N/A",
             "reported_period_label": filing_label or "N/A",
             "filing_period_label": filing_label,
             "structured_values_period_label": None,
             "structured_values_date": None,
+            "structured_values_period_end_date": None,
+            "structured_values_source": None,
             "period_alignment_status": "Filing metadata only" if filing_label else "Insufficient data",
             "source": sec_filing.get("source", "Yahoo Finance/yfinance quarterly statements"),
             "source_status": status,
@@ -443,31 +543,32 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
             "accession_number": sec_filing.get("accession_number"),
             "fiscal_year": sec_fiscal_year,
             "fiscal_period": sec_fiscal_period,
-            "period_end_date": period_end,
+            "period_end_date": release_period_end,
             "missing_fields": ["quarterly financial statements"],
             "data_quality_note": note,
             "last_updated": updated,
         }
+        return _with_latest_period(symbol, release)
     row = history.iloc[-1].to_dict()
     fiscal_year, fiscal_quarter, structured_label, structured_date = _structured_period_label(row.get("period_date"), annual)
     structured_source = row.get("structured_values_source") or ("Yahoo Finance annual statements" if annual else "Yahoo Finance quarterly statements")
     sec_structured = structured_source == "SEC XBRL/companyfacts"
     if sec_structured:
         filing_label = filing_label or structured_label
-    reported_label = filing_label or structured_label
     alignment_status, alignment_source_status = ("Aligned", "OK") if sec_structured and filing_label == structured_label else _period_alignment(filing_label, structured_label)
+    reported_label = structured_label if alignment_status == "Structured values only" and structured_label else filing_label or structured_label
     values = {
-        "revenue": row.get("revenue"),
-        "gross_profit": row.get("gross_profit"),
-        "operating_income": row.get("operating_income"),
-        "net_income": row.get("net_income"),
-        "eps": row.get("eps"),
-        "operating_cash_flow": row.get("operating_cash_flow"),
-        "capital_expenditures": row.get("capital_expenditures"),
-        "free_cash_flow": row.get("free_cash_flow"),
-        "cash": row.get("cash"),
-        "total_debt": row.get("total_debt"),
-        "shares_outstanding": quote.get("shares_outstanding"),
+        "revenue": to_float(row.get("revenue")),
+        "gross_profit": to_float(row.get("gross_profit")),
+        "operating_income": to_float(row.get("operating_income")),
+        "net_income": to_float(row.get("net_income")),
+        "eps": to_float(row.get("eps")),
+        "operating_cash_flow": to_float(row.get("operating_cash_flow")),
+        "capital_expenditures": to_float(row.get("capital_expenditures")),
+        "free_cash_flow": to_float(row.get("free_cash_flow")),
+        "cash": to_float(row.get("cash")),
+        "total_debt": to_float(row.get("total_debt")),
+        "shares_outstanding": to_float(quote.get("shares_outstanding")),
     }
     missing = row.get("sec_missing_fields") if sec_structured and isinstance(row.get("sec_missing_fields"), list) else [key for key, value in values.items() if value is None and key not in {"eps", "shares_outstanding"}]
     source_status = alignment_source_status if alignment_source_status != "OK" else ("OK" if not missing else "Partial")
@@ -485,6 +586,9 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
         note = "Structured financial values are available, but SEC filing period metadata was not returned."
     filing_date = sec_filing.get("filing_date")
     period_date = row.get("period_date")
+    release_period_end = period_end if filing_label else structured_date
+    if alignment_status == "Structured values only":
+        release_period_end = structured_date
     try:
         if alignment_status == "Aligned" and filing_date and period_date and pd.Timestamp(filing_date) > pd.Timestamp(period_date) + pd.Timedelta(days=120):
             note = "Latest filing detected; structured financial values may lag the filing metadata."
@@ -492,18 +596,19 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
                 source_status = "Partial"
     except Exception:
         pass
-    return {
+    release = {
         "ticker": symbol,
         "period_label": reported_label,
         "reported_period_label": reported_label,
         "filing_period_label": filing_label,
         "structured_values_period_label": structured_label,
         "structured_values_date": structured_date,
+        "structured_values_period_end_date": structured_date,
         "period_alignment_status": alignment_status,
         "fiscal_year": sec_fiscal_year or fiscal_year,
         "fiscal_quarter": fiscal_quarter if not annual else None,
         "fiscal_period": sec_fiscal_period or ("FY" if annual else (f"Q{fiscal_quarter}" if fiscal_quarter else None)),
-        "period_end_date": period_end,
+        "period_end_date": release_period_end,
         "filing_or_release_date": filing_date or row.get("period_date"),
         "filing_date": filing_date,
         "form_type": sec_filing.get("form_type") or ("Annual" if annual else "Quarterly"),
@@ -519,13 +624,14 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
         "data_quality_note": note,
         "last_updated": updated,
     }
+    return _with_latest_period(symbol, release)
 
 
 @st.cache_data(ttl=86_400, show_spinner=False)
 def get_latest_quarterly_release(ticker: str) -> dict:
     symbol = clean_ticker(ticker)
     if not symbol:
-        return {
+        return _with_latest_period("", {
             "ticker": "",
             "period_label": "N/A",
             "reported_period_label": "N/A",
@@ -536,7 +642,7 @@ def get_latest_quarterly_release(ticker: str) -> dict:
             "missing_fields": ["ticker"],
             "data_quality_note": "Invalid ticker.",
             "last_updated": now_et(),
-        }
+        })
     try:
         obj = yf.Ticker(symbol)
         quote = fetch_quote(symbol)
@@ -555,7 +661,7 @@ def get_latest_quarterly_release(ticker: str) -> dict:
         annual_history = _normalize_history(annual_income, annual_balance, annual_cash, False, 4)
         return _release_from_history(symbol, annual_history, quote, sec_filing, annual=True)
     except Exception as exc:
-        return {
+        return _with_latest_period(symbol, {
             "ticker": symbol,
             "period_label": "N/A",
             "reported_period_label": "N/A",
@@ -568,7 +674,7 @@ def get_latest_quarterly_release(ticker: str) -> dict:
             "missing_fields": ["latest quarterly release"],
             "data_quality_note": str(exc),
             "last_updated": now_et(),
-        }
+        })
 
 
 def _latest_earnings(obj: yf.Ticker, financial_history: pd.DataFrame) -> dict:
@@ -657,6 +763,7 @@ def load_latest_company_financials(ticker: str) -> dict:
             warnings.append("Missing latest quarterly fields: " + ", ".join(missing))
         if latest.get("revenue_yoy_base_effect"):
             warnings.append("Latest revenue growth may be not meaningful due to small-base effect.")
+        chart_source = _chart_source_status(quarterly_history, latest_release)
         status = status_from_warnings(warnings, required_ok=bool(not quarterly_history.empty or not annual_history.empty))
         return {
             "ticker": symbol,
@@ -689,6 +796,9 @@ def load_latest_company_financials(ticker: str) -> dict:
                 "latest_release": latest_release.get("source"),
                 "sec_companyfacts": (sec_values.get("sec_companyfacts_status") or {}).get("Status"),
                 "sec_value_extraction": sec_values.get("sec_value_extraction_status"),
+                "chart_source": chart_source.get("label"),
+                "chart_source_status": chart_source.get("status"),
+                "chart_source_note": chart_source.get("note"),
                 "earnings": earnings.get("source", "Yahoo Finance/yfinance financial statement fallback"),
                 "estimates": "Yahoo Finance/yfinance analyst estimate tables",
             },
