@@ -128,7 +128,35 @@ def _label_list(values: list[str], limit: int = 5) -> str:
         return ""
     if len(cleaned) <= limit:
         return ", ".join(cleaned)
-    return ", ".join(cleaned[:limit]) + f", +{len(cleaned) - limit} more"
+    return f"{len(cleaned)} items: " + ", ".join(cleaned[:limit])
+
+
+CORE_FINANCIAL_FIELDS = [
+    "revenue",
+    "gross_profit",
+    "operating_income",
+    "net_income",
+    "eps",
+    "cash",
+    "total_debt",
+    "operating_cash_flow",
+    "capital_expenditures",
+    "free_cash_flow",
+    "shares_outstanding",
+    "total_assets",
+]
+
+DERIVED_FINANCIAL_FIELDS = [
+    "gross_margin",
+    "operating_margin",
+    "net_margin",
+    "fcf_margin",
+    "net_cash_or_debt",
+    "cash_runway",
+    "revenue_yoy_growth",
+]
+
+NOT_APPLICABLE_QUOTE_TYPES = {"ETF", "MUTUALFUND", "FUND", "INDEX", "CRYPTOCURRENCY"}
 
 
 def _date_label(value) -> str | None:
@@ -172,6 +200,11 @@ def _metric_source_detail(
     status: str = "N/A",
     note: str = "",
     fallback_used: bool = False,
+    fallback_attempted: bool = False,
+    fallback_source: str | None = None,
+    component_concepts_used: tuple[str, ...] | list[str] | None = None,
+    calculation_formula: str | None = None,
+    source_inputs: str | None = None,
     period: str | None = None,
     period_end_date=None,
 ) -> dict:
@@ -181,6 +214,11 @@ def _metric_source_detail(
         "concept_used": concept,
         "concepts_attempted": (),
         "fallback_used": fallback_used,
+        "fallback_attempted": fallback_attempted,
+        "fallback_source": fallback_source,
+        "component_concepts_used": tuple(component_concepts_used or ()),
+        "calculation_formula": calculation_formula,
+        "source_inputs": source_inputs,
         "status": status,
         "note": note,
         "period": period,
@@ -193,39 +231,190 @@ def _set_attempted_concepts(metric_sources: dict, key: str) -> None:
         metric_sources[key]["concepts_attempted"] = SEC_ATTEMPTED_CONCEPTS.get(key, ())
 
 
+def _missing_metric_note(key: str, fallback_attempted: bool = False) -> str:
+    label = _metric_label(key)
+    if key == "gross_profit":
+        if fallback_attempted:
+            return "Gross Profit was not found under mapped SEC concepts and no period-aligned Yahoo Finance fallback was available."
+        return "No mapped gross profit concept found for this period. Period-aligned Yahoo Finance fallback will be used if available."
+    if key == "total_debt":
+        return "No mapped total debt or debt component concepts found for this period."
+    if key == "free_cash_flow":
+        return "Free Cash Flow could not be calculated because Operating Cash Flow or Capex is missing."
+    if fallback_attempted:
+        return f"{label} was not found under mapped SEC concepts and no period-aligned Yahoo Finance fallback was available."
+    return f"No mapped SEC concept found for {label} in this filing period."
+
+
+def _display_metric_status(status: str | None, value=None) -> str:
+    raw = str(status or "").strip()
+    if raw in {"SEC concept found", "OK", "Direct"} and _value_present(value):
+        return "Direct"
+    if raw in {"Fallback", "yfinance fallback"} and _value_present(value):
+        return "Fallback"
+    if raw == "Calculated":
+        return "Calculated"
+    if raw in {"Partial estimate", "Estimated"}:
+        return "Partial estimate"
+    if raw == "Not applicable":
+        return "Not applicable"
+    if raw in {"Missing concept", "Missing", "N/A"} or not _value_present(value):
+        return "Missing"
+    return raw or ("Direct" if _value_present(value) else "Missing")
+
+
+def _completeness_status(score: float | int | None, ticker_type: str | None = None) -> str:
+    if ticker_type in {"etf_fund", "crypto_proxy", "invalid_unknown"}:
+        return "Not applicable" if ticker_type != "invalid_unknown" else "Insufficient"
+    if score is None:
+        return "Insufficient"
+    if score >= 90:
+        return "Complete"
+    if score >= 75:
+        return "Mostly complete"
+    if score >= 50:
+        return "Partial"
+    if score >= 25:
+        return "Limited"
+    return "Insufficient"
+
+
+def _ticker_type(symbol: str, quote: dict | None) -> str:
+    quote = quote or {}
+    quote_type = str(quote.get("quote_type") or "").upper()
+    if quote.get("status") == "Error" and not quote_type:
+        return "invalid_unknown"
+    if not quote_type and quote.get("price") is None and str(quote.get("company_name") or "").upper() == str(symbol).upper():
+        return "invalid_unknown"
+    if quote_type in {"ETF", "MUTUALFUND", "FUND", "INDEX"}:
+        return "etf_fund"
+    if quote_type == "CRYPTOCURRENCY" or str(symbol).upper().endswith("-USD"):
+        return "crypto_proxy"
+    if quote_type in {"EQUITY", "COMMONSTOCK", "ADR", "PREFERREDSTOCK"} or quote.get("company_name"):
+        return "operating_company"
+    return "unknown"
+
+
+def _financial_quality_categories(metric_sources: dict, values: dict, missing: list[str] | None = None, not_applicable: list[str] | None = None, ticker_type: str | None = None) -> dict:
+    missing_set = set(missing or [])
+    not_applicable_set = set(not_applicable or [])
+    categories = {"found_direct": [], "fallback": [], "calculated": [], "estimated": [], "missing": [], "not_applicable": []}
+    credits = 0.0
+    denominator = 0.0
+    for key in CORE_FINANCIAL_FIELDS:
+        label = _metric_label(key)
+        if key in not_applicable_set:
+            categories["not_applicable"].append(label)
+            continue
+        denominator += 1.0
+        detail = metric_sources.get(key) or {}
+        value = values.get(key)
+        if not _value_present(value):
+            value = detail.get("value")
+        status = _display_metric_status(detail.get("status"), value)
+        if key in missing_set or status == "Missing" or not _value_present(value):
+            categories["missing"].append(label)
+            continue
+        if status == "Calculated":
+            categories["calculated"].append(label)
+            credits += 0.9
+        elif status == "Fallback":
+            categories["fallback"].append(label)
+            credits += 0.9
+        elif status in {"Partial estimate", "Estimated"}:
+            categories["estimated"].append(label)
+            credits += 0.5
+        else:
+            categories["found_direct"].append(label)
+            credits += 1.0
+    score = round(credits / denominator * 100) if denominator else None
+    categories.update(
+        {
+            "required_count": int(denominator),
+            "available_count": len(categories["found_direct"]) + len(categories["fallback"]) + len(categories["calculated"]) + len(categories["estimated"]),
+            "direct_count": len(categories["found_direct"]),
+            "fallback_count": len(categories["fallback"]),
+            "calculated_count": len(categories["calculated"]),
+            "estimated_count": len(categories["estimated"]),
+            "missing_count": len(categories["missing"]),
+            "not_applicable_count": len(categories["not_applicable"]),
+            "completeness_score": score,
+            "source_status": _completeness_status(score, ticker_type),
+        }
+    )
+    return categories
+
+
+def _compact_source_status_note(quality: dict) -> str:
+    if not quality:
+        return "Latest-period data quality unavailable. Review reconciliation."
+    if quality.get("source_status") == "Not applicable":
+        return "Corporate financial statements are not applicable for this ticker type."
+    score = quality.get("completeness_score")
+    score_text = "N/A" if score is None else f"{score}%"
+    estimated_count = quality.get("estimated_count", 0)
+    missing_count = quality.get("missing_count", 0)
+    estimated_label = "field" if estimated_count == 1 else "fields"
+    missing_label = "field" if missing_count == 1 else "fields"
+    return (
+        f"{score_text} complete. {quality.get('available_count', 0)} of {quality.get('required_count', 0)} core fields available. "
+        f"{estimated_count} estimated/partial {estimated_label}; {missing_count} missing {missing_label}. "
+        "Review reconciliation."
+    )
+
+
+def _calculated_metric_sentence(key: str, detail: dict) -> str:
+    label = _metric_label(key)
+    if key == "free_cash_flow":
+        return "Free Cash Flow was calculated from Operating Cash Flow less Capex."
+    formula = detail.get("calculation_formula")
+    return f"{label} was calculated" + (f" as {formula}" if formula else "") + "."
+
+
+def _estimated_metric_sentence(key: str, detail: dict) -> str:
+    label = _metric_label(key)
+    components = [str(item) for item in detail.get("component_concepts_used") or () if item]
+    if key == "total_debt" and components:
+        return f"Total Debt was partially estimated from available debt components: {' + '.join(components)}."
+    return f"{label} was partially estimated; review the reconciliation row for component details."
+
+
 def _latest_source_reason(release: dict, values: dict, missing: list[str]) -> str:
     metric_sources = release.get("metric_sources") or {}
-    sec_found = []
-    fallback_found = []
-    partial = []
-    missing_labels = []
-    for key in RECONCILIATION_METRICS:
-        if key == "shares_outstanding":
-            continue
-        detail = metric_sources.get(key) or {}
-        label = _metric_label(key)
-        status = detail.get("status")
-        if _value_present(values.get(key)):
-            if detail.get("fallback_used"):
-                fallback_found.append(label)
-            elif status == "Partial estimate":
-                partial.append(label)
-            elif (detail.get("source") or "").startswith("SEC"):
-                sec_found.append(label)
-        elif key in missing:
-            missing_labels.append(label)
+    quality = _financial_quality_categories(metric_sources, values, missing)
     pieces = []
-    if sec_found:
-        pieces.append(f"SEC XBRL/companyfacts found {_label_list(sec_found, 6)} for the latest period")
-    if fallback_found:
-        pieces.append(f"{_label_list(fallback_found, 6)} sourced from yfinance fallback for the same period")
-    if partial:
-        pieces.append(f"{_label_list(partial, 6)} partially estimated from available components")
-    if missing_labels:
-        pieces.append(f"{_label_list(missing_labels, 8)} remain unavailable after mapped SEC concepts and period-aligned fallback")
+    if quality["found_direct"]:
+        pieces.append("Found directly: " + ", ".join(quality["found_direct"]) + ".")
+    if quality["fallback"]:
+        pieces.append("Fallback: " + ", ".join(quality["fallback"]) + " sourced from period-aligned Yahoo Finance data.")
+    if quality["calculated"]:
+        calculated = []
+        for label in quality["calculated"]:
+            key = next((item for item, metric_label in RECONCILIATION_METRICS.items() if metric_label == label), "")
+            calculated.append(_calculated_metric_sentence(key, metric_sources.get(key) or {}))
+        pieces.extend(calculated)
+    if quality["estimated"]:
+        for label in quality["estimated"]:
+            key = next((item for item, metric_label in RECONCILIATION_METRICS.items() if metric_label == label), "")
+            pieces.append(_estimated_metric_sentence(key, metric_sources.get(key) or {}))
+    if quality["missing"]:
+        pieces.append("Missing: " + ", ".join(quality["missing"]) + ".")
+        if "Gross Profit" in quality["missing"]:
+            pieces.append("Gross Profit was not found under mapped SEC concepts and no period-aligned fallback was available.")
     if not pieces:
         return release.get("data_quality_note") or "Latest-quarter financial coverage is unavailable."
-    return ". ".join(pieces) + "."
+    return " ".join(pieces)
+
+
+def _apply_quality_metadata(release: dict, values: dict | None = None, missing: list[str] | None = None, ticker_type: str | None = None) -> dict:
+    values = values or {key: release.get(key) for key in CORE_FINANCIAL_FIELDS}
+    missing = missing if missing is not None else list(release.get("missing_fields") or [])
+    not_applicable = CORE_FINANCIAL_FIELDS if release.get("source_status") == "Not applicable" or ticker_type in {"etf_fund", "crypto_proxy"} else []
+    quality = _financial_quality_categories(release.get("metric_sources") or {}, values, missing, not_applicable=not_applicable, ticker_type=ticker_type)
+    release["financial_data_quality"] = quality
+    release["data_completeness_score"] = quality.get("completeness_score")
+    release["compact_source_status_note"] = _compact_source_status_note(quality)
+    return release
 
 
 def _safe_margin(numerator, revenue) -> float | None:
@@ -553,13 +742,14 @@ def _extract_sec_total_debt(company_facts: dict, form_type: str, period_end, fis
         return broad_value, _metric_source_detail(
             value=broad_value,
             concept=broad.get("concept"),
-            status="SEC concept found",
+            status="Direct",
             note="Broad SEC debt concept found.",
             period_end_date=broad.get("period_end_date"),
         )
 
     components = []
-    component_details = []
+    component_concepts = []
+    missing_component_groups = []
     for component_name, concepts in SEC_DEBT_COMPONENT_CONCEPTS.items():
         result = extract_sec_concept_value(
             company_facts,
@@ -572,24 +762,32 @@ def _extract_sec_total_debt(company_facts: dict, form_type: str, period_end, fis
         )
         value = to_float(result.get("value"))
         if value is None:
+            missing_component_groups.append(component_name)
             continue
         components.append(value)
-        component_details.append(f"{component_name}: {result.get('concept')}")
+        if result.get("concept"):
+            component_concepts.append(str(result.get("concept")))
     if components:
         value = sum(components)
+        formula = " + ".join(component_concepts) if component_concepts else " + ".join(SEC_DEBT_COMPONENT_CONCEPTS)
+        note = f"Total Debt estimated from: {formula}."
+        if missing_component_groups:
+            note += " Debt estimate may be incomplete because " + ", ".join(missing_component_groups) + " were not found."
         return value, _metric_source_detail(
             value=value,
-            concept=", ".join(component_details),
+            concept=None,
             status="Partial estimate",
-            note="Total Debt estimated from available debt components; review before relying on this value.",
+            note=note,
+            component_concepts_used=tuple(component_concepts),
+            calculation_formula=formula,
             period_end_date=period_end,
         )
 
     return None, _metric_source_detail(
         value=None,
         concept=None,
-        status="Missing concept",
-        note="No mapped total debt or debt component concepts found for this period.",
+        status="Missing",
+        note=_missing_metric_note("total_debt"),
         period_end_date=period_end,
     )
 
@@ -639,8 +837,9 @@ def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) 
             metric_sources[key] = _metric_source_detail(
                 value=None,
                 concept=None,
-                status="Missing concept",
-                note=f"No mapped SEC concept found for {_metric_label(key)} in this filing period.",
+                status="Missing",
+                note=_missing_metric_note(key),
+                fallback_source="Yahoo Finance/yfinance quarterly statements",
                 period=filing_label,
                 period_end_date=period_end,
             )
@@ -677,9 +876,11 @@ def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) 
         values["free_cash_flow"] = values["operating_cash_flow"] - abs(values["capital_expenditures"])
         metric_sources["free_cash_flow"] = _metric_source_detail(
             value=values["free_cash_flow"],
-            concept="calculated_from_operating_cash_flow_less_capex",
-            status="Partial estimate",
-            note="Free cash flow calculated from SEC operating cash flow less capex.",
+            concept=None,
+            status="Calculated",
+            note="Free Cash Flow calculated as Operating Cash Flow less Capex. Capex normalized as cash outflow.",
+            calculation_formula="Operating Cash Flow - Capex Outflow",
+            source_inputs="Operating Cash Flow, Capex",
             period=filing_label,
             period_end_date=period_end,
         )
@@ -690,8 +891,9 @@ def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) 
         metric_sources["free_cash_flow"] = _metric_source_detail(
             value=None,
             concept=None,
-            status="Missing concept",
-            note="Free cash flow could not be calculated because operating cash flow or capex is missing.",
+            status="Missing",
+            note=_missing_metric_note("free_cash_flow"),
+            calculation_formula="Operating Cash Flow - Capex Outflow",
             period=filing_label,
             period_end_date=period_end,
         )
@@ -787,9 +989,19 @@ def _merge_sec_quarterly_history(history: pd.DataFrame, sec_values: dict, sec_fi
                     status="yfinance fallback",
                     note=f"{_metric_label(key)} unavailable from SEC concepts; yfinance same-period value used.",
                     fallback_used=True,
+                    fallback_attempted=True,
+                    fallback_source="Yahoo Finance/yfinance quarterly statements",
                     period=row.get("period"),
                     period_end_date=row.get("period_date"),
                 )
+            for key in missing_fields:
+                detail = metric_sources.get(key) or _metric_source_detail(value=None)
+                detail["fallback_attempted"] = True
+                detail["fallback_source"] = "Yahoo Finance/yfinance quarterly statements"
+                detail["status"] = "Missing"
+                detail["note"] = _missing_metric_note(key, fallback_attempted=True)
+                metric_sources[key] = detail
+                _set_attempted_concepts(metric_sources, key)
             row["metric_sources"] = metric_sources
             row["sec_missing_fields"] = missing_fields
             if missing_fields:
@@ -858,6 +1070,7 @@ def _financial_reconciliation(symbol: str, latest_release: dict, latest_row: dic
     filed_date = _date_label(latest_release.get("filing_date") or latest_release.get("filing_or_release_date"))
     accession = latest_release.get("accession_number")
     metric_sources = latest_release.get("metric_sources") or {}
+    release_not_applicable = latest_release.get("source_status") == "Not applicable"
     rows = []
     for key, label in RECONCILIATION_METRICS.items():
         raw_value = latest_release.get(key)
@@ -868,15 +1081,32 @@ def _financial_reconciliation(symbol: str, latest_release: dict, latest_row: dic
         note = latest_release.get("source_status_reason") or latest_release.get("data_quality_note", "")
         concept_used = detail.get("concept_used")
         concepts_attempted = detail.get("concepts_attempted") or SEC_ATTEMPTED_CONCEPTS.get(key, ())
+        component_concepts_used = detail.get("component_concepts_used") or ()
+        calculation_formula = detail.get("calculation_formula")
         fallback_used = bool(detail.get("fallback_used"))
+        fallback_attempted = bool(detail.get("fallback_attempted") or fallback_used)
         status = detail.get("status")
         if key == "shares_outstanding":
             raw_value = latest_release.get(key) if _value_present(latest_release.get(key)) else latest_row.get(key)
-            metric_source = detail.get("source") or "Quote metadata / latest provider"
-            metric_period = "Latest quote"
-            metric_period_end = None
-            status = status or ("OK" if _value_present(raw_value) else "N/A")
-            note = detail.get("note") or note
+            if release_not_applicable:
+                raw_value = None
+                metric_source = "N/A"
+                metric_period = "Not applicable"
+                metric_period_end = None
+                status = "Not applicable"
+                note = "Corporate financial statement share metrics are not applicable for this ticker type."
+            else:
+                metric_source = detail.get("source") or "Quote metadata / latest provider"
+                metric_period = "Latest quote"
+                metric_period_end = None
+                status = status or ("OK" if _value_present(raw_value) else "N/A")
+                note = detail.get("note") or note
+        elif release_not_applicable:
+            metric_period = "Not applicable"
+            metric_period_end = "N/A"
+            metric_source = "N/A"
+            note = "Corporate financial statements are not applicable for this ticker type."
+            status = "Not applicable"
         elif not _value_present(raw_value):
             metric_period = values_period or latest_row.get("period")
             metric_period_end = values_period_end or _date_label(latest_row.get("period_date"))
@@ -895,16 +1125,22 @@ def _financial_reconciliation(symbol: str, latest_release: dict, latest_row: dic
                 "Metric": label,
                 "value": raw_value,
                 "Value": raw_value,
+                "Displayed Value": raw_value,
                 "Period": metric_period or "N/A",
                 "Period End Date": metric_period_end or "N/A",
                 "Source": metric_source or "N/A",
+                "Provider": _provider_from_source(metric_source, _display_metric_status(status, raw_value)),
                 "Form": form or "N/A",
                 "Filed Date": filed_date or "N/A",
                 "Accession": accession or "N/A",
                 "SEC Concept Used": concept_used or "N/A",
+                "Component Concepts Used": " + ".join(component_concepts_used) if component_concepts_used else "N/A",
+                "Calculation Formula": calculation_formula or "N/A",
+                "Source Inputs": detail.get("source_inputs") or "N/A",
                 "Concepts Attempted": ", ".join(concepts_attempted) if concepts_attempted else "N/A",
-                "Fallback Used": "Yes" if fallback_used else "No",
-                "Status": status or ("OK" if _value_present(raw_value) else "Missing"),
+                "Fallback Used": "Yes" if fallback_used else "Attempted" if fallback_attempted else "No",
+                "Fallback Source": detail.get("fallback_source") or "N/A",
+                "Status": _display_metric_status(status, raw_value),
                 "Missing / Note": note,
                 "Note": note,
             }
@@ -971,18 +1207,171 @@ def _financial_reconciliation(symbol: str, latest_release: dict, latest_row: dic
     warnings = list(check_warnings)
     if missing_chart_fields:
         warnings.append("Missing chart fields: " + "; ".join(missing_chart_fields))
+    quality = _financial_quality_categories(
+        metric_sources,
+        latest_release,
+        latest_release.get("missing_fields") or [],
+        not_applicable=CORE_FINANCIAL_FIELDS if release_not_applicable else [],
+        ticker_type="etf_fund" if release_not_applicable else None,
+    )
     return {
         "ticker": symbol,
         "rows": rows,
         "checks": checks,
         "has_mismatch": bool(check_warnings),
         "warnings": warnings,
+        "data_quality": quality,
+        "data_completeness_score": quality.get("completeness_score"),
+        "compact_source_status_note": _compact_source_status_note(quality),
         "missing_chart_fields": missing_chart_fields,
         "missing_metric_periods": [row["Metric"] for row in rows if not _value_present(row.get("value"))],
         "margin_notes": margin_notes,
         "chart_latest_period": chart_latest_period,
         "chart_latest_period_end": chart_latest_period_end,
         "chart_latest_source": chart_latest_source,
+    }
+
+
+def _provider_from_source(source: str | None, status: str | None = None) -> str:
+    source_text = str(source or "")
+    status_text = str(status or "")
+    if status_text == "Calculated":
+        return "Calculated"
+    if "SEC" in source_text:
+        return "SEC XBRL/companyfacts"
+    if "Yahoo" in source_text or "yfinance" in source_text or "Quote" in source_text:
+        return "Yahoo Finance/yfinance"
+    if source_text in {"", "N/A"}:
+        return "N/A"
+    return source_text
+
+
+def _packet_field_from_row(row: dict, latest_release: dict) -> dict:
+    status = row.get("Status") or "Missing"
+    return {
+        "value": row.get("value"),
+        "source": row.get("Source"),
+        "provider": _provider_from_source(row.get("Source"), status),
+        "period_label": row.get("Period"),
+        "period_end_date": row.get("Period End Date"),
+        "filing_date": row.get("Filed Date"),
+        "form_type": row.get("Form"),
+        "accession_number": row.get("Accession"),
+        "concept_used": row.get("SEC Concept Used"),
+        "concepts_attempted": row.get("Concepts Attempted"),
+        "component_concepts_used": row.get("Component Concepts Used"),
+        "fallback_used": row.get("Fallback Used") in {"Yes", "Attempted"},
+        "fallback_source": row.get("Fallback Source"),
+        "calculation_formula": row.get("Calculation Formula"),
+        "status": status,
+        "confidence": 1.0 if status == "Direct" else 0.9 if status in {"Fallback", "Calculated"} else 0.5 if status in {"Estimated", "Partial estimate"} else 0.0,
+        "note": row.get("Note") or row.get("Missing / Note"),
+    }
+
+
+def _packet_calculated_field(value, formula: str, note: str, period_label: str | None, period_end_date) -> dict:
+    present = _value_present(value)
+    return {
+        "value": value if present else None,
+        "source": "Calculated",
+        "provider": "Calculated",
+        "period_label": period_label or "N/A",
+        "period_end_date": _date_label(period_end_date) or period_end_date or "N/A",
+        "filing_date": "N/A",
+        "form_type": "N/A",
+        "accession_number": "N/A",
+        "concept_used": "N/A",
+        "concepts_attempted": "N/A",
+        "component_concepts_used": "N/A",
+        "fallback_used": False,
+        "fallback_source": "N/A",
+        "calculation_formula": formula,
+        "status": "Calculated" if present else "Missing",
+        "confidence": 0.9 if present else 0.0,
+        "note": note if present else f"{note} Inputs unavailable or not period-aligned.",
+    }
+
+
+def _build_financial_data_packet(symbol: str, quote: dict, latest_release: dict, reconciliation: dict) -> dict:
+    ticker_type = _ticker_type(symbol, quote)
+    rows = reconciliation.get("rows") or []
+    fields = {row.get("metric"): _packet_field_from_row(row, latest_release) for row in rows if row.get("metric")}
+    if ticker_type in {"etf_fund", "crypto_proxy"}:
+        for key in CORE_FINANCIAL_FIELDS + DERIVED_FINANCIAL_FIELDS:
+            fields[key] = {
+                "value": None,
+                "source": "N/A",
+                "provider": "N/A",
+                "period_label": "Not applicable",
+                "period_end_date": "N/A",
+                "filing_date": "N/A",
+                "form_type": "N/A",
+                "accession_number": "N/A",
+                "concept_used": "N/A",
+                "concepts_attempted": "N/A",
+                "component_concepts_used": "N/A",
+                "fallback_used": False,
+                "fallback_source": "N/A",
+                "calculation_formula": "N/A",
+                "status": "Not applicable",
+                "confidence": 0.0,
+                "note": "Corporate financial statements are not applicable for ETFs, funds, indexes, or crypto tickers.",
+            }
+    quality = reconciliation.get("data_quality") or latest_release.get("financial_data_quality") or _financial_quality_categories(
+        {},
+        {key: latest_release.get(key) for key in CORE_FINANCIAL_FIELDS},
+        latest_release.get("missing_fields") or [],
+        not_applicable=CORE_FINANCIAL_FIELDS if ticker_type in {"etf_fund", "crypto_proxy"} else [],
+        ticker_type=ticker_type,
+    )
+    warnings = list(reconciliation.get("warnings") or [])
+    if ticker_type in {"etf_fund", "crypto_proxy"}:
+        warnings = ["Corporate financial statements are not applicable for this ticker type."]
+    else:
+        period_label = latest_release.get("structured_values_period_label") or latest_release.get("reported_period_label")
+        period_end = latest_release.get("structured_values_period_end_date") or latest_release.get("period_end_date")
+        revenue = to_float(latest_release.get("revenue"))
+        gross_profit = to_float(latest_release.get("gross_profit"))
+        operating_income = to_float(latest_release.get("operating_income"))
+        net_income = to_float(latest_release.get("net_income"))
+        fcf = to_float(latest_release.get("free_cash_flow"))
+        cash = to_float(latest_release.get("cash"))
+        debt = to_float(latest_release.get("total_debt"))
+        fields["gross_margin"] = _packet_calculated_field(_safe_margin(gross_profit, revenue), "Gross Profit / Revenue", "Gross margin calculated from same-period gross profit and revenue.", period_label, period_end)
+        fields["operating_margin"] = _packet_calculated_field(_safe_margin(operating_income, revenue), "Operating Income / Revenue", "Operating margin calculated from same-period operating income and revenue.", period_label, period_end)
+        fields["net_margin"] = _packet_calculated_field(_safe_margin(net_income, revenue), "Net Income / Revenue", "Net margin calculated from same-period net income and revenue.", period_label, period_end)
+        fields["fcf_margin"] = _packet_calculated_field(_safe_margin(fcf, revenue), "Free Cash Flow / Revenue", "FCF margin calculated from same-period free cash flow and revenue.", period_label, period_end)
+        fields["net_cash_or_debt"] = _packet_calculated_field(cash - debt if cash is not None and debt is not None else None, "Cash - Total Debt", "Net cash/debt calculated from same-period cash and debt.", period_label, period_end)
+        fields["cash_runway"] = _packet_calculated_field(_cash_runway({"cash": cash, "free_cash_flow": fcf}), "Cash / abs(Free Cash Flow)", "Cash runway calculated from latest cash and quarterly FCF burn.", period_label, period_end)
+        fields["revenue_yoy_growth"] = _packet_calculated_field(latest_release.get("revenue_yoy_growth"), "Revenue YoY Growth", "Revenue YoY growth, when available from normalized history.", period_label, period_end)
+    source_status = quality.get("source_status") or _completeness_status(quality.get("completeness_score"), ticker_type)
+    return {
+        "ticker": symbol,
+        "ticker_type": ticker_type,
+        "reported_period_label": latest_release.get("reported_period_label") or latest_release.get("period_label") or "N/A",
+        "reported_period_end_date": latest_release.get("period_end_date"),
+        "period_end_date": latest_release.get("period_end_date"),
+        "filing_date": latest_release.get("filing_date") or latest_release.get("filing_or_release_date"),
+        "form_type": latest_release.get("form_type"),
+        "accession_number": latest_release.get("accession_number"),
+        "filing_url": latest_release.get("filing_url"),
+        "source_used": latest_release.get("structured_values_source") or latest_release.get("source") or "N/A",
+        "source_status": source_status,
+        "completeness_score": quality.get("completeness_score"),
+        "fields": fields,
+        "found_direct": quality.get("found_direct", []),
+        "fallback_used": quality.get("fallback", []),
+        "calculated": quality.get("calculated", []),
+        "estimated": quality.get("estimated", []),
+        "missing": quality.get("missing", []),
+        "not_applicable": quality.get("not_applicable", []),
+        "warnings": warnings,
+        "period_alignment_status": latest_release.get("period_alignment_status"),
+        "structured_values_period_label": latest_release.get("structured_values_period_label"),
+        "structured_values_period_end_date": latest_release.get("structured_values_period_end_date") or latest_release.get("structured_values_date"),
+        "data_quality_note": _compact_source_status_note(quality),
+        "coverage_summary": quality,
+        "reconciliation": reconciliation,
     }
 
 
@@ -1023,6 +1412,8 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
             "source_status_reason": note,
             "last_updated": updated,
         }
+        release = _apply_quality_metadata(release, ticker_type=_ticker_type(symbol, quote))
+        release["source_status_reason"] = release.get("source_status_reason") or release.get("data_quality_note")
         return _with_latest_period(symbol, release)
     row = history.iloc[-1].to_dict()
     fiscal_year, fiscal_quarter, structured_label, structured_date = _structured_period_label(row.get("period_date"), annual)
@@ -1142,6 +1533,7 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
         "data_quality_note": note,
         "last_updated": updated,
     }
+    release = _apply_quality_metadata(release, values, missing, ticker_type=_ticker_type(symbol, quote))
     release["source_status_reason"] = _latest_source_reason(release, values, missing) if source_status == "Partial" else _source_status_reason(source_status, values, missing, structured_source, note)
     return _with_latest_period(symbol, release)
 
@@ -1284,10 +1676,13 @@ def load_latest_company_financials(ticker: str) -> dict:
             warnings.append("Latest revenue growth may be not meaningful due to small-base effect.")
         chart_source = _chart_source_status(quarterly_history, latest_release)
         reconciliation = _financial_reconciliation(symbol, latest_release, latest, quarterly_history, chart_source)
+        financial_packet = _build_financial_data_packet(symbol, quote, latest_release, reconciliation)
         metric_sources = latest_release.get("metric_sources") or {}
         fallback_metrics = [_metric_label(key) for key, detail in metric_sources.items() if detail.get("fallback_used")]
-        concept_failures = [_metric_label(key) for key, detail in metric_sources.items() if detail.get("status") in {"Missing concept", "N/A"} and key != "shares_outstanding"]
+        concept_failures = [_metric_label(key) for key, detail in metric_sources.items() if detail.get("status") in {"Missing concept", "Missing", "N/A"} and key != "shares_outstanding"]
         debt_detail = metric_sources.get("total_debt") or {}
+        quality = financial_packet.get("coverage_summary") or latest_release.get("financial_data_quality") or reconciliation.get("data_quality") or {}
+        fcf_detail = metric_sources.get("free_cash_flow") or {}
         if reconciliation.get("warnings"):
             warnings.extend(reconciliation.get("warnings", []))
         if reconciliation.get("margin_notes"):
@@ -1307,6 +1702,7 @@ def load_latest_company_financials(ticker: str) -> dict:
             "latest_quote": quote,
             "latest_reported_earnings": earnings,
             "latest_quarterly_release": latest_release,
+            "financial_data_packet": financial_packet,
             "quarterly_income_statement": quarterly_income,
             "quarterly_balance_sheet": quarterly_balance,
             "quarterly_cash_flow": quarterly_cash,
@@ -1324,6 +1720,9 @@ def load_latest_company_financials(ticker: str) -> dict:
                 "latest_release": latest_release.get("source"),
                 "latest_cards_source": latest_release.get("structured_values_source"),
                 "latest_cards_period": latest_release.get("structured_values_period_label"),
+                "financial_packet_status": financial_packet.get("source_status"),
+                "financial_packet_note": financial_packet.get("data_quality_note"),
+                "ticker_type": financial_packet.get("ticker_type"),
                 "sec_companyfacts": (sec_values.get("sec_companyfacts_status") or {}).get("Status"),
                 "sec_value_extraction": sec_values.get("sec_value_extraction_status"),
                 "chart_source": chart_source.get("label"),
@@ -1339,6 +1738,15 @@ def load_latest_company_financials(ticker: str) -> dict:
                 "missing_financial_concepts": concept_failures,
                 "debt_calculation_quality": debt_detail.get("status", "N/A"),
                 "debt_calculation_note": debt_detail.get("note", ""),
+                "debt_components_used": list(debt_detail.get("component_concepts_used") or []),
+                "found_financial_fields": quality.get("found_direct", []),
+                "calculated_financial_fields": quality.get("calculated", []),
+                "estimated_financial_fields": quality.get("estimated", []),
+                "missing_financial_fields": quality.get("missing", []),
+                "financial_data_completeness": quality.get("completeness_score"),
+                "financial_data_completeness_note": latest_release.get("compact_source_status_note") or reconciliation.get("compact_source_status_note"),
+                "fcf_calculation_status": fcf_detail.get("status", "N/A"),
+                "fcf_calculation_note": fcf_detail.get("note", ""),
                 "earnings": earnings.get("source", "Yahoo Finance/yfinance financial statement fallback"),
                 "estimates": "Yahoo Finance/yfinance analyst estimate tables",
             },
@@ -1357,6 +1765,29 @@ def _cash_runway(latest: dict) -> float | None:
     if cash is None or fcf is None or fcf >= 0:
         return None
     return cash / abs(fcf) if fcf else None
+
+
+def resolve_financial_data_packet(ticker: str) -> dict:
+    """Return the canonical latest-period financial data packet used by Company Analysis."""
+    symbol = clean_ticker(ticker)
+    if not symbol:
+        return {
+            "ticker": "",
+            "ticker_type": "invalid_unknown",
+            "source_status": "Insufficient",
+            "completeness_score": None,
+            "fields": {},
+            "missing": CORE_FINANCIAL_FIELDS,
+            "data_quality_note": "Invalid ticker.",
+        }
+    data = load_latest_company_financials(symbol)
+    packet = data.get("financial_data_packet")
+    if packet:
+        return packet
+    quote = data.get("latest_quote") or fetch_quote(symbol)
+    release = data.get("latest_quarterly_release") or get_latest_quarterly_release(symbol)
+    reconciliation = data.get("reconciliation") or {}
+    return _build_financial_data_packet(symbol, quote, release, reconciliation)
 
 
 def _metric_meta(reconciliation: dict, metric: str) -> dict:
@@ -1438,6 +1869,12 @@ def _profitability_status(operating_income, net_income) -> str:
 
 
 def _data_quality_status(source_status: str, missing_fields: list[str], reconciliation: dict) -> str:
+    if source_status == "Not applicable":
+        return "Not applicable"
+    if source_status in {"Complete", "Mostly complete"}:
+        return source_status
+    if source_status == "Limited":
+        return "Limited"
     if source_status == "Stale structured values":
         return "Stale"
     if source_status in {"Insufficient data", "Source error", "Not applicable"}:
@@ -1483,12 +1920,13 @@ def build_three_statement_visual_data(ticker: str, financials: dict | None = Non
     data = financials or load_latest_company_financials(symbol)
     latest = data.get("latest_financials") or {}
     release = data.get("latest_quarterly_release") or {}
+    packet = data.get("financial_data_packet") or {}
     reconciliation = data.get("reconciliation") or {}
     source_metadata = data.get("source_metadata") or {}
     reported_period = release.get("reported_period_label") or latest.get("period") or "N/A"
     period_end = _date_label(release.get("period_end_date") or latest.get("period_date"))
     source = release.get("structured_values_source") or release.get("source") or source_metadata.get("financials") or "N/A"
-    source_status = release.get("source_status") or data.get("status") or "N/A"
+    source_status = packet.get("source_status") or release.get("source_status") or data.get("status") or "N/A"
     income_statement = {
         "revenue": to_float(release.get("revenue")) if _value_present(release.get("revenue")) else to_float(latest.get("revenue")),
         "gross_profit": to_float(release.get("gross_profit")) if _value_present(release.get("gross_profit")) else to_float(latest.get("gross_profit")),
@@ -1591,7 +2029,7 @@ def build_three_statement_visual_data(ticker: str, financials: dict | None = Non
         reconciliation_notes.extend(margin_notes)
     if reconciliation.get("has_mismatch"):
         reconciliation_notes.append("Financial statement values are partially sourced or period-mismatched. Review detailed table before relying on this view.")
-    data_quality_note = release.get("source_status_reason") or release.get("data_quality_note") or source_metadata.get("chart_source_note")
+    data_quality_note = packet.get("data_quality_note") or release.get("compact_source_status_note") or source_metadata.get("chart_source_note") or release.get("data_quality_note")
     return {
         "ticker": symbol,
         "reported_period": reported_period,

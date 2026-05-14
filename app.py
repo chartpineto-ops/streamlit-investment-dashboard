@@ -516,15 +516,16 @@ def render_latest_earnings(financials: dict) -> None:
 
 def render_latest_quarterly_release(financials: dict) -> None:
     release = financials.get("latest_quarterly_release") or {}
+    packet = financials.get("financial_data_packet") or {}
     if not release:
         st.info("Latest quarterly release data unavailable for this ticker.")
         return
-    status = release.get("source_status", "N/A")
+    status = packet.get("source_status") or release.get("source_status", "N/A")
     tone = (
         "good"
-        if status == "OK"
+        if status in {"OK", "Complete", "Mostly complete"}
         else "warn"
-        if status in {"Partial", "Not applicable", "Stale structured values", "Filing metadata only", "Structured values only"}
+        if status in {"Partial", "Limited", "Not applicable", "Stale structured values", "Filing metadata only", "Structured values only"}
         else "neutral"
         if status in {"Insufficient data", "Missing"}
         else "bad"
@@ -549,7 +550,8 @@ def render_latest_quarterly_release(financials: dict) -> None:
             ("Free Cash Flow", fmt_currency(release.get("free_cash_flow"), 1), "OCF less normalized capex", tone_for_number(release.get("free_cash_flow"))),
             ("Cash", fmt_currency(release.get("cash"), 1), "Nearest matching balance sheet", "neutral"),
             ("Total Debt", fmt_currency(release.get("total_debt"), 1), "Nearest matching balance sheet", "neutral"),
-            ("Source Status", status, release.get("source_status_reason") or release.get("period_alignment_status") or release.get("data_quality_note", ""), tone),
+            ("Source Status", status, packet.get("data_quality_note") or release.get("compact_source_status_note") or release.get("period_alignment_status") or "Review reconciliation.", tone),
+            ("Data Completeness", _fmt_completeness(packet.get("completeness_score", release.get("data_completeness_score"))), packet.get("data_quality_note") or release.get("compact_source_status_note") or "Latest-period core fields", tone),
         ]
     )
     render_metric_grid(cards, columns=3, small=True)
@@ -558,9 +560,6 @@ def render_latest_quarterly_release(financials: dict) -> None:
     filing_url = release.get("filing_url")
     if filing_url:
         st.link_button("Open filing", filing_url)
-    missing = release.get("missing_fields") or []
-    if missing:
-        st.caption("Missing fields: " + ", ".join(missing))
 
 
 def _reconciliation_display_value(metric: str, value) -> str:
@@ -573,9 +572,35 @@ def _reconciliation_display_value(metric: str, value) -> str:
 
 def render_financial_reconciliation(financials: dict) -> None:
     reconciliation = financials.get("reconciliation") or {}
+    packet = financials.get("financial_data_packet") or {}
     if reconciliation.get("has_mismatch"):
         st.warning("Financial period mismatch detected. Review reconciliation details.")
     with st.expander("Financial Data Reconciliation"):
+        quality = packet.get("coverage_summary") or reconciliation.get("data_quality") or (financials.get("latest_quarterly_release") or {}).get("financial_data_quality") or {}
+        if quality:
+            render_metric_grid(
+                [
+                    ("Source Status", packet.get("source_status") or quality.get("source_status", "N/A"), packet.get("data_quality_note") or "Canonical financial packet", _status_tone(packet.get("source_status") or quality.get("source_status", ""))),
+                    ("Data Completeness", _fmt_completeness(quality.get("completeness_score")), f"{quality.get('available_count', 0)} of {quality.get('required_count', 0)} core fields available", "good" if (quality.get("completeness_score") or 0) >= 75 else "warn" if (quality.get("completeness_score") or 0) >= 25 else "bad"),
+                    ("Found Directly", str(quality.get("direct_count", 0)), ", ".join(quality.get("found_direct", []) or ["N/A"]), "good"),
+                    ("Fallback", str(quality.get("fallback_count", 0)), ", ".join(quality.get("fallback", []) or ["N/A"]), "warn" if quality.get("fallback_count", 0) else "neutral"),
+                    ("Calculated", str(quality.get("calculated_count", 0)), ", ".join(quality.get("calculated", []) or ["N/A"]), "neutral"),
+                    ("Estimated / Partial", str(quality.get("estimated_count", 0)), ", ".join(quality.get("estimated", []) or ["N/A"]), "warn" if quality.get("estimated_count", 0) else "neutral"),
+                    ("Missing", str(quality.get("missing_count", 0)), ", ".join(quality.get("missing", []) or ["N/A"]), "bad" if quality.get("missing_count", 0) else "good"),
+                ],
+                columns=3,
+                small=True,
+            )
+            coverage_rows = [
+                {"Category": "Direct", "Fields": ", ".join(quality.get("found_direct", []) or ["N/A"])},
+                {"Category": "Fallback", "Fields": ", ".join(quality.get("fallback", []) or ["N/A"])},
+                {"Category": "Calculated", "Fields": ", ".join(quality.get("calculated", []) or ["N/A"])},
+                {"Category": "Estimated / Partial", "Fields": ", ".join(quality.get("estimated", []) or ["N/A"])},
+                {"Category": "Missing", "Fields": ", ".join(quality.get("missing", []) or ["N/A"])},
+                {"Category": "Not applicable", "Fields": ", ".join(quality.get("not_applicable", []) or ["N/A"])},
+            ]
+            st.markdown("#### Field Coverage Summary")
+            df_display(pd.DataFrame(coverage_rows), height=250)
         rows = reconciliation.get("rows") or []
         if rows:
             display_rows = []
@@ -583,20 +608,25 @@ def render_financial_reconciliation(financials: dict) -> None:
                 display_rows.append(
                     {
                         "Metric": row.get("Metric"),
-                        "Value": _reconciliation_display_value(row.get("metric"), row.get("value")),
+                        "Displayed Value": _reconciliation_display_value(row.get("metric"), row.get("value")),
+                        "Status": row.get("Status"),
+                        "Provider": row.get("Provider"),
                         "Source": row.get("Source"),
+                        "SEC Concept Used": row.get("SEC Concept Used"),
+                        "Component Concepts Used": row.get("Component Concepts Used"),
+                        "Calculation Formula": row.get("Calculation Formula"),
                         "Period": row.get("Period"),
                         "Period End Date": row.get("Period End Date"),
-                        "SEC Concept Used": row.get("SEC Concept Used"),
                         "Fallback Used": row.get("Fallback Used"),
+                        "Fallback Source": row.get("Fallback Source"),
+                        "SEC Concepts Attempted": row.get("Concepts Attempted"),
                         "Form": row.get("Form"),
                         "Filed Date": row.get("Filed Date"),
                         "Accession": row.get("Accession"),
-                        "Status": row.get("Status"),
                         "Note": row.get("Note") or row.get("Missing / Note"),
                     }
                 )
-            df_display(pd.DataFrame(display_rows), height=360)
+            df_display(pd.DataFrame(display_rows), height=420)
         else:
             empty_state("No financial reconciliation rows available.")
         checks = reconciliation.get("checks") or []
@@ -722,13 +752,18 @@ def _statement_tone(value) -> str:
 
 
 def _status_tone(status: str) -> str:
-    if status in {"Complete", "Profitable", "Operating profitable", "Cash-rich", "FCF positive", "OK", "Strong liquidity"}:
+    if status in {"Complete", "Mostly complete", "Profitable", "Operating profitable", "Cash-rich", "FCF positive", "OK", "Strong liquidity"}:
         return "good"
-    if status in {"Partial data", "Partial", "Unprofitable", "Burning cash", "Elevated burn", "Net debt", "Moderate liquidity", "Tight liquidity", "Stale"}:
+    if status in {"Partial data", "Partial", "Limited", "Unprofitable", "Burning cash", "Elevated burn", "Net debt", "Moderate liquidity", "Tight liquidity", "Stale"}:
         return "warn"
     if status in {"Insufficient data", "Insufficient", "Debt data unavailable", "Source error", "Error", "High liquidity risk", "N/A"}:
         return "bad"
     return "neutral"
+
+
+def _fmt_completeness(value) -> str:
+    number = to_float(value)
+    return "N/A" if number is None else f"{number:.0f}%"
 
 
 def _compact_bar_chart(title: str, labels: list[str], values: list[float | None], *, currency: bool = True, height: int = 220, orientation: str = "h") -> None:
@@ -1259,6 +1294,9 @@ def data_health_page(ticker: str) -> None:
     sec_periodic = fetch_latest_periodic_sec_filing(ticker)
     _, cik_status = ticker_to_cik(ticker)
     reconciliation = financials.get("reconciliation") or {}
+    source_meta = financials.get("source_metadata", {})
+    packet = financials.get("financial_data_packet") or {}
+    quality = packet.get("coverage_summary") or latest_release.get("financial_data_quality") or reconciliation.get("data_quality") or {}
     openai_status = "OK" if streamlit_secret_value("OPENAI_API_KEY") else "Missing"
     date_status = get_date_normalization_status()
     health = pd.DataFrame(
@@ -1267,7 +1305,12 @@ def data_health_page(ticker: str) -> None:
             {"Source": "Company identity / logo", "Status": identity.get("logo_status"), "Last Refresh": identity.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": identity.get("error", "")},
             {"Source": "Yahoo Finance/yfinance financials", "Status": financials.get("status"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(financials.get("missing_fields", [])), "Error": financials.get("error", "")},
             {"Source": "Latest quarterly release", "Status": latest_release.get("source_status"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("data_quality_note", "")},
-            {"Source": "Latest cards source", "Status": latest_release.get("source_status"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("reported_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("source_status_reason", "")},
+            {"Source": "Latest cards source", "Status": latest_release.get("source_status"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("reported_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("compact_source_status_note", "")},
+            {"Source": "Financial packet status", "Status": packet.get("source_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": packet.get("reported_period_label", latest_release.get("reported_period_label", "")), "Structured Period": packet.get("structured_values_period_label", latest_release.get("structured_values_period_label", "")), "Missing Fields": ", ".join(packet.get("missing", [])), "Error": packet.get("data_quality_note", "")},
+            {"Source": "Financial data completeness", "Status": _fmt_completeness(quality.get("completeness_score", latest_release.get("data_completeness_score"))), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("reported_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(quality.get("missing", [])), "Error": packet.get("data_quality_note", latest_release.get("compact_source_status_note", ""))},
+            {"Source": "Found financial fields", "Status": "OK" if quality.get("found_direct") else "N/A", "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("reported_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": ", ".join(quality.get("found_direct", []))},
+            {"Source": "Calculated financial fields", "Status": "OK" if quality.get("calculated") else "N/A", "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("reported_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": ", ".join(quality.get("calculated", []))},
+            {"Source": "Estimated financial fields", "Status": "Partial" if quality.get("estimated") else "N/A", "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("reported_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": ", ".join(quality.get("estimated", []))},
             {"Source": "Yahoo Finance/yfinance options", "Status": opts.get("status"), "Last Refresh": opts.get("last_updated"), "Cache TTL": "30 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": opts.get("debug_error", "")},
             {"Source": "Yahoo Finance/RSS news", "Status": "OK" if not news.empty else "Partial", "Last Refresh": now_et(), "Cache TTL": "30 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
             {"Source": "SEC ticker-to-CIK mapping", "Status": cik_status.get("Status"), "Last Refresh": cik_status.get("Last Updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": cik_status.get("Error", "")},
@@ -1275,10 +1318,11 @@ def data_health_page(ticker: str) -> None:
             {"Source": "SEC latest period-bearing filing", "Status": sec_periodic.get("source_status"), "Last Refresh": sec_periodic.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": sec_periodic.get("filing_period_label", ""), "Structured Period": "", "Missing Fields": "", "Error": sec_periodic.get("error", "")},
             {"Source": "SEC companyfacts", "Status": (latest_release.get("sec_companyfacts_status") or {}).get("Status", "N/A"), "Last Refresh": (latest_release.get("sec_companyfacts_status") or {}).get("Last Updated", latest_release.get("last_updated")), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": (latest_release.get("sec_companyfacts_status") or {}).get("Error", "")},
             {"Source": "SEC structured value extraction", "Status": latest_release.get("sec_value_extraction_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("data_quality_note", "")},
-            {"Source": "SEC concept coverage", "Status": financials.get("source_metadata", {}).get("sec_concept_coverage", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(financials.get("source_metadata", {}).get("missing_financial_concepts", [])), "Error": ""},
-            {"Source": "yfinance fallback coverage", "Status": "Partial" if financials.get("source_metadata", {}).get("yfinance_fallback_metrics") else "N/A", "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": ", ".join(financials.get("source_metadata", {}).get("yfinance_fallback_metrics", []))},
-            {"Source": "Missing financial concepts", "Status": "Partial" if financials.get("source_metadata", {}).get("missing_financial_concepts") else "OK", "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(financials.get("source_metadata", {}).get("missing_financial_concepts", [])), "Error": "Mapped SEC concepts did not produce these latest-period metrics." if financials.get("source_metadata", {}).get("missing_financial_concepts") else ""},
-            {"Source": "Debt calculation quality", "Status": financials.get("source_metadata", {}).get("debt_calculation_quality", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": financials.get("source_metadata", {}).get("debt_calculation_note", "")},
+            {"Source": "SEC concept coverage", "Status": source_meta.get("sec_concept_coverage", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(source_meta.get("missing_financial_concepts", [])), "Error": ""},
+            {"Source": "yfinance fallback coverage", "Status": "Partial" if source_meta.get("yfinance_fallback_metrics") else "N/A", "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": ", ".join(source_meta.get("yfinance_fallback_metrics", []))},
+            {"Source": "Missing financial concepts", "Status": "Partial" if source_meta.get("missing_financial_concepts") else "OK", "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(source_meta.get("missing_financial_concepts", [])), "Error": "Mapped SEC concepts and period-aligned fallback did not produce these latest-period metrics." if source_meta.get("missing_financial_concepts") else ""},
+            {"Source": "Debt calculation quality", "Status": source_meta.get("debt_calculation_quality", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": (", ".join(source_meta.get("debt_components_used", [])) + ". " if source_meta.get("debt_components_used") else "") + source_meta.get("debt_calculation_note", "")},
+            {"Source": "FCF calculation status", "Status": source_meta.get("fcf_calculation_status", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": source_meta.get("fcf_calculation_note", "")},
             {"Source": "Period alignment", "Status": latest_release.get("period_alignment_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": latest_release.get("data_quality_note", "")},
             {"Source": "Financial chart source", "Status": financials.get("source_metadata", {}).get("chart_source_status", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": financials.get("source_metadata", {}).get("chart_source_note", "")},
             {"Source": "Missing metric periods", "Status": "Partial" if reconciliation.get("missing_chart_fields") or reconciliation.get("missing_metric_periods") else "OK", "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "; ".join((reconciliation.get("missing_chart_fields") or []) + (reconciliation.get("missing_metric_periods") or [])), "Error": ""},
