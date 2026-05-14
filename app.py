@@ -3,12 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 from html import escape
 from math import isnan
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ai.dd_generator import build_research_packet, generate_dd_memo, openai_key_from_secrets
+from ai.dd_generator import build_research_packet, generate_dd_memo
 from data.company_identity import get_company_identity
 from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_filing, fetch_sec_filings, ticker_to_cik
 from data.financials import build_three_statement_visual_data, get_latest_quarterly_release, load_latest_company_financials, view_history
@@ -111,6 +112,16 @@ def normalize_global_ticker_input() -> None:
     if normalized:
         st.session_state["global_ticker_input"] = normalized
         st.session_state["global_ticker"] = normalized
+
+
+def streamlit_secret_value(key: str, default=None):
+    secret_paths = [Path.home() / ".streamlit" / "secrets.toml", Path.cwd() / ".streamlit" / "secrets.toml"]
+    if not any(path.exists() for path in secret_paths):
+        return default
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
 
 
 def plotly_layout(fig: go.Figure, height: int = 340) -> go.Figure:
@@ -530,15 +541,17 @@ def render_financial_reconciliation(financials: dict) -> None:
                 display_rows.append(
                     {
                         "Metric": row.get("Metric"),
-                        "Displayed Value": _reconciliation_display_value(row.get("metric"), row.get("value")),
+                        "Value": _reconciliation_display_value(row.get("metric"), row.get("value")),
+                        "Source": row.get("Source"),
                         "Period": row.get("Period"),
                         "Period End Date": row.get("Period End Date"),
-                        "Source": row.get("Source"),
+                        "SEC Concept Used": row.get("SEC Concept Used"),
+                        "Fallback Used": row.get("Fallback Used"),
                         "Form": row.get("Form"),
                         "Filed Date": row.get("Filed Date"),
                         "Accession": row.get("Accession"),
                         "Status": row.get("Status"),
-                        "Missing / Note": row.get("Missing / Note"),
+                        "Note": row.get("Note") or row.get("Missing / Note"),
                     }
                 )
             df_display(pd.DataFrame(display_rows), height=360)
@@ -1176,12 +1189,9 @@ def ai_due_diligence_page(ticker: str) -> None:
     packet = build_research_packet(ticker)
     with st.expander("Research packet", expanded=False):
         st.json(packet)
-    key = openai_key_from_secrets(st.secrets)
+    key = streamlit_secret_value("OPENAI_API_KEY")
     model = "gpt-4o-mini"
-    try:
-        model = st.secrets.get("OPENAI_MODEL", model)
-    except Exception:
-        pass
+    model = streamlit_secret_value("OPENAI_MODEL", model)
     if not key:
         st.info("AI DD is disabled until OPENAI_API_KEY is added to Streamlit secrets.")
         return
@@ -1208,10 +1218,7 @@ def data_health_page(ticker: str) -> None:
     sec_periodic = fetch_latest_periodic_sec_filing(ticker)
     _, cik_status = ticker_to_cik(ticker)
     reconciliation = financials.get("reconciliation") or {}
-    try:
-        openai_status = "OK" if st.secrets.get("OPENAI_API_KEY") else "Missing"
-    except Exception:
-        openai_status = "Missing"
+    openai_status = "OK" if streamlit_secret_value("OPENAI_API_KEY") else "Missing"
     date_status = get_date_normalization_status()
     health = pd.DataFrame(
         [
@@ -1227,6 +1234,10 @@ def data_health_page(ticker: str) -> None:
             {"Source": "SEC latest period-bearing filing", "Status": sec_periodic.get("source_status"), "Last Refresh": sec_periodic.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": sec_periodic.get("filing_period_label", ""), "Structured Period": "", "Missing Fields": "", "Error": sec_periodic.get("error", "")},
             {"Source": "SEC companyfacts", "Status": (latest_release.get("sec_companyfacts_status") or {}).get("Status", "N/A"), "Last Refresh": (latest_release.get("sec_companyfacts_status") or {}).get("Last Updated", latest_release.get("last_updated")), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": (latest_release.get("sec_companyfacts_status") or {}).get("Error", "")},
             {"Source": "SEC structured value extraction", "Status": latest_release.get("sec_value_extraction_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("data_quality_note", "")},
+            {"Source": "SEC concept coverage", "Status": financials.get("source_metadata", {}).get("sec_concept_coverage", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(financials.get("source_metadata", {}).get("missing_financial_concepts", [])), "Error": ""},
+            {"Source": "yfinance fallback coverage", "Status": "Partial" if financials.get("source_metadata", {}).get("yfinance_fallback_metrics") else "N/A", "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": ", ".join(financials.get("source_metadata", {}).get("yfinance_fallback_metrics", []))},
+            {"Source": "Missing financial concepts", "Status": "Partial" if financials.get("source_metadata", {}).get("missing_financial_concepts") else "OK", "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(financials.get("source_metadata", {}).get("missing_financial_concepts", [])), "Error": "Mapped SEC concepts did not produce these latest-period metrics." if financials.get("source_metadata", {}).get("missing_financial_concepts") else ""},
+            {"Source": "Debt calculation quality", "Status": financials.get("source_metadata", {}).get("debt_calculation_quality", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": financials.get("source_metadata", {}).get("debt_calculation_note", "")},
             {"Source": "Period alignment", "Status": latest_release.get("period_alignment_status", "N/A"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": latest_release.get("data_quality_note", "")},
             {"Source": "Financial chart source", "Status": financials.get("source_metadata", {}).get("chart_source_status", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": financials.get("source_metadata", {}).get("chart_source_note", "")},
             {"Source": "Missing metric periods", "Status": "Partial" if reconciliation.get("missing_chart_fields") or reconciliation.get("missing_metric_periods") else "OK", "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "; ".join((reconciliation.get("missing_chart_fields") or []) + (reconciliation.get("missing_metric_periods") or [])), "Error": ""},

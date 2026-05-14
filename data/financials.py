@@ -40,22 +40,28 @@ SEC_CONCEPTS = {
         "RevenueFromContractWithCustomerExcludingAssessedTax",
         "Revenues",
         "SalesRevenueNet",
+        "SalesRevenueGoodsNet",
+        "SalesRevenueServicesNet",
     ),
-    "gross_profit": ("GrossProfit",),
-    "operating_income": ("OperatingIncomeLoss",),
-    "net_income": ("NetIncomeLoss", "ProfitLoss"),
+    "gross_profit": ("GrossProfit", "GrossProfitLoss"),
+    "operating_income": (
+        "OperatingIncomeLoss",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    ),
+    "net_income": ("NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"),
     "eps": ("EarningsPerShareDiluted", "EarningsPerShareBasic"),
     "cash": (
         "CashAndCashEquivalentsAtCarryingValue",
         "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+        "CashAndDueFromBanks",
+        "Cash",
     ),
-    "total_debt": (
-        "LongTermDebt",
-        "LongTermDebtCurrent",
-        "ShortTermBorrowings",
-        "DebtCurrent",
-        "LongTermDebtAndFinanceLeaseObligations",
-        "LongTermDebtAndFinanceLeaseObligationsCurrent",
+    "total_assets": ("Assets",),
+    "shareholders_equity": (
+        "StockholdersEquity",
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+        "CommonStocksIncludingAdditionalPaidInCapital",
+        "RetainedEarningsAccumulatedDeficit",
     ),
     "operating_cash_flow": (
         "NetCashProvidedByUsedInOperatingActivities",
@@ -64,11 +70,34 @@ SEC_CONCEPTS = {
     "capital_expenditures": (
         "PaymentsToAcquirePropertyPlantAndEquipment",
         "PaymentsForProceedsFromProductiveAssets",
+        "PaymentsToAcquireBusinessesNetOfCashAcquired",
+        "CapitalExpendituresIncurredButNotYetPaid",
     ),
     "shares_outstanding": (
         "WeightedAverageNumberOfDilutedSharesOutstanding",
         "WeightedAverageNumberOfSharesOutstandingBasic",
     ),
+}
+
+SEC_TOTAL_DEBT_BROAD_CONCEPTS = (
+    "DebtAndFinanceLeaseObligations",
+    "LongTermDebtAndFinanceLeaseObligations",
+    "LongTermDebtAndFinanceLeaseObligationsCurrent",
+)
+
+SEC_DEBT_COMPONENT_CONCEPTS = {
+    "current_debt": ("DebtCurrent", "LongTermDebtCurrent", "ShortTermDebt"),
+    "long_term_debt": ("LongTermDebt",),
+    "short_term_borrowings": ("ShortTermBorrowings",),
+    "notes_payable": ("NotesPayable", "ConvertibleNotesPayable"),
+    "finance_lease": ("FinanceLeaseLiability",),
+    "operating_lease": ("OperatingLeaseLiability",),
+}
+
+SEC_ATTEMPTED_CONCEPTS = {
+    **SEC_CONCEPTS,
+    "total_debt": SEC_TOTAL_DEBT_BROAD_CONCEPTS + tuple(concept for concepts in SEC_DEBT_COMPONENT_CONCEPTS.values() for concept in concepts),
+    "free_cash_flow": ("calculated_from_operating_cash_flow_less_capex",),
 }
 
 RECONCILIATION_METRICS = {
@@ -82,11 +111,13 @@ RECONCILIATION_METRICS = {
     "free_cash_flow": "Free Cash Flow",
     "cash": "Cash",
     "total_debt": "Total Debt",
+    "total_assets": "Total Assets",
+    "shareholders_equity": "Shareholders' Equity",
     "shares_outstanding": "Shares Outstanding",
 }
 
 INCOME_STATEMENT_METRICS = {"revenue", "gross_profit", "operating_income", "net_income", "eps"}
-BALANCE_SHEET_METRICS = {"cash", "total_debt", "shares_outstanding"}
+BALANCE_SHEET_METRICS = {"cash", "total_debt", "total_assets", "shareholders_equity", "shares_outstanding"}
 CASH_FLOW_METRICS = {"operating_cash_flow", "capital_expenditures", "free_cash_flow"}
 CHART_REQUIRED_METRICS = {"revenue": "Revenue", "eps": "EPS"}
 
@@ -127,6 +158,74 @@ def _source_status_reason(source_status: str, values: dict, missing: list[str], 
         source_text = source or "structured source"
         return f"{found_text} found from {source_text}; missing: {missing_text}."
     return note or "Source returned incomplete or unavailable latest-quarter data."
+
+
+def _metric_label(key: str) -> str:
+    return RECONCILIATION_METRICS.get(key, key.replace("_", " ").title())
+
+
+def _metric_source_detail(
+    *,
+    value=None,
+    source: str = "SEC XBRL/companyfacts",
+    concept: str | None = None,
+    status: str = "N/A",
+    note: str = "",
+    fallback_used: bool = False,
+    period: str | None = None,
+    period_end_date=None,
+) -> dict:
+    return {
+        "value": value,
+        "source": source,
+        "concept_used": concept,
+        "concepts_attempted": (),
+        "fallback_used": fallback_used,
+        "status": status,
+        "note": note,
+        "period": period,
+        "period_end_date": period_end_date,
+    }
+
+
+def _set_attempted_concepts(metric_sources: dict, key: str) -> None:
+    if key in metric_sources:
+        metric_sources[key]["concepts_attempted"] = SEC_ATTEMPTED_CONCEPTS.get(key, ())
+
+
+def _latest_source_reason(release: dict, values: dict, missing: list[str]) -> str:
+    metric_sources = release.get("metric_sources") or {}
+    sec_found = []
+    fallback_found = []
+    partial = []
+    missing_labels = []
+    for key in RECONCILIATION_METRICS:
+        if key == "shares_outstanding":
+            continue
+        detail = metric_sources.get(key) or {}
+        label = _metric_label(key)
+        status = detail.get("status")
+        if _value_present(values.get(key)):
+            if detail.get("fallback_used"):
+                fallback_found.append(label)
+            elif status == "Partial estimate":
+                partial.append(label)
+            elif (detail.get("source") or "").startswith("SEC"):
+                sec_found.append(label)
+        elif key in missing:
+            missing_labels.append(label)
+    pieces = []
+    if sec_found:
+        pieces.append(f"SEC XBRL/companyfacts found {_label_list(sec_found, 6)} for the latest period")
+    if fallback_found:
+        pieces.append(f"{_label_list(fallback_found, 6)} sourced from yfinance fallback for the same period")
+    if partial:
+        pieces.append(f"{_label_list(partial, 6)} partially estimated from available components")
+    if missing_labels:
+        pieces.append(f"{_label_list(missing_labels, 8)} remain unavailable after mapped SEC concepts and period-aligned fallback")
+    if not pieces:
+        return release.get("data_quality_note") or "Latest-quarter financial coverage is unavailable."
+    return ". ".join(pieces) + "."
 
 
 def _safe_margin(numerator, revenue) -> float | None:
@@ -439,6 +538,62 @@ def _structured_sec_filing(symbol: str) -> dict:
     return latest
 
 
+def _extract_sec_total_debt(company_facts: dict, form_type: str, period_end, fiscal_year, fiscal_period, accession_number: str | None) -> tuple[float | None, dict]:
+    broad = extract_sec_concept_value(
+        company_facts,
+        SEC_TOTAL_DEBT_BROAD_CONCEPTS,
+        (form_type,),
+        period_end,
+        fiscal_year=fiscal_year,
+        fiscal_period=fiscal_period,
+        accession_number=accession_number,
+    )
+    broad_value = to_float(broad.get("value"))
+    if broad_value is not None:
+        return broad_value, _metric_source_detail(
+            value=broad_value,
+            concept=broad.get("concept"),
+            status="SEC concept found",
+            note="Broad SEC debt concept found.",
+            period_end_date=broad.get("period_end_date"),
+        )
+
+    components = []
+    component_details = []
+    for component_name, concepts in SEC_DEBT_COMPONENT_CONCEPTS.items():
+        result = extract_sec_concept_value(
+            company_facts,
+            concepts,
+            (form_type,),
+            period_end,
+            fiscal_year=fiscal_year,
+            fiscal_period=fiscal_period,
+            accession_number=accession_number,
+        )
+        value = to_float(result.get("value"))
+        if value is None:
+            continue
+        components.append(value)
+        component_details.append(f"{component_name}: {result.get('concept')}")
+    if components:
+        value = sum(components)
+        return value, _metric_source_detail(
+            value=value,
+            concept=", ".join(component_details),
+            status="Partial estimate",
+            note="Total Debt estimated from available debt components; review before relying on this value.",
+            period_end_date=period_end,
+        )
+
+    return None, _metric_source_detail(
+        value=None,
+        concept=None,
+        status="Missing concept",
+        note="No mapped total debt or debt component concepts found for this period.",
+        period_end_date=period_end,
+    )
+
+
 def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) -> dict:
     updated = now_et()
     form_type = sec_filing.get("form_type")
@@ -448,7 +603,7 @@ def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) 
         return {
             "has_values": False,
             "source_status": "Not applicable",
-            "missing_fields": list(SEC_CONCEPTS),
+            "missing_fields": list(SEC_ATTEMPTED_CONCEPTS),
             "data_quality_note": "SEC structured extraction is only attempted for 10-Q, 10-K, and 20-F filings with a period end date.",
             "last_updated": updated,
         }
@@ -457,7 +612,7 @@ def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) 
         return {
             "has_values": False,
             "source_status": facts_status.get("Status", "Source error"),
-            "missing_fields": list(SEC_CONCEPTS),
+            "missing_fields": list(SEC_ATTEMPTED_CONCEPTS),
             "data_quality_note": facts_status.get("Error", "SEC companyfacts unavailable."),
             "last_updated": updated,
             "sec_companyfacts_status": facts_status,
@@ -465,6 +620,7 @@ def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) 
     forms = (form_type,)
     values = {}
     concept_sources = {}
+    metric_sources = {}
     missing = []
     for key, concepts in SEC_CONCEPTS.items():
         result = extract_sec_concept_value(
@@ -480,15 +636,78 @@ def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) 
         values[key] = value
         if value is None:
             missing.append(key)
+            metric_sources[key] = _metric_source_detail(
+                value=None,
+                concept=None,
+                status="Missing concept",
+                note=f"No mapped SEC concept found for {_metric_label(key)} in this filing period.",
+                period=filing_label,
+                period_end_date=period_end,
+            )
         else:
             concept_sources[key] = result
+            metric_sources[key] = _metric_source_detail(
+                value=value,
+                concept=result.get("concept"),
+                status="SEC concept found",
+                note=result.get("source_note") or "SEC concept found for matching period.",
+                period=filing_label,
+                period_end_date=result.get("period_end_date") or period_end,
+            )
+        _set_attempted_concepts(metric_sources, key)
+
+    debt_value, debt_detail = _extract_sec_total_debt(company_facts, form_type, period_end, fiscal_year, fiscal_period, sec_filing.get("accession_number"))
+    values["total_debt"] = debt_value
+    metric_sources["total_debt"] = debt_detail
+    metric_sources["total_debt"]["period"] = filing_label
+    metric_sources["total_debt"]["period_end_date"] = metric_sources["total_debt"].get("period_end_date") or period_end
+    _set_attempted_concepts(metric_sources, "total_debt")
+    if debt_value is None:
+        if "total_debt" not in missing:
+            missing.append("total_debt")
+    else:
+        concept_sources["total_debt"] = {
+            "value": debt_value,
+            "concept": debt_detail.get("concept_used"),
+            "source_note": debt_detail.get("note"),
+            "period_end_date": debt_detail.get("period_end_date") or period_end,
+        }
+
     if values.get("free_cash_flow") is None and values.get("operating_cash_flow") is not None and values.get("capital_expenditures") is not None:
         values["free_cash_flow"] = values["operating_cash_flow"] - abs(values["capital_expenditures"])
+        metric_sources["free_cash_flow"] = _metric_source_detail(
+            value=values["free_cash_flow"],
+            concept="calculated_from_operating_cash_flow_less_capex",
+            status="Partial estimate",
+            note="Free cash flow calculated from SEC operating cash flow less capex.",
+            period=filing_label,
+            period_end_date=period_end,
+        )
+        _set_attempted_concepts(metric_sources, "free_cash_flow")
     has_values = any(values.get(key) is not None for key in ("revenue", "net_income", "eps", "cash", "operating_cash_flow"))
     if "free_cash_flow" not in missing and values.get("free_cash_flow") is None:
         missing.append("free_cash_flow")
+        metric_sources["free_cash_flow"] = _metric_source_detail(
+            value=None,
+            concept=None,
+            status="Missing concept",
+            note="Free cash flow could not be calculated because operating cash flow or capex is missing.",
+            period=filing_label,
+            period_end_date=period_end,
+        )
+        _set_attempted_concepts(metric_sources, "free_cash_flow")
     if quote and values.get("shares_outstanding") is None:
         values["shares_outstanding"] = quote.get("shares_outstanding")
+        if values.get("shares_outstanding") is not None:
+            metric_sources["shares_outstanding"] = _metric_source_detail(
+                value=values.get("shares_outstanding"),
+                source="Quote metadata / latest provider",
+                status="yfinance fallback",
+                note="Shares outstanding sourced from quote metadata because SEC weighted shares were unavailable.",
+                fallback_used=True,
+                period="Latest quote",
+            )
+            _set_attempted_concepts(metric_sources, "shares_outstanding")
     status = "OK" if has_values and not [key for key in ("revenue", "net_income", "cash") if values.get(key) is None] else "Partial" if has_values else "Missing"
     note = "SEC XBRL/companyfacts values matched to latest filing period." if has_values else "SEC companyfacts returned no matching values for the latest filing period."
     return {
@@ -504,6 +723,7 @@ def _extract_sec_structured_values(sec_filing: dict, quote: dict | None = None) 
         "source_status": status,
         "missing_fields": missing,
         "concept_sources": concept_sources,
+        "metric_sources": metric_sources,
         "data_quality_note": note,
         "sec_companyfacts_status": facts_status,
         "sec_value_extraction_status": status,
@@ -523,6 +743,8 @@ def _sec_row(sec_values: dict, sec_filing: dict) -> dict | None:
         "sec_companyfacts_status": sec_values.get("sec_companyfacts_status"),
         "sec_value_extraction_status": sec_values.get("sec_value_extraction_status"),
         "sec_data_quality_note": sec_values.get("data_quality_note"),
+        "metric_sources": sec_values.get("metric_sources", {}),
+        "concept_sources": sec_values.get("concept_sources", {}),
     }
     for key in FIELD_MAP:
         row[key] = sec_values.get(key)
@@ -537,6 +759,43 @@ def _merge_sec_quarterly_history(history: pd.DataFrame, sec_values: dict, sec_fi
     if row is None:
         return history
     frame = history.copy() if isinstance(history, pd.DataFrame) and not history.empty else pd.DataFrame()
+    if not frame.empty and "period_date" in frame:
+        try:
+            target = pd.Timestamp(row["period_date"]).date()
+            aligned = frame[pd.to_datetime(frame["period_date"], errors="coerce").dt.date == target]
+        except Exception:
+            aligned = pd.DataFrame()
+        if not aligned.empty:
+            fallback_row = aligned.iloc[-1].to_dict()
+            metric_sources = dict(row.get("metric_sources") or {})
+            missing_fields = list(row.get("sec_missing_fields") or [])
+            for key in RECONCILIATION_METRICS:
+                if key == "shares_outstanding":
+                    continue
+                if _value_present(row.get(key)):
+                    continue
+                fallback_value = fallback_row.get(key)
+                if not _value_present(fallback_value):
+                    continue
+                row[key] = fallback_value
+                if key in missing_fields:
+                    missing_fields.remove(key)
+                metric_sources[key] = _metric_source_detail(
+                    value=fallback_value,
+                    source="Yahoo Finance/yfinance quarterly statements",
+                    concept=None,
+                    status="yfinance fallback",
+                    note=f"{_metric_label(key)} unavailable from SEC concepts; yfinance same-period value used.",
+                    fallback_used=True,
+                    period=row.get("period"),
+                    period_end_date=row.get("period_date"),
+                )
+            row["metric_sources"] = metric_sources
+            row["sec_missing_fields"] = missing_fields
+            if missing_fields:
+                row["sec_data_quality_note"] = _latest_source_reason({"metric_sources": metric_sources, "data_quality_note": row.get("sec_data_quality_note")}, row, missing_fields)
+            else:
+                row["sec_data_quality_note"] = "SEC XBRL/companyfacts plus same-period yfinance fallback supplied the latest structured values."
     row_frame = pd.DataFrame([row]).dropna(axis=1, how="all")
     frame = row_frame if frame.empty else pd.concat([frame, row_frame], ignore_index=True, sort=False)
     frame["period_date"] = pd.to_datetime(frame["period_date"], errors="coerce")
@@ -598,35 +857,56 @@ def _financial_reconciliation(symbol: str, latest_release: dict, latest_row: dic
     form = latest_release.get("form_type")
     filed_date = _date_label(latest_release.get("filing_date") or latest_release.get("filing_or_release_date"))
     accession = latest_release.get("accession_number")
+    metric_sources = latest_release.get("metric_sources") or {}
     rows = []
     for key, label in RECONCILIATION_METRICS.items():
         raw_value = latest_release.get(key)
+        detail = metric_sources.get(key) or {}
         metric_source = source
         metric_period = values_period
         metric_period_end = values_period_end
         note = latest_release.get("source_status_reason") or latest_release.get("data_quality_note", "")
+        concept_used = detail.get("concept_used")
+        concepts_attempted = detail.get("concepts_attempted") or SEC_ATTEMPTED_CONCEPTS.get(key, ())
+        fallback_used = bool(detail.get("fallback_used"))
+        status = detail.get("status")
         if key == "shares_outstanding":
             raw_value = latest_release.get(key) if _value_present(latest_release.get(key)) else latest_row.get(key)
-            metric_source = "Quote metadata / latest provider"
+            metric_source = detail.get("source") or "Quote metadata / latest provider"
             metric_period = "Latest quote"
             metric_period_end = None
+            status = status or ("OK" if _value_present(raw_value) else "N/A")
+            note = detail.get("note") or note
         elif not _value_present(raw_value):
             metric_period = values_period or latest_row.get("period")
             metric_period_end = values_period_end or _date_label(latest_row.get("period_date"))
-            note = f"{label} unavailable from {metric_source or 'structured source'}."
+            metric_source = detail.get("source") or metric_source
+            note = detail.get("note") or f"{label} unavailable from {metric_source or 'structured source'}."
+            status = status or ("Missing concept" if (metric_source or "").startswith("SEC") else "N/A")
+        else:
+            metric_source = detail.get("source") or metric_source
+            metric_period = detail.get("period") or metric_period
+            metric_period_end = _date_label(detail.get("period_end_date")) or metric_period_end
+            note = detail.get("note") or note
+            status = status or "OK"
         rows.append(
             {
                 "metric": key,
                 "Metric": label,
                 "value": raw_value,
+                "Value": raw_value,
                 "Period": metric_period or "N/A",
                 "Period End Date": metric_period_end or "N/A",
                 "Source": metric_source or "N/A",
                 "Form": form or "N/A",
                 "Filed Date": filed_date or "N/A",
                 "Accession": accession or "N/A",
-                "Status": "OK" if _value_present(raw_value) else "Missing",
+                "SEC Concept Used": concept_used or "N/A",
+                "Concepts Attempted": ", ".join(concepts_attempted) if concepts_attempted else "N/A",
+                "Fallback Used": "Yes" if fallback_used else "No",
+                "Status": status or ("OK" if _value_present(raw_value) else "Missing"),
                 "Missing / Note": note,
+                "Note": note,
             }
         )
 
@@ -641,15 +921,15 @@ def _financial_reconciliation(symbol: str, latest_release: dict, latest_row: dic
         None if not cards_period or not chart_latest_period else cards_period == chart_latest_period,
         f"Cards: {cards_period or 'N/A'} | Chart: {chart_latest_period or 'N/A'}",
     )
-    revenue_period = next((row["Period"] for row in rows if row["metric"] == "revenue" and row["Status"] == "OK"), None)
-    eps_period = next((row["Period"] for row in rows if row["metric"] == "eps" and row["Status"] == "OK"), None)
+    revenue_period = next((row["Period"] for row in rows if row["metric"] == "revenue" and _value_present(row.get("value"))), None)
+    eps_period = next((row["Period"] for row in rows if row["metric"] == "eps" and _value_present(row.get("value"))), None)
     add_check(
         "Revenue period equals EPS period",
         None if not revenue_period or not eps_period else revenue_period == eps_period,
         f"Revenue: {revenue_period or 'N/A'} | EPS: {eps_period or 'N/A'}",
     )
-    income_periods = {row["Period"] for row in rows if row["metric"] in INCOME_STATEMENT_METRICS and row["Status"] == "OK"}
-    balance_periods = {row["Period"] for row in rows if row["metric"] in BALANCE_SHEET_METRICS and row["Status"] == "OK" and row["metric"] != "shares_outstanding"}
+    income_periods = {row["Period"] for row in rows if row["metric"] in INCOME_STATEMENT_METRICS and _value_present(row.get("value"))}
+    balance_periods = {row["Period"] for row in rows if row["metric"] in BALANCE_SHEET_METRICS and _value_present(row.get("value")) and row["metric"] != "shares_outstanding"}
     if income_periods and balance_periods:
         add_check(
             "Income statement period equals balance sheet period",
@@ -698,7 +978,7 @@ def _financial_reconciliation(symbol: str, latest_release: dict, latest_row: dic
         "has_mismatch": bool(check_warnings),
         "warnings": warnings,
         "missing_chart_fields": missing_chart_fields,
-        "missing_metric_periods": [row["Metric"] for row in rows if row["Status"] == "Missing"],
+        "missing_metric_periods": [row["Metric"] for row in rows if not _value_present(row.get("value"))],
         "margin_notes": margin_notes,
         "chart_latest_period": chart_latest_period,
         "chart_latest_period_end": chart_latest_period_end,
@@ -763,10 +1043,51 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
         "free_cash_flow": to_float(row.get("free_cash_flow")),
         "cash": to_float(row.get("cash")),
         "total_debt": to_float(row.get("total_debt")),
+        "total_assets": to_float(row.get("total_assets")),
+        "shareholders_equity": to_float(row.get("shareholders_equity")),
         "shares_outstanding": to_float(quote.get("shares_outstanding")),
     }
     missing = row.get("sec_missing_fields") if sec_structured and isinstance(row.get("sec_missing_fields"), list) else [key for key, value in values.items() if value is None and key not in {"eps", "shares_outstanding"}]
+    metric_sources = dict(row.get("metric_sources") or {})
+    if sec_structured:
+        for key in RECONCILIATION_METRICS:
+            if key in metric_sources:
+                continue
+            if _value_present(values.get(key)):
+                metric_sources[key] = _metric_source_detail(
+                    value=values.get(key),
+                    source=structured_source,
+                    status="OK",
+                    note=f"{_metric_label(key)} available from latest structured row.",
+                    period=structured_label,
+                    period_end_date=structured_date,
+                )
+            elif key in missing:
+                metric_sources[key] = _metric_source_detail(
+                    value=None,
+                    source=structured_source,
+                    status="N/A",
+                    note=f"{_metric_label(key)} unavailable from latest structured row.",
+                    period=structured_label,
+                    period_end_date=structured_date,
+                )
+            _set_attempted_concepts(metric_sources, key)
+    else:
+        for key in RECONCILIATION_METRICS:
+            if key == "shares_outstanding":
+                continue
+            metric_sources[key] = _metric_source_detail(
+                value=values.get(key),
+                source=structured_source,
+                status="yfinance fallback" if _value_present(values.get(key)) else "N/A",
+                note="Yahoo Finance quarterly statement value." if _value_present(values.get(key)) else "Unavailable from Yahoo Finance quarterly statements.",
+                fallback_used=True,
+                period=structured_label,
+                period_end_date=structured_date,
+            )
     source_status = alignment_source_status if alignment_source_status != "OK" else ("OK" if not missing else "Partial")
+    if source_status == "OK" and any((detail or {}).get("status") == "Partial estimate" for detail in metric_sources.values()):
+        source_status = "Partial"
     note = row.get("sec_data_quality_note") if sec_structured else "Latest quarterly statements from Yahoo Finance/yfinance."
     if annual:
         source_status = "Partial"
@@ -816,10 +1137,12 @@ def _release_from_history(symbol: str, history: pd.DataFrame, quote: dict, sec_f
         "filing_url": sec_filing.get("filing_url"),
         "accession_number": sec_filing.get("accession_number"),
         "missing_fields": missing,
+        "metric_sources": metric_sources,
+        "concept_sources": row.get("concept_sources") or {},
         "data_quality_note": note,
-        "source_status_reason": _source_status_reason(source_status, values, missing, structured_source, note),
         "last_updated": updated,
     }
+    release["source_status_reason"] = _latest_source_reason(release, values, missing) if source_status == "Partial" else _source_status_reason(source_status, values, missing, structured_source, note)
     return _with_latest_period(symbol, release)
 
 
@@ -961,6 +1284,10 @@ def load_latest_company_financials(ticker: str) -> dict:
             warnings.append("Latest revenue growth may be not meaningful due to small-base effect.")
         chart_source = _chart_source_status(quarterly_history, latest_release)
         reconciliation = _financial_reconciliation(symbol, latest_release, latest, quarterly_history, chart_source)
+        metric_sources = latest_release.get("metric_sources") or {}
+        fallback_metrics = [_metric_label(key) for key, detail in metric_sources.items() if detail.get("fallback_used")]
+        concept_failures = [_metric_label(key) for key, detail in metric_sources.items() if detail.get("status") in {"Missing concept", "N/A"} and key != "shares_outstanding"]
+        debt_detail = metric_sources.get("total_debt") or {}
         if reconciliation.get("warnings"):
             warnings.extend(reconciliation.get("warnings", []))
         if reconciliation.get("margin_notes"):
@@ -1007,6 +1334,11 @@ def load_latest_company_financials(ticker: str) -> dict:
                 "missing_chart_fields": reconciliation.get("missing_chart_fields", []),
                 "missing_metric_periods": reconciliation.get("missing_metric_periods", []),
                 "margin_validity": "Partial" if reconciliation.get("margin_notes") else "OK",
+                "sec_concept_coverage": "Partial" if concept_failures else "OK",
+                "yfinance_fallback_metrics": fallback_metrics,
+                "missing_financial_concepts": concept_failures,
+                "debt_calculation_quality": debt_detail.get("status", "N/A"),
+                "debt_calculation_note": debt_detail.get("note", ""),
                 "earnings": earnings.get("source", "Yahoo Finance/yfinance financial statement fallback"),
                 "estimates": "Yahoo Finance/yfinance analyst estimate tables",
             },
