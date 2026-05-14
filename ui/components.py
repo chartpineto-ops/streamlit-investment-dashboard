@@ -62,7 +62,7 @@ def quote_header(quote: dict) -> None:
     change = quote.get("daily_change")
     tone = tone_for_number(change_pct)
     logo_url = quote.get("logo_url")
-    initials = quote.get("fallback_initials") or "".join(ch for ch in ticker if ch.isalnum())[:2] or "RT"
+    initials = quote.get("fallback_initials") or "".join(ch for ch in ticker if ch.isalnum())[:2] or "PT"
     if logo_url:
         logo = f'<img src="{escape(str(logo_url))}" alt="{escape(ticker)} logo" onerror="this.style.display=\'none\'; this.parentNode.textContent=\'{escape(initials)}\';">'
     else:

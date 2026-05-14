@@ -29,7 +29,7 @@ from storage.watchlist import (
     remove_ticker,
 )
 from ui.components import clean_dataframe, empty_state, quote_header, render_metric_grid, section, source_line
-from ui.styles import apply_terminal_style
+from ui.styles import BRAND_COLORS, apply_brand_theme
 from utils.formatting import (
     clean_ticker,
     fmt_compact,
@@ -79,10 +79,11 @@ PAGES = [
 ]
 
 PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
+LOGO_PATH = Path("assets/pineterminal_logo.png")
 
 
-st.set_page_config(page_title="Research Terminal 2.0", page_icon="RT", layout="wide")
-apply_terminal_style()
+st.set_page_config(page_title="PineTerminal", page_icon="PT", layout="wide")
+apply_brand_theme()
 init_db()
 
 
@@ -124,19 +125,60 @@ def streamlit_secret_value(key: str, default=None):
         return default
 
 
+def logo_file() -> Path | None:
+    return LOGO_PATH if LOGO_PATH.exists() else None
+
+
+def brand_wordmark_html(size_rem: float = 1.35) -> str:
+    return (
+        f'<div class="brand-wordmark" style="font-size:{size_rem}rem;">'
+        '<span class="brand-pine">Pine</span><span class="brand-terminal">Terminal</span>'
+        "</div>"
+    )
+
+
+def render_sidebar_brand() -> None:
+    logo = logo_file()
+    if logo:
+        st.sidebar.image(str(logo), use_container_width=True)
+    st.sidebar.markdown(brand_wordmark_html(), unsafe_allow_html=True)
+    st.sidebar.markdown('<div class="brand-subtitle">V1 Research Terminal</div>', unsafe_allow_html=True)
+
+
+def render_home_brand_header() -> None:
+    logo = logo_file()
+    if logo:
+        left, right = st.columns([0.14, 0.86])
+        with left:
+            st.image(str(logo), width=96)
+        with right:
+            st.markdown(brand_wordmark_html(2.15), unsafe_allow_html=True)
+            st.markdown(
+                '<div class="terminal-subtitle">Personal investment research terminal for market snapshots, company analysis, watchlists, signals, and AI due diligence.</div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.title("PineTerminal")
+        st.markdown(
+            '<div class="terminal-subtitle">Personal investment research terminal for market snapshots, company analysis, watchlists, signals, and AI due diligence.</div>',
+            unsafe_allow_html=True,
+        )
+    st.caption("Built for disciplined market research, not financial advice.")
+
+
 def plotly_layout(fig: go.Figure, height: int = 340) -> go.Figure:
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#071013",
-        font={"color": "#dfe8eb", "family": "Inter, Arial, sans-serif", "size": 12},
+        plot_bgcolor=BRAND_COLORS["background"],
+        font={"color": BRAND_COLORS["text"], "family": "Inter, Arial, sans-serif", "size": 12},
         margin={"l": 44, "r": 24, "t": 34, "b": 44},
         height=height,
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
         hovermode="x unified",
     )
-    fig.update_xaxes(gridcolor="#1d3440", zerolinecolor="#31515f", tickfont={"size": 11}, title_font={"size": 12})
-    fig.update_yaxes(gridcolor="#1d3440", zerolinecolor="#31515f", tickfont={"size": 11}, title_font={"size": 12})
+    fig.update_xaxes(gridcolor=BRAND_COLORS["border"], zerolinecolor=BRAND_COLORS["pine_dark"], tickfont={"size": 11}, title_font={"size": 12})
+    fig.update_yaxes(gridcolor=BRAND_COLORS["border"], zerolinecolor=BRAND_COLORS["pine_dark"], tickfont={"size": 11}, title_font={"size": 12})
     return fig
 
 
@@ -297,7 +339,7 @@ def render_signal_summary(ticker: str, signal: dict) -> None:
         ],
         columns=["Category", "Score"],
     )
-    fig = go.Figure(go.Bar(x=score_frame["Category"], y=score_frame["Score"], marker_color="#7dd3fc", text=score_frame["Score"].round(1), textposition="outside", cliponaxis=False))
+    fig = go.Figure(go.Bar(x=score_frame["Category"], y=score_frame["Score"], marker_color=BRAND_COLORS["pine_bright"], text=score_frame["Score"].round(1), textposition="outside", cliponaxis=False))
     fig = plotly_layout(fig, height=330)
     fig.update_yaxes(range=[0, 105], title="Score")
     render_terminal_chart(fig)
@@ -375,7 +417,7 @@ def render_52w_position(quote: dict) -> None:
             <div style="position:absolute;left:{label_left};top:0;transform:{transform};text-align:{text_align};white-space:nowrap;">
               <span class="rt-badge good">{ticker} {fmt_price(price)}</span>
             </div>
-            <div style="position:absolute;left:0;right:0;top:30px;height:10px;border-radius:99px;background:linear-gradient(90deg,#e77878,#f4d35e,#7bd88f);border:1px solid #496b77;"></div>
+            <div style="position:absolute;left:0;right:0;top:30px;height:10px;border-radius:99px;background:linear-gradient(90deg,{BRAND_COLORS['red']},{BRAND_COLORS['gold']},{BRAND_COLORS['pine_bright']});border:1px solid {BRAND_COLORS['border']};"></div>
             <div style="position:absolute;left:{pct:.2f}%;top:24px;transform:translateX(-50%);width:3px;height:24px;border-radius:4px;background:#e8f2f4;box-shadow:0 0 0 2px rgba(0,0,0,0.45);"></div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;margin-top:0.35rem;color:#9fb0b6;font-weight:800;font-size:0.78rem;">
@@ -575,7 +617,7 @@ def render_price_chart(ticker: str) -> None:
         empty_state("Price history unavailable.")
         return
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=history.index, y=history["Close"], mode="lines", name="Close", line={"color": "#7dd3fc", "width": 2.4}))
+    fig.add_trace(go.Scatter(x=history.index, y=history["Close"], mode="lines", name="Close", line={"color": BRAND_COLORS["pine_bright"], "width": 2.4}))
     fig = plotly_layout(fig, height=320)
     fig.update_yaxes(title="Price")
     render_terminal_chart(fig)
@@ -597,7 +639,7 @@ def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict
                     x=chart_frame["period"],
                     y=chart_frame["revenue"],
                     name="Actual Revenue",
-                    marker_color="#7dd3fc",
+                    marker_color=BRAND_COLORS["pine_bright"],
                     text=[fmt_currency(v, 1) for v in chart_frame["revenue"]],
                     textposition="outside",
                     cliponaxis=False,
@@ -616,7 +658,7 @@ def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict
                     x=chart_frame["period"],
                     y=chart_frame["eps"],
                     name="Actual EPS",
-                    marker_color=["#7bd88f" if to_float(v) is not None and to_float(v) >= 0 else "#f87171" for v in chart_frame["eps"]],
+                    marker_color=[BRAND_COLORS["pine_bright"] if to_float(v) is not None and to_float(v) >= 0 else BRAND_COLORS["red"] for v in chart_frame["eps"]],
                     text=[fmt_eps(v) for v in chart_frame["eps"]],
                     textposition="outside",
                     cliponaxis=False,
@@ -630,7 +672,7 @@ def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict
     margin_cols = ["gross_margin", "operating_margin", "net_margin", "fcf_margin"]
     if any(col in chart_frame and chart_frame[col].notna().any() for col in margin_cols):
         fig = go.Figure()
-        colors = {"gross_margin": "#7dd3fc", "operating_margin": "#7bd88f", "net_margin": "#f4d35e", "fcf_margin": "#c084fc"}
+        colors = {"gross_margin": BRAND_COLORS["pine_bright"], "operating_margin": BRAND_COLORS["gold"], "net_margin": BRAND_COLORS["pine"], "fcf_margin": BRAND_COLORS["warning"]}
         labels = {"gross_margin": "Gross Margin", "operating_margin": "Operating Margin", "net_margin": "Net Margin", "fcf_margin": "FCF Margin"}
         for col in margin_cols:
             if col in chart_frame and chart_frame[col].notna().any():
@@ -696,7 +738,7 @@ def _compact_bar_chart(title: str, labels: list[str], values: list[float | None]
         return
     labels_clean = [row[0] for row in rows]
     values_clean = [row[1] for row in rows]
-    colors = ["#7bd88f" if value >= 0 else "#f87171" for value in values_clean]
+    colors = [BRAND_COLORS["pine_bright"] if value >= 0 else BRAND_COLORS["red"] for value in values_clean]
     text = [fmt_currency(value, 1) if currency else fmt_number(value, 1) for value in values_clean]
     if orientation == "v":
         bar = go.Bar(
@@ -724,7 +766,7 @@ def _compact_bar_chart(title: str, labels: list[str], values: list[float | None]
     )
     fig = plotly_layout(fig, height=height)
     fig.update_layout(showlegend=False, margin={"l": 86 if orientation == "h" else 22, "r": 20, "t": 18, "b": 46 if orientation == "v" else 28})
-    fig.update_xaxes(zeroline=True, zerolinecolor="#5b7782")
+    fig.update_xaxes(zeroline=True, zerolinecolor=BRAND_COLORS["muted"])
     if orientation == "h":
         fig.update_yaxes(autorange="reversed")
     render_terminal_chart(fig)
@@ -881,8 +923,7 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
 
 
 def home_page(ticker: str) -> None:
-    st.title("Research Terminal 2.0")
-    st.markdown('<div class="terminal-subtitle">Bloomberg-style V1 personal investment research terminal.</div>', unsafe_allow_html=True)
+    render_home_brand_header()
     snapshot, statuses = fetch_market_snapshot()
     cards = []
     for _, row in snapshot.iterrows():
@@ -1058,7 +1099,7 @@ def signal_page(ticker: str) -> None:
         ],
         columns=["Category", "Score"],
     )
-    fig = go.Figure(go.Bar(x=score_frame["Category"], y=score_frame["Score"], marker_color="#7dd3fc", text=score_frame["Score"].round(1), textposition="outside", cliponaxis=False))
+    fig = go.Figure(go.Bar(x=score_frame["Category"], y=score_frame["Score"], marker_color=BRAND_COLORS["pine_bright"], text=score_frame["Score"].round(1), textposition="outside", cliponaxis=False))
     fig = plotly_layout(fig, height=360)
     fig.update_yaxes(range=[0, 105], title="Score")
     render_terminal_chart(fig)
@@ -1307,8 +1348,7 @@ def render_page(page: str, ticker: str) -> None:
 
 
 def main() -> None:
-    st.sidebar.markdown("## Research Terminal 2.0")
-    st.sidebar.caption("V1 MVP")
+    render_sidebar_brand()
     if "global_ticker_input" not in st.session_state:
         st.session_state["global_ticker_input"] = clean_ticker(st.session_state.get("global_ticker", "IONQ")) or "IONQ"
     ticker_input = st.sidebar.text_input("Global ticker", placeholder="IONQ", key="global_ticker_input", on_change=normalize_global_ticker_input)

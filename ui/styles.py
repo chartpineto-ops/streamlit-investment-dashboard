@@ -3,22 +3,44 @@ from __future__ import annotations
 import streamlit as st
 
 
+BRAND_COLORS = {
+    "background": "#061014",
+    "card": "#101B22",
+    "card_alt": "#0B171D",
+    "border": "#1E3440",
+    "pine": "#2F7D3A",
+    "pine_bright": "#6DBB5A",
+    "pine_dark": "#1F5A2E",
+    "navy": "#071A3D",
+    "gold": "#E5A72A",
+    "text": "#EAF0F2",
+    "text_secondary": "#A9B6BC",
+    "muted": "#6F7E86",
+    "red": "#E57368",
+    "warning": "#E5C558",
+}
+
+
 TERMINAL_CSS = """
 <style>
 :root {
-  --bg: #071013;
-  --panel: #0c171d;
-  --panel-2: #101f27;
-  --border: #24404d;
-  --text: #e8f2f4;
-  --muted: #9fb0b6;
-  --blue: #7dd3fc;
-  --green: #7bd88f;
-  --red: #ff7b72;
-  --yellow: #f4d35e;
+  --bg: #061014;
+  --panel: #101B22;
+  --panel-2: #0B171D;
+  --border: #1E3440;
+  --text: #EAF0F2;
+  --muted: #A9B6BC;
+  --muted-2: #6F7E86;
+  --pine: #2F7D3A;
+  --pine-bright: #6DBB5A;
+  --pine-dark: #1F5A2E;
+  --navy: #071A3D;
+  --green: #6DBB5A;
+  --red: #E57368;
+  --yellow: #E5A72A;
 }
 .stApp {
-  background: radial-gradient(circle at top left, rgba(20, 65, 78, 0.34), transparent 28rem), var(--bg);
+  background: radial-gradient(circle at top left, rgba(47, 125, 58, 0.22), transparent 28rem), radial-gradient(circle at top right, rgba(7, 26, 61, 0.44), transparent 30rem), var(--bg);
   color: var(--text);
 }
 .block-container {
@@ -30,7 +52,7 @@ h1, h2, h3 {
   letter-spacing: 0;
 }
 h1 {
-  color: var(--blue);
+  color: var(--pine-bright);
   font-size: 2rem !important;
   margin-bottom: 0.1rem !important;
 }
@@ -43,7 +65,7 @@ h3 {
   font-size: 1rem !important;
 }
 [data-testid="stSidebar"] {
-  background: #061015;
+  background: linear-gradient(180deg, #061014 0%, #071A3D 160%);
   border-right: 1px solid var(--border);
 }
 [data-testid="stSidebar"] * {
@@ -54,12 +76,33 @@ h3 {
   font-size: 0.95rem;
   margin-bottom: 1rem;
 }
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.35rem 0 0.25rem;
+}
+.brand-wordmark {
+  font-size: 1.35rem;
+  font-weight: 950;
+  line-height: 1;
+}
+.brand-pine { color: var(--pine-bright); }
+.brand-terminal { color: var(--text); }
+.brand-subtitle {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 1rem;
+}
 .rt-card {
-  background: linear-gradient(180deg, rgba(18, 34, 42, 0.98), rgba(10, 20, 25, 0.98));
+  background: linear-gradient(180deg, rgba(16, 27, 34, 0.98), rgba(7, 16, 20, 0.98));
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0.85rem 0.95rem;
-  box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.03), 0 12px 26px rgba(0,0,0,0.18);
+  box-shadow: 0 0 0 1px rgba(109, 187, 90, 0.04), 0 12px 26px rgba(0,0,0,0.18);
   min-height: 92px;
   height: 100%;
   box-sizing: border-box;
@@ -110,24 +153,24 @@ h3 {
 }
 .rt-badge.good {
   color: var(--green);
-  border-color: rgba(123,216,143,0.42);
-  background: rgba(123,216,143,0.12);
+  border-color: rgba(109,187,90,0.42);
+  background: rgba(109,187,90,0.12);
 }
 .rt-badge.bad {
   color: var(--red);
-  border-color: rgba(255,123,114,0.44);
-  background: rgba(255,123,114,0.12);
+  border-color: rgba(229,115,104,0.44);
+  background: rgba(229,115,104,0.12);
 }
 .rt-badge.warn {
   color: var(--yellow);
-  border-color: rgba(244,211,94,0.42);
-  background: rgba(244,211,94,0.10);
+  border-color: rgba(229,167,42,0.42);
+  background: rgba(229,167,42,0.10);
 }
 .quote-card {
   display: flex;
   gap: 0.85rem;
   align-items: center;
-  background: linear-gradient(90deg, rgba(17, 33, 42, 0.98), rgba(9, 17, 22, 0.98));
+  background: linear-gradient(90deg, rgba(16, 27, 34, 0.98), rgba(7, 26, 61, 0.78));
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0.75rem 0.9rem;
@@ -142,7 +185,7 @@ h3 {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  color: var(--blue);
+  color: var(--pine-bright);
   font-weight: 900;
   font-size: 1.05rem;
 }
@@ -177,11 +220,25 @@ h3 {
   border-radius: 8px;
 }
 button[kind="primary"] {
-  border: 1px solid #5fa8cc !important;
+  background: linear-gradient(180deg, var(--pine-bright), var(--pine)) !important;
+  border: 1px solid var(--pine-bright) !important;
+  color: #061014 !important;
+  font-weight: 850 !important;
+}
+button[kind="primary"]:hover {
+  border-color: var(--yellow) !important;
+  box-shadow: 0 0 0 1px rgba(229,167,42,0.22);
+}
+[data-testid="stSidebar"] button {
+  border-color: var(--pine) !important;
 }
 </style>
 """
 
 
-def apply_terminal_style() -> None:
+def apply_brand_theme() -> None:
     st.markdown(TERMINAL_CSS, unsafe_allow_html=True)
+
+
+def apply_terminal_style() -> None:
+    apply_brand_theme()

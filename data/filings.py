@@ -6,7 +6,7 @@ import streamlit as st
 
 from utils.formatting import clean_ticker, now_et
 
-HEADERS = {"User-Agent": "Research Terminal 2.0 V1 contact@example.com"}
+HEADERS = {"User-Agent": "PineTerminal V1 contact@example.com"}
 RELEVANT_FORMS = {"10-Q", "10-K", "8-K", "6-K", "20-F"}
 PERIODIC_FORMS = {"10-Q", "10-K", "20-F"}
 

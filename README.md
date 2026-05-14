@@ -1,8 +1,20 @@
-# Research Terminal 2.0 - V1 MVP
+# PineTerminal - V1 Research Terminal
 
-A Bloomberg-style personal investment research terminal built with Streamlit.
+PineTerminal is a branded, Bloomberg-style personal investment research terminal built with Streamlit.
 
-V1 focuses on clean architecture, reliable fail-soft data flows, transparent scoring, SQLite-backed watchlists, in-app signal alerts, and optional OpenAI-powered due diligence summaries.
+V1 focuses on clean architecture, reliable fail-soft data flows, transparent scoring, SQLite-backed watchlists, in-app signal alerts, and optional OpenAI-powered due diligence summaries. It is a research workflow tool, not investment advice.
+
+## Brand
+
+PineTerminal uses a dark terminal aesthetic with pine green, deep navy, and gold accents inspired by the logo.
+
+Logo support:
+
+```text
+assets/pineterminal_logo.png
+```
+
+If the logo file is unavailable, the app falls back to the PineTerminal wordmark text.
 
 ## Current Tab Structure
 

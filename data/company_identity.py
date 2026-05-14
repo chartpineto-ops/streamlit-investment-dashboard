@@ -8,7 +8,7 @@ import yfinance as yf
 
 from utils.formatting import clean_ticker, now_et
 
-LOGO_HEADERS = {"User-Agent": "Research Terminal 2.0 V1 logo check"}
+LOGO_HEADERS = {"User-Agent": "PineTerminal V1 logo check"}
 
 
 def _domain_from_website(website: str | None) -> str | None:
@@ -33,7 +33,7 @@ def _fallback_initials(ticker: str, company_name: str | None) -> str:
         parts = [part[0] for part in str(company_name).replace(",", " ").split() if part and part[0].isalnum()]
         if len(parts) >= 2:
             return "".join(parts[:2]).upper()
-    return "".join(ch for ch in ticker if ch.isalnum())[:2].upper() or "RT"
+    return "".join(ch for ch in ticker if ch.isalnum())[:2].upper() or "PT"
 
 
 def _logo_looks_valid(url: str | None) -> bool:
@@ -77,7 +77,7 @@ def get_company_identity(ticker: str) -> dict:
             "logo_url": None,
             "logo_status": "Invalid ticker",
             "logo_source": "N/A",
-            "fallback_initials": "RT",
+            "fallback_initials": "PT",
             "last_updated": updated,
         }
     try:

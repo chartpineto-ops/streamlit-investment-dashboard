@@ -34,7 +34,7 @@ def main() -> None:
     latest = latest_watchlist_table()
     assert "ticker" in watch.columns
     assert "Alert (D/D Change)" in latest.columns
-    print("Research Terminal V1 smoke test completed.")
+    print("PineTerminal V1 smoke test completed.")
 
 
 if __name__ == "__main__":
