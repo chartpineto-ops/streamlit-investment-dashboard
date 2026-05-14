@@ -315,6 +315,228 @@ def source_status_summary(statuses: list[dict]) -> tuple[str, str]:
     return ", ".join(source_names[:3]) or "Free news feeds", state
 
 
+def _first_number(*values) -> float | None:
+    for value in values:
+        number = to_float(value)
+        if number is not None:
+            return number
+    return None
+
+
+def _range_position_pct(quote: dict) -> float | None:
+    price = to_float(quote.get("price"))
+    low = to_float(quote.get("fifty_two_week_low"))
+    high = to_float(quote.get("fifty_two_week_high"))
+    if price is None or low is None or high is None or high <= low:
+        return None
+    return max(0, min((price - low) / (high - low), 1)) * 100
+
+
+def _stance_from_signal(label: str) -> tuple[str, str]:
+    if label == "Buy":
+        return "Bullish", "good"
+    if label == "Speculative Buy":
+        return "Bullish / Speculative", "good"
+    if label == "Hold / Watchlist":
+        return "Neutral", "warn"
+    if label in {"Sell / Trim", "Avoid"}:
+        return "Bearish", "bad"
+    return "No Rating", "neutral"
+
+
+def _signal_tone(label: str) -> str:
+    if label in {"Buy", "Speculative Buy"}:
+        return "good"
+    if label in {"Sell / Trim", "Avoid"}:
+        return "bad"
+    if label == "Hold / Watchlist":
+        return "warn"
+    return "neutral"
+
+
+def _hero_chip(label: str, value: str, tone: str = "neutral") -> dict:
+    return {"label": label, "value": value, "tone": tone}
+
+
+def build_company_hero_summary(ticker: str, data_packet: dict, signal_output: dict, quote_data: dict) -> dict:
+    symbol = clean_ticker(ticker) or clean_ticker(quote_data.get("ticker")) or "N/A"
+    latest = data_packet.get("latest_financials") or {}
+    release = data_packet.get("latest_quarterly_release") or {}
+    packet = data_packet.get("financial_data_packet") or {}
+    quality = packet.get("coverage_summary") or release.get("financial_data_quality") or {}
+
+    revenue_growth = _first_number(latest.get("revenue_yoy_growth"), latest.get("revenue_qoq_growth"), release.get("revenue_yoy_growth"))
+    gross_margin = _first_number(latest.get("gross_margin"), release.get("gross_margin"))
+    net_income = _first_number(release.get("net_income"), latest.get("net_income"))
+    fcf = _first_number(release.get("free_cash_flow"), latest.get("free_cash_flow"))
+    range_pct = _range_position_pct(quote_data)
+    valuation = valuation_label(signal_output)
+    completeness = _first_number(packet.get("completeness_score"), release.get("data_completeness_score"), signal_output.get("data_completeness"))
+    signal_label = signal_output.get("signal_label") or "No Rating / Insufficient Data"
+    stance, stance_tone = _stance_from_signal(signal_label)
+
+    positives: list[str] = []
+    cautions: list[str] = []
+    if revenue_growth is not None:
+        if revenue_growth > 20:
+            positives.append("strong revenue growth")
+        elif revenue_growth > 0:
+            positives.append("positive revenue growth")
+        elif revenue_growth < 0:
+            cautions.append("revenue contraction")
+    if gross_margin is not None and gross_margin > 40:
+        positives.append("healthy gross margins")
+    momentum_score = to_float(signal_output.get("momentum_score"))
+    if momentum_score is not None:
+        if momentum_score >= 60:
+            positives.append("constructive momentum")
+        elif momentum_score <= 40:
+            cautions.append("weak momentum")
+    if net_income is not None:
+        if net_income < 0:
+            cautions.append("profitability remains negative")
+        elif net_income > 0:
+            positives.append("profitable latest reported net income")
+    if fcf is not None:
+        if fcf < 0:
+            cautions.append("cash burn remains a watch item")
+        elif fcf > 0:
+            positives.append("free cash flow is positive")
+    if valuation in {"Expensive", "Very expensive"}:
+        cautions.append("valuation remains elevated")
+    elif valuation in {"Cheap", "Reasonable"}:
+        positives.append(f"valuation appears {valuation.lower()}")
+    if range_pct is not None:
+        if range_pct >= 80:
+            cautions.append("trading near the top of its 52-week range")
+        elif range_pct <= 20:
+            cautions.append("trading near the bottom of its 52-week range")
+    if completeness is not None and completeness < 75:
+        cautions.append("data quality is partial")
+
+    positives = list(dict.fromkeys(positives))
+    cautions = list(dict.fromkeys(cautions))
+    if completeness is not None and completeness < 40 and not positives:
+        headline = f"{symbol} has limited financial coverage. The research signal is based on available market, financial, and catalyst data."
+    elif positives and cautions:
+        headline = f"{symbol} is showing {', '.join(positives[:2])}, but {', '.join(cautions[:2])}."
+    elif positives:
+        headline = f"{symbol} is showing {', '.join(positives[:2])}. The overall research signal is {signal_label} based on available data."
+    elif cautions:
+        headline = f"{symbol} has {', '.join(cautions[:2])}. The overall research signal is {signal_label} based on available data."
+    else:
+        headline = f"{symbol} has partial financial coverage. The research signal is based on available market, financial, and catalyst data."
+
+    chips: list[dict] = []
+    if revenue_growth is not None:
+        chips.append(_hero_chip("Revenue Growth", fmt_growth(revenue_growth, abs(revenue_growth) > 500), tone_for_number(revenue_growth)))
+    if gross_margin is not None:
+        chips.append(_hero_chip("Gross Margin", fmt_meaningful_percent(gross_margin), tone_for_number(gross_margin)))
+    if fcf is not None:
+        chips.append(_hero_chip("FCF", fmt_currency(fcf, 1), tone_for_number(fcf)))
+    if range_pct is not None:
+        chips.append(_hero_chip("52W Position", f"{range_pct:.1f}% of range", "warn" if range_pct >= 80 else "neutral"))
+    if valuation and valuation != "Not meaningful / insufficient data":
+        chips.append(_hero_chip("Valuation", valuation, "warn" if valuation in {"Expensive", "Very expensive"} else "good" if valuation in {"Cheap", "Reasonable"} else "neutral"))
+    if not chips:
+        chips.append(_hero_chip("Data Coverage", _fmt_completeness(completeness), "warn" if completeness is not None and completeness < 75 else "neutral"))
+
+    data_quality_note = ""
+    if completeness is not None and completeness < 75:
+        data_quality_note = "Partial data coverage; review reconciliation."
+    elif signal_output.get("missing_data_warnings"):
+        data_quality_note = "Some signal inputs are unavailable."
+
+    return {
+        "ticker": symbol,
+        "company_name": quote_data.get("company_name") or symbol,
+        "sector": quote_data.get("sector") or "N/A",
+        "industry": quote_data.get("industry") or "N/A",
+        "price": quote_data.get("price"),
+        "daily_move_pct": quote_data.get("daily_change_pct"),
+        "daily_change_amount": quote_data.get("daily_change"),
+        "market_cap": quote_data.get("market_cap"),
+        "volume": quote_data.get("volume"),
+        "headline": headline,
+        "research_signal": signal_label,
+        "market_stance": stance,
+        "market_stance_tone": stance_tone,
+        "research_signal_tone": _signal_tone(signal_label),
+        "composite_score": signal_output.get("composite_score"),
+        "confidence": signal_output.get("confidence") or "N/A",
+        "data_completeness": completeness,
+        "key_stat_chips": chips[:5],
+        "data_quality_note": data_quality_note,
+    }
+
+
+def render_company_hero(quote: dict, summary: dict) -> None:
+    ticker = summary.get("ticker") or quote.get("ticker") or "N/A"
+    initials = quote.get("fallback_initials") or "".join(ch for ch in str(ticker) if ch.isalnum())[:2] or "PT"
+    logo_url = quote.get("logo_url")
+    if logo_url:
+        logo = f'<img src="{escape(str(logo_url))}" alt="{escape(str(ticker))} logo" onerror="this.style.display=\'none\'; this.parentNode.textContent=\'{escape(str(initials))}\';">'
+    else:
+        logo = escape(str(initials))
+
+    move_pct = summary.get("daily_move_pct")
+    move_amount = to_float(summary.get("daily_change_amount"))
+    move_tone = {"good": "rt-good", "bad": "rt-bad"}.get(tone_for_number(move_pct), "rt-neutral")
+    move_text = fmt_percent(move_pct, decimals=2, signed=True) if move_pct is not None else "N/A"
+    change_abs = f"{'+' if move_amount > 0 else '-' if move_amount < 0 else ''}{fmt_price(abs(move_amount))}" if move_amount is not None else "N/A"
+    score = to_float(summary.get("composite_score"))
+    score_text = f"{score:.1f}/100" if score is not None else "N/A"
+    completeness_text = _fmt_completeness(summary.get("data_completeness"))
+    chip_html = "".join(
+        f'<span class="hero-chip {escape(str(chip.get("tone") or ""))}"><span>{escape(str(chip.get("label")))}</span><strong>{escape(str(chip.get("value")))}</strong></span>'
+        for chip in summary.get("key_stat_chips", [])
+    )
+    signal_tone = escape(str(summary.get("research_signal_tone") or "neutral"))
+    stance_tone = escape(str(summary.get("market_stance_tone") or "neutral"))
+    data_quality_note = summary.get("data_quality_note")
+    quality_html = f'<div class="hero-quality-note">{escape(str(data_quality_note))}</div>' if data_quality_note else ""
+
+    st.markdown(
+        f"""
+        <div class="company-hero-card">
+          <div class="company-hero-grid">
+            <div class="hero-identity">
+              <div class="quote-logo hero-logo">{logo}</div>
+              <div class="hero-identity-copy">
+                <div class="quote-main">{escape(str(ticker))} <span class="{move_tone}" style="font-size:1.02rem;">{escape(move_text)}</span></div>
+                <div class="quote-sub">{escape(str(summary.get("company_name") or ticker))}</div>
+                <div class="quote-sub">{escape(str(summary.get("sector") or "N/A"))} / {escape(str(summary.get("industry") or "N/A"))}</div>
+                <div class="quote-sub hero-price">{escape(fmt_price(summary.get("price")))} <span class="rt-neutral">{escape(change_abs)}</span></div>
+                <div class="hero-mini-stats">
+                  <span>Mkt Cap <strong>{escape(fmt_currency(summary.get("market_cap"), 1))}</strong></span>
+                  <span>Volume <strong>{escape(fmt_compact(summary.get("volume")))}</strong></span>
+                </div>
+              </div>
+            </div>
+            <div class="hero-summary">
+              <div class="rt-label">Executive Summary</div>
+              <div class="hero-summary-headline">{escape(str(summary.get("headline") or "Research summary unavailable."))}</div>
+              <div class="hero-chip-row">{chip_html}</div>
+              {quality_html}
+            </div>
+            <div class="hero-signal-panel">
+              <div class="hero-badge-label">Overall Research Signal</div>
+              <div class="hero-badge {signal_tone}">{escape(str(summary.get("research_signal") or "N/A"))}</div>
+              <div class="hero-badge-label">Market Stance</div>
+              <div class="hero-badge {stance_tone}">{escape(str(summary.get("market_stance") or "No Rating"))}</div>
+              <div class="hero-signal-stats">
+                <div><span>Score</span><strong>{escape(score_text)}</strong></div>
+                <div><span>Confidence</span><strong>{escape(str(summary.get("confidence") or "N/A"))}</strong></div>
+                <div><span>Completeness</span><strong>{escape(completeness_text)}</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_signal_summary(ticker: str, signal: dict) -> None:
     label = signal.get("signal_label", "N/A")
     score = signal.get("composite_score", 0)
@@ -1040,17 +1262,9 @@ def company_page(ticker: str) -> None:
     latest = latest_row(financials, "Quarterly")
     signal = compute_signal(ticker)
     options = fetch_options_summary(ticker, quote.get("price"))
-    quote_header(quote)
+    hero_summary = build_company_hero_summary(ticker, financials, signal, quote)
+    render_company_hero(quote, hero_summary)
     source_line(financials.get("source_metadata", {}).get("financials", "Yahoo Finance/yfinance"), financials.get("last_updated"), financials.get("status"))
-    render_metric_grid(
-        [
-            ("Market Cap", fmt_currency(quote.get("market_cap"), 1), "Quote metadata", "neutral"),
-            ("Volume / Avg", f"{fmt_compact(quote.get('volume'))} / {fmt_compact(quote.get('average_volume'))}", "Latest daily volume", "neutral"),
-            ("52W Range", f"{fmt_price(quote.get('fifty_two_week_low'))} - {fmt_price(quote.get('fifty_two_week_high'))}", "Latest provider range", "neutral"),
-        ],
-        columns=3,
-        small=True,
-    )
     section("Signal Center", "Transparent research score with factor breakdown, confidence, and missing-data warnings.")
     render_signal_summary(ticker, signal)
     section("Technical Entry Setup")

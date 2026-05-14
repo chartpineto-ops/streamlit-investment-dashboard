@@ -206,6 +206,191 @@ h3 {
   font-weight: 700;
   margin-top: 0.22rem;
 }
+.company-hero-card {
+  background: linear-gradient(120deg, rgba(16, 27, 34, 0.98), rgba(7, 26, 61, 0.82));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  box-shadow: 0 0 0 1px rgba(109, 187, 90, 0.05), 0 16px 30px rgba(0,0,0,0.22);
+}
+.company-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.95fr) minmax(320px, 1.45fr) minmax(230px, 0.85fr);
+  gap: 1rem;
+  align-items: center;
+}
+.hero-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 0;
+}
+.hero-logo {
+  flex: 0 0 auto;
+}
+.hero-identity-copy {
+  min-width: 0;
+}
+.hero-price {
+  color: var(--text) !important;
+}
+.hero-mini-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+}
+.hero-mini-stats span {
+  border: 1px solid rgba(30, 52, 64, 0.92);
+  border-radius: 999px;
+  padding: 0.16rem 0.48rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+  background: rgba(255,255,255,0.025);
+}
+.hero-mini-stats strong {
+  color: var(--text);
+  margin-left: 0.18rem;
+}
+.hero-summary {
+  min-width: 0;
+  border-left: 1px solid rgba(30, 52, 64, 0.82);
+  border-right: 1px solid rgba(30, 52, 64, 0.82);
+  padding: 0 1rem;
+}
+.hero-summary-headline {
+  color: var(--text);
+  font-size: 1.04rem;
+  font-weight: 850;
+  line-height: 1.28;
+  margin-top: 0.24rem;
+  overflow-wrap: anywhere;
+}
+.hero-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+.hero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.18rem 0.52rem;
+  color: var(--muted);
+  background: rgba(255,255,255,0.035);
+  font-size: 0.72rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.hero-chip strong {
+  color: var(--text);
+}
+.hero-chip.good {
+  border-color: rgba(109,187,90,0.42);
+  background: rgba(109,187,90,0.10);
+}
+.hero-chip.good strong { color: var(--green); }
+.hero-chip.bad {
+  border-color: rgba(229,115,104,0.44);
+  background: rgba(229,115,104,0.10);
+}
+.hero-chip.bad strong { color: var(--red); }
+.hero-chip.warn {
+  border-color: rgba(229,167,42,0.42);
+  background: rgba(229,167,42,0.10);
+}
+.hero-chip.warn strong { color: var(--yellow); }
+.hero-quality-note {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.25;
+  margin-top: 0.5rem;
+}
+.hero-signal-panel {
+  display: grid;
+  gap: 0.38rem;
+  justify-items: stretch;
+}
+.hero-badge-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.hero-badge {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.32rem 0.62rem;
+  color: var(--muted);
+  background: rgba(255,255,255,0.035);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.hero-badge.good {
+  color: var(--green);
+  border-color: rgba(109,187,90,0.42);
+  background: rgba(109,187,90,0.13);
+}
+.hero-badge.bad {
+  color: var(--red);
+  border-color: rgba(229,115,104,0.44);
+  background: rgba(229,115,104,0.12);
+}
+.hero-badge.warn {
+  color: var(--yellow);
+  border-color: rgba(229,167,42,0.42);
+  background: rgba(229,167,42,0.12);
+}
+.hero-signal-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.42rem;
+  margin-top: 0.2rem;
+}
+.hero-signal-stats div {
+  border: 1px solid rgba(30,52,64,0.9);
+  border-radius: 8px;
+  padding: 0.38rem 0.45rem;
+  background: rgba(6,16,20,0.44);
+  min-width: 0;
+}
+.hero-signal-stats span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+.hero-signal-stats strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 900;
+  margin-top: 0.1rem;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1100px) {
+  .company-hero-grid {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+  .hero-summary {
+    border-left: 0;
+    border-right: 0;
+    border-top: 1px solid rgba(30, 52, 64, 0.82);
+    border-bottom: 1px solid rgba(30, 52, 64, 0.82);
+    padding: 0.85rem 0;
+  }
+}
 .source-line {
   color: var(--muted);
   font-size: 0.78rem;
