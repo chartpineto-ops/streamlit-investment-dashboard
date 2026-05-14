@@ -620,7 +620,72 @@ def _scenario_html(case: dict) -> str:
     )
 
 
-def render_company_hero(view_model: dict) -> None:
+def _pt_tone_style(tone: str) -> dict:
+    palette = {
+        "good": {"color": BRAND_COLORS["pine_bright"], "border": "rgba(109,187,90,0.45)", "bg": "rgba(109,187,90,0.12)"},
+        "warn": {"color": BRAND_COLORS["gold"], "border": "rgba(229,167,42,0.45)", "bg": "rgba(229,167,42,0.12)"},
+        "bad": {"color": BRAND_COLORS["red"], "border": "rgba(229,115,104,0.45)", "bg": "rgba(229,115,104,0.12)"},
+        "neutral": {"color": BRAND_COLORS["text_secondary"], "border": "rgba(30,52,64,0.95)", "bg": "rgba(123,199,232,0.08)"},
+    }
+    return palette.get(tone, palette["neutral"])
+
+
+def _pt_chip(chip: dict, css_class: str = "pt-chip") -> str:
+    tone = _pt_tone_style(str(chip.get("tone") or "neutral"))
+    value = str(chip.get("value") or "")
+    value_html = f'<span style="color:{BRAND_COLORS["text"]};margin-left:0.25rem;">{escape(value)}</span>' if value else ""
+    return (
+        f'<span class="{escape(css_class)}" style="display:inline-flex;align-items:center;gap:0.1rem;'
+        f'border:1px solid {tone["border"]};background:{tone["bg"]};color:{tone["color"]};'
+        f'border-radius:999px;padding:0.26rem 0.6rem;font-size:0.72rem;font-weight:900;'
+        f'line-height:1.1;text-transform:uppercase;white-space:nowrap;">'
+        f'{escape(str(chip.get("label") or "N/A"))}{value_html}</span>'
+    )
+
+
+def _pt_stat_card(label: str, value: str, tone: str = "neutral") -> str:
+    tone_style = _pt_tone_style(tone)
+    return (
+        f'<div class="pt-hero-meta" style="border:1px solid {BRAND_COLORS["border"]};'
+        f'border-radius:10px;background:{BRAND_COLORS["card_alt"]};padding:0.5rem 0.58rem;min-width:0;">'
+        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.66rem;font-weight:850;'
+        f'letter-spacing:0.04em;text-transform:uppercase;margin-bottom:0.18rem;">{escape(label)}</div>'
+        f'<div style="color:{tone_style["color"]};font-size:0.92rem;font-weight:930;'
+        f'line-height:1.15;overflow-wrap:anywhere;">{escape(str(value or "N/A"))}</div>'
+        "</div>"
+    )
+
+
+def _pt_signal_badge(label: str, value: str, tone: str = "neutral") -> str:
+    tone_style = _pt_tone_style(tone)
+    return (
+        f'<div class="pt-signal-badge" style="border:1px solid {tone_style["border"]};'
+        f'background:{tone_style["bg"]};border-radius:12px;padding:0.54rem 0.65rem;margin-top:0.5rem;">'
+        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.66rem;font-weight:850;'
+        f'text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.16rem;">{escape(label)}</div>'
+        f'<div style="color:{tone_style["color"]};font-size:0.98rem;font-weight:940;'
+        f'line-height:1.15;overflow-wrap:anywhere;">{escape(str(value or "N/A"))}</div>'
+        "</div>"
+    )
+
+
+def _pt_case_card(case: dict) -> str:
+    tone = _pt_tone_style(str(case.get("tone") or "neutral"))
+    points = "".join(f'<li style="margin-bottom:0.18rem;">{escape(str(point))}</li>' for point in case.get("points", [])[:3])
+    return (
+        f'<div class="pt-case-card pt-{escape(str(case.get("tone") or "base"))}" style="border:1px solid {tone["border"]};'
+        f'background:{BRAND_COLORS["card_alt"]};border-radius:14px;padding:0.86rem 0.9rem;min-width:0;">'
+        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.72rem;font-weight:920;'
+        f'letter-spacing:0.05em;text-transform:uppercase;">{escape(str(case.get("title") or "Scenario"))}</div>'
+        f'<div style="color:{tone["color"]};font-size:1rem;font-weight:950;line-height:1.18;'
+        f'margin-top:0.28rem;">{escape(str(case.get("label") or "N/A"))}</div>'
+        f'<ul style="color:{BRAND_COLORS["text_secondary"]};font-size:0.82rem;line-height:1.35;'
+        f'margin:0.58rem 0 0 1rem;padding:0;">{points}</ul>'
+        "</div>"
+    )
+
+
+def render_terminal_company_hero(view_model: dict) -> None:
     ticker = view_model.get("ticker") or "N/A"
     score = to_float(view_model.get("composite_score"))
     score_text = f"{score:.1f}" if score is not None else "N/A"
@@ -630,52 +695,63 @@ def render_company_hero(view_model: dict) -> None:
     move_text = fmt_percent(move, decimals=2, signed=True) if move is not None else "N/A"
     move_tone = {"good": "good", "bad": "bad"}.get(tone_for_number(move), "neutral")
     change_abs = f"{'+' if move_amount > 0 else '-' if move_amount < 0 else ''}{fmt_price(abs(move_amount))}" if move_amount is not None else "N/A"
-    classification = "".join(_chip_html(chip) for chip in view_model.get("classification_chips", []))
+    move_style = _pt_tone_style(move_tone)
+    score_tone = _pt_tone_style(str(view_model.get("overall_tone") or "neutral"))
+    classification = "".join(_pt_chip(chip) for chip in view_model.get("classification_chips", []))
     quick_stats = "".join(
-        f'<div class="terminal-stat {escape(str(chip.get("tone") or "neutral"))}"><span>{escape(str(chip.get("label")))}:</span><strong>{escape(str(chip.get("value") or "N/A"))}</strong></div>'
+        _pt_stat_card(str(chip.get("label") or "N/A"), str(chip.get("value") or "N/A"), str(chip.get("tone") or "neutral"))
         for chip in view_model.get("quick_stats", [])
     )
-    scenarios = "".join(_scenario_html(view_model.get(key, {})) for key in ("bear_case", "base_case", "bull_case"))
+    scenarios = "".join(_pt_case_card(view_model.get(key, {})) for key in ("bear_case", "base_case", "bull_case"))
+    score_meta = "".join(
+        [
+            _pt_stat_card("Data Confidence", _fmt_completeness(view_model.get("data_completeness")), "warn" if to_float(view_model.get("data_completeness")) is not None and to_float(view_model.get("data_completeness")) < 75 else "good"),
+            _pt_stat_card("Confidence", str(view_model.get("confidence") or "N/A"), "neutral"),
+            _pt_stat_card("Expected Value", str(view_model.get("expected_value") or "N/A"), "neutral"),
+            _pt_stat_card("Market Stance", str(view_model.get("market_stance") or "N/A"), str(view_model.get("market_stance_tone") or "neutral")),
+        ]
+    )
     st.markdown(
         f"""
-        <div class="terminal-company-card">
-          <div class="terminal-header-grid">
-            <div class="terminal-identity-panel">
-              <div class="terminal-ticker-row">
-                <div class="terminal-ticker">{escape(str(ticker))}</div>
-                <span class="terminal-daily-move {move_tone}">{escape(move_text)}</span>
+        <div class="pt-hero-card" style="background:linear-gradient(135deg,{BRAND_COLORS["card"]},#0B141A);border:1px solid {BRAND_COLORS["border"]};border-radius:16px;padding:1.1rem 1.15rem;box-shadow:0 18px 34px rgba(0,0,0,0.24);">
+          <div class="pt-hero-grid" style="display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,0.82fr);gap:1.25rem;align-items:stretch;">
+            <div class="pt-company-left" style="min-width:0;">
+              <div style="display:flex;align-items:baseline;gap:0.85rem;flex-wrap:wrap;">
+                <div class="pt-ticker" style="color:{BRAND_COLORS["text"]};font-size:clamp(2.8rem,5vw,4.9rem);line-height:0.92;font-weight:980;letter-spacing:0.02em;">{escape(str(ticker))}</div>
+                <span style="border:1px solid {move_style["border"]};background:{move_style["bg"]};color:{move_style["color"]};border-radius:999px;padding:0.22rem 0.6rem;font-size:0.86rem;font-weight:940;">{escape(move_text)}</span>
               </div>
-              <div class="terminal-company-name">{escape(str(view_model.get("company_name") or ticker))}</div>
-              <div class="terminal-chip-row">{classification}</div>
-              <div class="terminal-sector-line">{escape(str(view_model.get("sector") or "N/A"))} - {escape(str(view_model.get("industry") or "N/A"))}</div>
-              <div class="terminal-price-line">{escape(fmt_price(view_model.get("price")))} <span>{escape(change_abs)}</span></div>
-              <div class="entry-signal-row">Entry Signal: <span class="entry-signal-badge {escape(str(view_model.get("entry_tone") or "neutral"))}">{escape(str(view_model.get("entry_signal") or "N/A"))}</span></div>
+              <div class="pt-company-name" style="color:{BRAND_COLORS["text"]};font-size:1.2rem;font-weight:860;margin-top:0.42rem;overflow-wrap:anywhere;">{escape(str(view_model.get("company_name") or ticker))}</div>
+              <div class="pt-chip-row" style="display:flex;flex-wrap:wrap;gap:0.48rem;margin-top:0.85rem;">{classification}</div>
+              <div style="color:{BRAND_COLORS["text_secondary"]};font-size:0.94rem;font-weight:780;margin-top:0.68rem;">{escape(str(view_model.get("sector") or "N/A"))} - {escape(str(view_model.get("industry") or "N/A"))}</div>
+              <div style="color:{BRAND_COLORS["text"]};font-size:1.05rem;font-weight:850;margin-top:0.55rem;">{escape(fmt_price(view_model.get("price")))} <span style="color:{BRAND_COLORS["muted"]};margin-left:0.35rem;">{escape(change_abs)}</span></div>
+              <div style="color:{BRAND_COLORS["text_secondary"]};font-size:0.92rem;font-weight:800;margin-top:0.65rem;">Entry Signal: {_pt_chip({"label": view_model.get("entry_signal") or "N/A", "value": "", "tone": view_model.get("entry_tone") or "neutral"}, "pt-entry-signal")}</div>
             </div>
-            <div class="terminal-score-panel {escape(str(view_model.get("overall_tone") or "neutral"))}">
-              <div class="terminal-score-number">{escape(score_text)}</div>
-              <div class="terminal-rating">{escape(str(view_model.get("overall_research_signal") or "N/A"))}</div>
-              <div class="terminal-score-detail">{escape(score_caption)}</div>
-              <div class="terminal-score-meta">
-                <div><span>Data Confidence</span><strong>{escape(_fmt_completeness(view_model.get("data_completeness")))}</strong></div>
-                <div><span>Confidence</span><strong>{escape(str(view_model.get("confidence") or "N/A"))}</strong></div>
-                <div><span>Expected Value</span><strong>{escape(str(view_model.get("expected_value") or "N/A"))}</strong></div>
-                <div><span>Market Stance</span><strong>{escape(str(view_model.get("market_stance") or "N/A"))}</strong></div>
+            <div class="pt-score-right" style="border:1px solid {score_tone["border"]};background:radial-gradient(circle at top right,{score_tone["bg"]},transparent 46%),{BRAND_COLORS["card_alt"]};border-radius:15px;padding:1rem;display:flex;flex-direction:column;justify-content:center;min-width:0;">
+              <div class="pt-big-score" style="color:{BRAND_COLORS["text"]};font-size:clamp(3.2rem,6vw,5.4rem);line-height:0.9;font-weight:980;letter-spacing:-0.02em;">{escape(score_text)}</div>
+              <div class="pt-signal-badge" style="color:{score_tone["color"]};font-size:1.18rem;font-weight:950;margin-top:0.48rem;">{escape(str(view_model.get("overall_research_signal") or "N/A"))}</div>
+              <div style="color:{BRAND_COLORS["text_secondary"]};font-size:0.84rem;font-weight:850;margin-top:0.25rem;">{escape(score_caption)}</div>
+              <div class="pt-score-meta-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.48rem;margin-top:0.9rem;">
+                {score_meta}
               </div>
             </div>
           </div>
-          <div class="terminal-quick-stat-row">{quick_stats}</div>
+          <div class="pt-quick-stat-row" style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0.58rem;margin-top:1rem;">{quick_stats}</div>
         </div>
-        <div class="terminal-scenario-card">
-          <div class="terminal-exec-summary">
-            <div class="rt-label">Executive Summary</div>
-            <div>{escape(str(view_model.get("executive_summary") or "Research summary unavailable."))}</div>
+        <div class="pt-scenario-card" style="background:linear-gradient(135deg,{BRAND_COLORS["card"]},#0B141A);border:1px solid {BRAND_COLORS["border"]};border-radius:16px;padding:1rem 1.1rem;margin-top:0.9rem;box-shadow:0 18px 34px rgba(0,0,0,0.2);">
+          <div class="pt-exec-summary" style="border-bottom:1px solid {BRAND_COLORS["border"]};padding-bottom:0.82rem;margin-bottom:0.86rem;">
+            <div style="color:{BRAND_COLORS["muted"]};font-size:0.72rem;font-weight:900;letter-spacing:0.05em;text-transform:uppercase;">Executive Summary</div>
+            <div style="color:{BRAND_COLORS["text"]};font-size:1.04rem;font-weight:830;line-height:1.34;margin-top:0.28rem;overflow-wrap:anywhere;">{escape(str(view_model.get("executive_summary") or "Insufficient data to generate a reliable summary."))}</div>
           </div>
-          <div class="terminal-scenario-title">Research Scenario Snapshot</div>
-          <div class="terminal-scenario-grid">{scenarios}</div>
+          <div style="color:{BRAND_COLORS["text"]};font-size:0.96rem;font-weight:950;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.6rem;">Research Scenario Snapshot</div>
+          <div class="pt-scenario-grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.72rem;">{scenarios}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_company_hero(view_model: dict) -> None:
+    render_terminal_company_hero(view_model)
 
 
 def render_signal_summary(ticker: str, signal: dict) -> None:

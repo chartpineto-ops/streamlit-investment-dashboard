@@ -721,6 +721,32 @@ h3 {
     grid-template-columns: 1fr;
   }
 }
+.pt-hero-card,
+.pt-scenario-card {
+  box-sizing: border-box;
+}
+.pt-chip,
+.pt-entry-signal,
+.pt-signal-badge,
+.pt-hero-meta,
+.pt-case-card {
+  box-sizing: border-box;
+}
+@media (max-width: 1050px) {
+  .pt-hero-grid,
+  .pt-scenario-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .pt-quick-stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+@media (max-width: 640px) {
+  .pt-score-meta-grid,
+  .pt-quick-stat-row {
+    grid-template-columns: 1fr !important;
+  }
+}
 .source-line {
   color: var(--muted);
   font-size: 0.78rem;
