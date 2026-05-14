@@ -77,6 +77,8 @@ PAGES = [
     "Data Health / Settings",
 ]
 
+PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
+
 
 st.set_page_config(page_title="Research Terminal 2.0", page_icon="RT", layout="wide")
 apply_terminal_style()
@@ -116,14 +118,19 @@ def plotly_layout(fig: go.Figure, height: int = 340) -> go.Figure:
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="#071013",
-        font={"color": "#dfe8eb", "family": "Inter, Arial, sans-serif"},
-        margin={"l": 42, "r": 24, "t": 38, "b": 44},
+        font={"color": "#dfe8eb", "family": "Inter, Arial, sans-serif", "size": 12},
+        margin={"l": 44, "r": 24, "t": 34, "b": 44},
         height=height,
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+        hovermode="x unified",
     )
-    fig.update_xaxes(gridcolor="#1d3440", zerolinecolor="#31515f")
-    fig.update_yaxes(gridcolor="#1d3440", zerolinecolor="#31515f")
+    fig.update_xaxes(gridcolor="#1d3440", zerolinecolor="#31515f", tickfont={"size": 11}, title_font={"size": 12})
+    fig.update_yaxes(gridcolor="#1d3440", zerolinecolor="#31515f", tickfont={"size": 11}, title_font={"size": 12})
     return fig
+
+
+def render_terminal_chart(fig: go.Figure) -> None:
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
 
 def df_display(frame: pd.DataFrame, height: int = 320) -> None:
@@ -138,6 +145,16 @@ def df_display(frame: pd.DataFrame, height: int = 320) -> None:
     config = {}
     if "Link" in frame.columns:
         config["Link"] = st.column_config.LinkColumn("Link", display_text="Open")
+    if "Headline" in frame.columns:
+        config["Headline"] = st.column_config.TextColumn("Headline", width="large")
+    if "Published" in frame.columns:
+        config["Published"] = st.column_config.TextColumn("Published", width="small")
+    if "Source" in frame.columns:
+        config["Source"] = st.column_config.TextColumn("Source", width="small")
+    if "Tag" in frame.columns:
+        config["Tag"] = st.column_config.TextColumn("Tag", width="small")
+    if "Accession" in frame.columns:
+        config["Accession"] = st.column_config.TextColumn("Accession", width="medium")
     st.dataframe(clean_dataframe(frame), use_container_width=True, hide_index=True, height=height, column_config=config)
 
 
@@ -200,11 +217,47 @@ def clean_news_table(news: pd.DataFrame) -> pd.DataFrame:
     if news is None or news.empty:
         return pd.DataFrame()
     display = news.copy()
+    if "Headline" in display:
+        display = display.dropna(subset=["Headline"]).drop_duplicates(subset=["Headline"])
+    if "Published" in display:
+        display = display.sort_values("Published", ascending=False, na_position="last")
     if "Published" in display:
         display["Published"] = display["Published"].map(fmt_date)
-    display["Link"] = display.get("Link", "").map(lambda value: value if isinstance(value, str) and value.startswith("http") else None)
-    cols = [col for col in ["Headline", "Scope", "Tag", "Source", "Published", "Link"] if col in display]
+    if "Link" in display:
+        display["Link"] = display["Link"].map(lambda value: value if isinstance(value, str) and value.startswith("http") else None)
+    cols = [col for col in ["Published", "Headline", "Source", "Tag", "Link"] if col in display]
     return display[cols]
+
+
+def company_headlines(news: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    if news is None or news.empty:
+        return pd.DataFrame()
+    symbol = clean_ticker(ticker)
+    scoped = news[news["Scope"].astype(str).eq("Company")] if "Scope" in news else news.copy()
+    if scoped.empty:
+        return scoped
+    if symbol and "Ticker" in scoped:
+        ticker_scoped = scoped[scoped["Ticker"].astype(str).str.upper().eq(symbol)]
+        if not ticker_scoped.empty:
+            return ticker_scoped
+    return scoped
+
+
+def macro_headlines(news: pd.DataFrame) -> pd.DataFrame:
+    if news is None or news.empty:
+        return pd.DataFrame()
+    if "Scope" in news:
+        return news[news["Scope"].astype(str).eq("Macro")]
+    return news
+
+
+def source_status_summary(statuses: list[dict]) -> tuple[str, str]:
+    if not statuses:
+        return "Free news feeds", "Unavailable"
+    ok = sum(1 for status in statuses if status.get("Status") == "OK")
+    source_names = [str(status.get("Source")) for status in statuses if status.get("Source")]
+    state = "OK" if ok == len(statuses) else "Partial" if ok else "Unavailable"
+    return ", ".join(source_names[:3]) or "Free news feeds", state
 
 
 def render_signal_summary(ticker: str, signal: dict) -> None:
@@ -236,7 +289,7 @@ def render_signal_summary(ticker: str, signal: dict) -> None:
     fig = go.Figure(go.Bar(x=score_frame["Category"], y=score_frame["Score"], marker_color="#7dd3fc", text=score_frame["Score"].round(1), textposition="outside", cliponaxis=False))
     fig = plotly_layout(fig, height=330)
     fig.update_yaxes(range=[0, 105], title="Score")
-    st.plotly_chart(fig, use_container_width=True)
+    render_terminal_chart(fig)
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("#### Strengths")
@@ -378,9 +431,8 @@ def render_entry_signal(ticker: str, quote: dict, latest: dict, options: dict, s
         [
             ("Technical Entry Setup", label, "Technical setup signal based on momentum, moving averages, RSI, and 52-week positioning. Not a standalone buy/sell rating.", tone),
             ("Rationale", rationale, f"Signal score input: {score}", "neutral"),
-            ("Overall Research Signal", signal.get("signal_label", "N/A"), "Full research signal based on growth, profitability, balance sheet, valuation, momentum, catalysts, and data quality.", tone_for_number(signal.get("composite_score"))),
         ],
-        columns=3,
+        columns=2,
     )
     st.caption(
         "Technical Entry Setup reflects timing quality. Overall Research Signal reflects the broader investment profile. "
@@ -513,7 +565,7 @@ def render_price_chart(ticker: str) -> None:
     fig.add_trace(go.Scatter(x=history.index, y=history["Close"], mode="lines", name="Close", line={"color": "#7dd3fc", "width": 2.4}))
     fig = plotly_layout(fig, height=320)
     fig.update_yaxes(title="Price")
-    st.plotly_chart(fig, use_container_width=True)
+    render_terminal_chart(fig)
 
 
 def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict | None = None) -> None:
@@ -540,7 +592,7 @@ def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict
             )
             fig = plotly_layout(fig, height=340)
             fig.update_yaxes(title="Revenue")
-            st.plotly_chart(fig, use_container_width=True)
+            render_terminal_chart(fig)
         else:
             empty_state("Revenue history unavailable.")
     with col2:
@@ -551,7 +603,7 @@ def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict
                     x=chart_frame["period"],
                     y=chart_frame["eps"],
                     name="Actual EPS",
-                    marker_color="#7bd88f",
+                    marker_color=["#7bd88f" if to_float(v) is not None and to_float(v) >= 0 else "#f87171" for v in chart_frame["eps"]],
                     text=[fmt_eps(v) for v in chart_frame["eps"]],
                     textposition="outside",
                     cliponaxis=False,
@@ -559,7 +611,7 @@ def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict
             )
             fig = plotly_layout(fig, height=340)
             fig.update_yaxes(title="EPS")
-            st.plotly_chart(fig, use_container_width=True)
+            render_terminal_chart(fig)
         else:
             empty_state("EPS history unavailable.")
     margin_cols = ["gross_margin", "operating_margin", "net_margin", "fcf_margin"]
@@ -572,7 +624,7 @@ def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict
                 fig.add_trace(go.Scatter(x=chart_frame["period"], y=chart_frame[col], mode="lines+markers", name=labels[col], line={"color": colors[col]}))
         fig = plotly_layout(fig, height=340)
         fig.update_yaxes(title="Margin %", ticksuffix="%")
-        st.plotly_chart(fig, use_container_width=True)
+        render_terminal_chart(fig)
 
 
 def _statement_display_value(metric: str, value) -> str:
@@ -662,7 +714,7 @@ def _compact_bar_chart(title: str, labels: list[str], values: list[float | None]
     fig.update_xaxes(zeroline=True, zerolinecolor="#5b7782")
     if orientation == "h":
         fig.update_yaxes(autorange="reversed")
-    st.plotly_chart(fig, use_container_width=True)
+    render_terminal_chart(fig)
 
 
 def _statement_header_strip(visual: dict) -> None:
@@ -834,12 +886,15 @@ def home_page(ticker: str) -> None:
         source_line(quote.get("source"), quote.get("last_updated"), quote.get("status"))
         render_price_chart(ticker)
     with col2:
-        section("News & Catalysts", "Recent ticker headlines plus broad market feed.")
-        news, _ = fetch_news(ticker, 10)
-        if news.empty:
-            empty_state("No headlines found.")
+        section("Macro / Market News Headlines", "Broad market headlines and catalysts from current free sources.")
+        macro_news_raw, macro_statuses = fetch_news("", 24)
+        macro_news = macro_headlines(macro_news_raw)
+        source_name, news_state = source_status_summary(macro_statuses)
+        source_line(source_name, now_et(), news_state)
+        if macro_news.empty:
+            empty_state("Macro headlines unavailable from current free sources.")
         else:
-            df_display(news[["Headline", "Source", "Published", "Tag", "Link"]], height=360)
+            df_display(clean_news_table(macro_news), height=360)
     section("Market Snapshot Table")
     display = snapshot.copy()
     display["Last"] = display.apply(lambda r: fmt_percent(r["Last"], decimals=2) if r["Ticker"] == "^TNX" else fmt_price(r["Last"]), axis=1)
@@ -864,30 +919,30 @@ def company_page(ticker: str) -> None:
         [
             ("Market Cap", fmt_currency(quote.get("market_cap"), 1), "Quote metadata", "neutral"),
             ("Volume / Avg", f"{fmt_compact(quote.get('volume'))} / {fmt_compact(quote.get('average_volume'))}", "Latest daily volume", "neutral"),
-            ("Sector", str(quote.get("sector") or "N/A"), str(quote.get("industry") or "N/A"), "neutral"),
             ("52W Range", f"{fmt_price(quote.get('fifty_two_week_low'))} - {fmt_price(quote.get('fifty_two_week_high'))}", "Latest provider range", "neutral"),
         ],
-        columns=4,
+        columns=3,
         small=True,
     )
     section("Signal Center", "Transparent research score with factor breakdown, confidence, and missing-data warnings.")
     render_signal_summary(ticker, signal)
     section("Technical Entry Setup")
     render_entry_signal(ticker, quote, latest, options, signal)
-    section("7D Options Metrics", "Nearest-expiry options are used when available; values are annualized IV converted to the expiry window.")
-    seven = options.get("seven_day", {})
-    render_metric_grid(
-        [
-            ("7D IV", fmt_percent(seven.get("annual_iv")), seven.get("status", "Unavailable"), "neutral"),
-            ("7D Implied Move", "+/-" + fmt_percent(seven.get("implied_move_pct")), "Options-implied range", "warn" if seven.get("implied_move_pct") and seven.get("implied_move_pct") > 10 else "neutral"),
-            ("Options Expiry Used", fmt_date(seven.get("expiry")), f"{seven.get('days', 'N/A')} day(s)", "neutral"),
-            ("ATM Strike", fmt_price(seven.get("atm_strike")), "Closest available strike", "neutral"),
-        ],
-        columns=4,
-        small=True,
-    )
-    section("52W Price Position")
-    render_52w_position(quote)
+    with st.expander("Market Setup Details", expanded=False):
+        section("7D Options Metrics", "Nearest-expiry options are used when available; values are annualized IV converted to the expiry window.")
+        seven = options.get("seven_day", {})
+        render_metric_grid(
+            [
+                ("7D IV", fmt_percent(seven.get("annual_iv")), seven.get("status", "Unavailable"), "neutral"),
+                ("7D Implied Move", "+/-" + fmt_percent(seven.get("implied_move_pct")), "Options-implied range", "warn" if seven.get("implied_move_pct") and seven.get("implied_move_pct") > 10 else "neutral"),
+                ("Options Expiry Used", fmt_date(seven.get("expiry")), f"{seven.get('days', 'N/A')} day(s)", "neutral"),
+                ("ATM Strike", fmt_price(seven.get("atm_strike")), "Closest available strike", "neutral"),
+            ],
+            columns=4,
+            small=True,
+        )
+        section("52W Price Position")
+        render_52w_position(quote)
     section("Latest Quarterly Release", "Newest available quarterly statement values plus latest SEC filing metadata where available.")
     render_latest_quarterly_release(financials)
     render_financial_reconciliation(financials)
@@ -912,7 +967,7 @@ def company_page(ticker: str) -> None:
     )
     section("3-Statement Analysis", "Visual latest-quarter view tying income statement, balance sheet, and cash flow together.")
     render_three_statement_visual(ticker, financials)
-    section("Revenue, EPS, And Margins")
+    section("Revenue, EPS, and Margins")
     render_financial_charts(
         history,
         view,
@@ -940,21 +995,17 @@ def company_page(ticker: str) -> None:
     filings, status = fetch_sec_filings(ticker)
     source_line(status.get("Source"), status.get("Last Updated"), status.get("Status"))
     df_display(filings, height=180)
-    section("News, Catalysts, And Macro Context", "Company-specific headlines are separated from broad market context where the source supports it.")
+    section("Company Headlines", "Ticker-specific headlines and catalysts for the selected company.")
     news, news_statuses = fetch_news(ticker, 24)
-    company_news = news[news.get("Scope", pd.Series(dtype=str)).eq("Company")] if not news.empty and "Scope" in news else pd.DataFrame()
-    macro_news = news[news.get("Scope", pd.Series(dtype=str)).eq("Macro")] if not news.empty and "Scope" in news else pd.DataFrame()
-    left, right = st.columns(2)
-    with left:
-        st.markdown("#### Company Headlines")
-        df_display(clean_news_table(company_news), height=300)
-    with right:
-        st.markdown("#### Macro / Market Headlines")
-        df_display(clean_news_table(macro_news), height=300)
-    macro, macro_status = fetch_macro_catalysts()
-    render_metric_grid([(row["Theme"], row["Status"], row["Catalyst"], "neutral") for _, row in macro.iterrows()], columns=3, small=True)
-    with st.expander("Catalyst source status"):
-        st.json({"news_sources": news_statuses, "macro_source": macro_status})
+    company_news = company_headlines(news, ticker)
+    source_name, news_state = source_status_summary(news_statuses)
+    source_line(source_name, now_et(), news_state)
+    if company_news.empty:
+        empty_state("No company-specific headlines found for this ticker.")
+    else:
+        df_display(clean_news_table(company_news), height=420)
+    with st.expander("Catalyst Source Status"):
+        st.json({"news_sources": news_statuses})
     with st.expander("Company Financials Data Validation"):
         st.json(
             {
@@ -997,7 +1048,7 @@ def signal_page(ticker: str) -> None:
     fig = go.Figure(go.Bar(x=score_frame["Category"], y=score_frame["Score"], marker_color="#7dd3fc", text=score_frame["Score"].round(1), textposition="outside", cliponaxis=False))
     fig = plotly_layout(fig, height=360)
     fig.update_yaxes(range=[0, 105], title="Score")
-    st.plotly_chart(fig, use_container_width=True)
+    render_terminal_chart(fig)
     col1, col2 = st.columns(2)
     with col1:
         section("Strengths")

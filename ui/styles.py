@@ -61,6 +61,8 @@ h3 {
   padding: 0.85rem 0.95rem;
   box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.03), 0 12px 26px rgba(0,0,0,0.18);
   min-height: 92px;
+  height: 100%;
+  box-sizing: border-box;
 }
 .rt-card.small {
   min-height: 72px;
@@ -79,11 +81,14 @@ h3 {
   font-weight: 850;
   line-height: 1.18;
   margin-top: 0.22rem;
+  overflow-wrap: anywhere;
 }
 .rt-caption {
   color: var(--muted);
   font-size: 0.78rem;
   margin-top: 0.22rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 .rt-good { color: var(--green) !important; }
 .rt-bad { color: var(--red) !important; }
