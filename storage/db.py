@@ -61,4 +61,20 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS quote_snapshot (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                company TEXT,
+                price REAL,
+                daily_move_pct REAL,
+                volume REAL,
+                market_cap REAL,
+                source TEXT,
+                status TEXT
+            )
+            """
+        )
         conn.commit()

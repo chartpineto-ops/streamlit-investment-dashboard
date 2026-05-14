@@ -15,8 +15,10 @@ from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_fili
 from data.financials import build_three_statement_visual_data, get_latest_quarterly_release, load_latest_company_financials, view_history
 from data.macro import fetch_macro_catalysts
 from data.market_data import DEFAULT_TICKERS, fetch_history, fetch_market_snapshot, fetch_quote
+from data.market_movers import clean_mover_tickers, scan_market_movers
 from data.news import fetch_news
 from data.options import fetch_options_summary
+from data.social import fetch_social_momentum_names
 from signals.signal_engine import compute_signal
 from storage.db import DB_PATH, init_db
 from storage.watchlist import (
@@ -381,6 +383,42 @@ def options_monitor_frame(tickers: list[str]) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def _format_movers_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    display = frame.copy()
+    if "Price" in display:
+        display["Price"] = display["Price"].map(fmt_price)
+    if "Daily Move %" in display:
+        display["Daily Move %"] = display["Daily Move %"].map(lambda value: fmt_percent(value, decimals=2, signed=True))
+    if "Volume" in display:
+        display["Volume"] = display["Volume"].map(fmt_compact)
+    if "Relative Volume" in display:
+        display["Relative Volume"] = display["Relative Volume"].map(lambda value: fmt_multiple(value) if to_float(value) is not None else "N/A")
+    if "Market Cap" in display:
+        display["Market Cap"] = display["Market Cap"].map(lambda value: fmt_compact(value, prefix="$"))
+    return display
+
+
+def _social_display_frame(frame: pd.DataFrame, watchlist_tickers: set[str]) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    display = frame.copy()
+    display["Watchlist Status"] = display["Ticker"].map(lambda value: "In Watchlist" if clean_ticker(value) in watchlist_tickers else "Candidate")
+    if "Price" in display:
+        display["Price"] = display["Price"].map(fmt_price)
+    if "Daily Move %" in display:
+        display["Daily Move %"] = display["Daily Move %"].map(lambda value: fmt_percent(value, decimals=2, signed=True))
+    if "Message Volume" in display:
+        display["Message Volume"] = display["Message Volume"].map(fmt_compact)
+    return display
+
+
+def _watchlist_symbols() -> list[str]:
+    watch = list_watchlist()
+    return [clean_ticker(value) for value in watch.get("ticker", pd.Series(dtype=str)).tolist() if clean_ticker(value)]
 
 
 def render_52w_position(quote: dict) -> None:
@@ -1160,14 +1198,19 @@ def signal_page(ticker: str) -> None:
 
 def watchlist_page(ticker: str) -> None:
     st.title("Watchlist")
-    st.markdown('<div class="terminal-subtitle">SQLite watchlist, signal-change alerts, and options/volatility monitor.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="terminal-subtitle">Track saved tickers, signal changes, market movers, options-implied moves, and social momentum.</div>', unsafe_allow_html=True)
+
+    section("Watchlist Controls")
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
         new_ticker = st.text_input("Add ticker", placeholder="CRWV")
         if st.button("Add"):
             if add_ticker(new_ticker):
                 st.success(f"Added {clean_ticker(new_ticker)}")
+                st.session_state["watchlist_table"] = latest_watchlist_table()
                 st.rerun()
+            else:
+                st.error("Invalid or unsupported ticker.")
     with col2:
         watch = list_watchlist()
         remove = st.selectbox("Remove ticker", [""] + watch.get("ticker", pd.Series(dtype=str)).tolist())
@@ -1179,10 +1222,13 @@ def watchlist_page(ticker: str) -> None:
         if st.button("Refresh Watchlist", type="primary"):
             with st.spinner("Refreshing watchlist signals and alert history..."):
                 st.session_state["watchlist_table"] = refresh_watchlist()
+                st.success("Watchlist refreshed.")
+    section("Watchlist Table")
     table = st.session_state.get("watchlist_table")
     if table is None:
         table = latest_watchlist_table()
     df_display(table, height=480)
+
     section("Alert Center", "In-app alerts generated from day-over-day signal changes.")
     alerts = list_alerts(False)
     if alerts.empty:
@@ -1193,10 +1239,51 @@ def watchlist_page(ticker: str) -> None:
         if st.button("Dismiss Alert", disabled=dismiss_id <= 0):
             dismiss_alert(int(dismiss_id))
             st.rerun()
-    section("Volatility / Options Monitor", "Scans the selected ticker plus watchlist tickers. Missing options data is shown as a clean status, not a crash.")
-    watch = list_watchlist()
-    universe = [ticker] + [t for t in watch.get("ticker", pd.Series(dtype=str)).tolist() if t != ticker]
-    max_names = st.slider("Max tickers to scan", 5, 30, min(12, len(universe) or 12), step=1, key="watchlist_options_max")
+
+    section("Market Volatility Scanner", "Cached broader-universe scan for tickers moving at least +/-5% by default.")
+    scan_col1, scan_col2, scan_col3, scan_col4 = st.columns(4)
+    with scan_col1:
+        min_move = st.slider("Minimum daily move %", 1.0, 20.0, 5.0, 0.5, key="market_mover_threshold")
+    with scan_col2:
+        max_results = st.slider("Max results", 10, 100, 50, 5, key="market_mover_max")
+    with scan_col3:
+        include_etfs = st.toggle("Include ETFs", value=True, key="market_mover_include_etfs")
+    with scan_col4:
+        include_watch = st.toggle("Include watchlist tickers", value=True, key="market_mover_include_watchlist")
+    if st.button("Refresh scanner"):
+        try:
+            scan_market_movers.clear()
+        except Exception:
+            pass
+    extra = tuple(_watchlist_symbols()) if include_watch else ()
+    with st.spinner("Scanning cached market universe..."):
+        movers, mover_status = scan_market_movers(min_move, max_results, include_etfs, clean_mover_tickers(extra))
+    st.session_state["market_movers_frame"] = movers
+    source_line(mover_status.get("Source"), mover_status.get("Last Updated"), mover_status.get("Status"))
+    if movers.empty:
+        empty_state(f"No tickers in the V1 scan universe moved at least +/-{min_move:.1f}% today.")
+    else:
+        df_display(_format_movers_frame(movers), height=420)
+    with st.expander("Market scanner source status"):
+        st.json(mover_status)
+
+    section("Options / Implied Move Monitor", "Options-implied move scanner with clean source statuses.")
+    watch_symbols = _watchlist_symbols()
+    scan_mode = st.selectbox("Scan universe", ["Selected ticker + Watchlist", "Watchlist only", "Top Market Movers", "Custom tickers"], index=0)
+    custom_tickers = ""
+    if scan_mode == "Custom tickers":
+        custom_tickers = st.text_input("Custom tickers", placeholder="NVDA, IONQ, AMPX")
+    if scan_mode == "Watchlist only":
+        universe = watch_symbols
+    elif scan_mode == "Top Market Movers":
+        source_movers = st.session_state.get("market_movers_frame", pd.DataFrame())
+        universe = source_movers.get("Ticker", pd.Series(dtype=str)).head(20).tolist()
+    elif scan_mode == "Custom tickers":
+        universe = [clean_ticker(value) for value in custom_tickers.replace(";", ",").split(",") if clean_ticker(value)]
+    else:
+        universe = [ticker] + [symbol for symbol in watch_symbols if symbol != ticker]
+    universe = list(dict.fromkeys([symbol for symbol in universe if symbol]))
+    max_names = st.slider("Max tickers to scan", 5, 50, min(12, len(universe) or 12), step=1, key="watchlist_options_max")
     with st.spinner("Loading options summaries..."):
         df_display(options_monitor_frame(universe[:max_names]), height=460)
     with st.expander("Options debug details"):
@@ -1206,6 +1293,29 @@ def watchlist_page(ticker: str) -> None:
             opts = fetch_options_summary(symbol, quote.get("price"))
             debug.append({"ticker": symbol, "status": opts.get("status"), "seven_day": opts.get("seven_day"), "thirty_day": opts.get("thirty_day")})
         st.json(debug)
+
+    section("Popular Stocktwits / Social Momentum Names", "Fallback social momentum universe with quote/daily move context.")
+    if st.button("Refresh social names"):
+        try:
+            fetch_social_momentum_names.clear()
+        except Exception:
+            pass
+    social, social_status = fetch_social_momentum_names()
+    source_line(social_status.get("Source"), social_status.get("Last Updated"), social_status.get("Status"))
+    if social_status.get("Status") == "Fallback":
+        st.info("Stocktwits trending data unavailable from current free sources. Showing fallback social momentum universe.")
+    watch_set = set(_watchlist_symbols())
+    df_display(_social_display_frame(social, watch_set), height=380)
+    social_candidates = [symbol for symbol in social.get("Ticker", pd.Series(dtype=str)).tolist() if clean_ticker(symbol) not in watch_set]
+    add_social = st.selectbox("Add social ticker to Watchlist", [""] + social_candidates)
+    if st.button("Add Social Ticker", disabled=not add_social):
+        if add_ticker(add_social):
+            st.success(f"Added {add_social}")
+            st.rerun()
+        else:
+            st.error("Invalid or unsupported ticker.")
+    with st.expander("Social source status"):
+        st.json(social_status)
 
 
 def volatility_page(ticker: str) -> None:
@@ -1297,6 +1407,15 @@ def data_health_page(ticker: str) -> None:
     source_meta = financials.get("source_metadata", {})
     packet = financials.get("financial_data_packet") or {}
     quality = packet.get("coverage_summary") or latest_release.get("financial_data_quality") or reconciliation.get("data_quality") or {}
+    watch_symbols = _watchlist_symbols()
+    try:
+        _, mover_status = scan_market_movers(5.0, 50, True, clean_mover_tickers(tuple(watch_symbols)))
+    except Exception as exc:
+        mover_status = {"Source": "Market volatility scanner", "Status": "Source error", "Last Updated": now_et(), "Error": str(exc)}
+    try:
+        _, social_status = fetch_social_momentum_names()
+    except Exception as exc:
+        social_status = {"Source": "Social momentum", "Status": "Source error", "Last Updated": now_et(), "Error": str(exc)}
     openai_status = "OK" if streamlit_secret_value("OPENAI_API_KEY") else "Missing"
     date_status = get_date_normalization_status()
     health = pd.DataFrame(
@@ -1312,6 +1431,11 @@ def data_health_page(ticker: str) -> None:
             {"Source": "Calculated financial fields", "Status": "OK" if quality.get("calculated") else "N/A", "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("reported_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": ", ".join(quality.get("calculated", []))},
             {"Source": "Estimated financial fields", "Status": "Partial" if quality.get("estimated") else "N/A", "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("reported_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": ", ".join(quality.get("estimated", []))},
             {"Source": "Yahoo Finance/yfinance options", "Status": opts.get("status"), "Last Refresh": opts.get("last_updated"), "Cache TTL": "30 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": opts.get("debug_error", "")},
+            {"Source": "Watchlist quote population", "Status": "OK" if not latest_watchlist_table().empty else "Partial", "Last Refresh": now_et(), "Cache TTL": "SQLite snapshot + 5 min quote cache", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
+            {"Source": "Watchlist signal refresh", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "On refresh", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "Signals are saved when Refresh Watchlist is clicked."},
+            {"Source": "Alert generation", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "SQLite persistent alerts", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "Alerts are generated on watchlist refresh."},
+            {"Source": "Market volatility scanner", "Status": mover_status.get("Status"), "Last Refresh": mover_status.get("Last Updated"), "Cache TTL": "10 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": mover_status.get("Error", "")},
+            {"Source": "Stocktwits/social source", "Status": social_status.get("Status"), "Last Refresh": social_status.get("Last Updated"), "Cache TTL": "15 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": social_status.get("Error", "")},
             {"Source": "Yahoo Finance/RSS news", "Status": "OK" if not news.empty else "Partial", "Last Refresh": now_et(), "Cache TTL": "30 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
             {"Source": "SEC ticker-to-CIK mapping", "Status": cik_status.get("Status"), "Last Refresh": cik_status.get("Last Updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": cik_status.get("Error", "")},
             {"Source": "SEC latest filing metadata", "Status": sec_latest.get("source_status"), "Last Refresh": sec_latest.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": sec_latest.get("filing_period_label", ""), "Structured Period": "", "Missing Fields": "", "Error": sec_latest.get("error", "")},

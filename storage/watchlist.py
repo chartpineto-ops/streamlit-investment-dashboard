@@ -8,7 +8,7 @@ import pandas as pd
 from data.market_data import DEFAULT_TICKERS, fetch_quote
 from signals.signal_engine import compute_signal
 from storage.db import connect, init_db
-from utils.formatting import clean_ticker, fmt_date, fmt_percent, fmt_price, now_et
+from utils.formatting import clean_ticker, fmt_compact, fmt_date, fmt_percent, fmt_price, now_et, to_float
 
 
 def fmt_daily_move(value) -> str:
@@ -29,9 +29,72 @@ def ensure_default_watchlist() -> None:
         conn.commit()
 
 
+def _quote_status(quote: dict) -> str:
+    if quote.get("status") == "Error":
+        return "Quote unavailable"
+    if quote.get("price") is None and quote.get("volume") is None and str(quote.get("company_name") or "").upper() == str(quote.get("ticker") or "").upper():
+        return "Invalid ticker"
+    if quote.get("price") is None:
+        return "Quote unavailable"
+    return "OK"
+
+
+def save_quote_snapshot(ticker: str, quote: dict | None = None) -> dict:
+    symbol = clean_ticker(ticker)
+    quote = quote or fetch_quote(symbol)
+    status = _quote_status(quote)
+    snapshot = {
+        "ticker": symbol,
+        "timestamp": now_et().isoformat(),
+        "company": quote.get("company_name") or symbol,
+        "price": to_float(quote.get("price")),
+        "daily_move_pct": to_float(quote.get("daily_change_pct")),
+        "volume": to_float(quote.get("volume")),
+        "market_cap": to_float(quote.get("market_cap")),
+        "source": quote.get("source", "Yahoo Finance/yfinance"),
+        "status": status,
+    }
+    init_db()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO quote_snapshot (
+                ticker, timestamp, company, price, daily_move_pct, volume, market_cap, source, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot["ticker"],
+                snapshot["timestamp"],
+                snapshot["company"],
+                snapshot["price"],
+                snapshot["daily_move_pct"],
+                snapshot["volume"],
+                snapshot["market_cap"],
+                snapshot["source"],
+                snapshot["status"],
+            ),
+        )
+        conn.commit()
+    return snapshot
+
+
+def latest_quote_snapshot(ticker: str) -> dict | None:
+    symbol = clean_ticker(ticker)
+    init_db()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM quote_snapshot WHERE ticker = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
+            (symbol,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def add_ticker(ticker: str, category: str = "", notes: str = "") -> bool:
     symbol = clean_ticker(ticker)
     if not symbol:
+        return False
+    quote = fetch_quote(symbol)
+    if _quote_status(quote) == "Invalid ticker":
         return False
     init_db()
     with connect() as conn:
@@ -40,6 +103,7 @@ def add_ticker(ticker: str, category: str = "", notes: str = "") -> bool:
             (symbol, now_et().isoformat(), category, notes),
         )
         conn.commit()
+    save_quote_snapshot(symbol, quote)
     return True
 
 
@@ -151,25 +215,51 @@ def record_signal(signal: dict) -> str:
     return message
 
 
+def _safe_signal(ticker: str) -> tuple[dict, str]:
+    try:
+        signal = compute_signal(ticker)
+        return signal, "OK"
+    except Exception as exc:
+        return {
+            "ticker": ticker,
+            "signal_label": "No Rating / Insufficient Data",
+            "composite_score": None,
+            "confidence": "Low",
+            "missing_data_warnings": [str(exc)],
+        }, "Signal unavailable"
+
+
+def _row_from_parts(ticker: str, quote: dict, signal: dict | None, alert: str, row_status: str, timestamp=None) -> dict:
+    signal = signal or {}
+    return {
+        "Ticker": ticker,
+        "Company": quote.get("company_name") or quote.get("company") or ticker,
+        "Price": fmt_price(quote.get("price")),
+        "Daily Move": fmt_daily_move(quote.get("daily_change_pct")),
+        "Signal": signal.get("signal_label") or "No Rating / Insufficient Data",
+        "Score": f"{float(signal.get('composite_score')):.1f}" if signal.get("composite_score") is not None else "N/A",
+        "Confidence": signal.get("confidence") or "Low",
+        "Volume": fmt_compact(quote.get("volume")),
+        "Market Cap": fmt_compact(quote.get("market_cap"), prefix="$"),
+        "Last Updated": fmt_date(timestamp or quote.get("last_updated") or now_et()),
+        "Status": row_status,
+        "Alert (D/D Change)": alert,
+    }
+
+
 def refresh_watchlist() -> pd.DataFrame:
     watch = list_watchlist()
     rows = []
     for ticker in watch.get("ticker", []):
-        signal = compute_signal(ticker)
         quote = fetch_quote(ticker)
-        alert = record_signal(signal)
-        rows.append(
-            {
-                "Ticker": ticker,
-                "Price": fmt_price(quote.get("price")),
-                "Daily Move": fmt_daily_move(quote.get("daily_change_pct")),
-                "Signal": signal.get("signal_label", "No Rating / Insufficient Data"),
-                "Score": signal.get("composite_score", "N/A"),
-                "Confidence": signal.get("confidence", "Low"),
-                "Last Updated": fmt_date(now_et()),
-                "Alert (D/D Change)": alert,
-            }
-        )
+        snapshot = save_quote_snapshot(ticker, quote)
+        quote_status = snapshot.get("status", "Partial")
+        signal, signal_status = _safe_signal(ticker)
+        alert = "No material change."
+        if signal_status == "OK":
+            alert = record_signal(signal)
+        row_status = quote_status if quote_status != "OK" else signal_status
+        rows.append(_row_from_parts(ticker, {**quote, **snapshot}, signal, alert, row_status, now_et()))
     return pd.DataFrame(rows)
 
 
@@ -178,19 +268,18 @@ def latest_watchlist_table() -> pd.DataFrame:
     rows = []
     for ticker in watch.get("ticker", []):
         prior = latest_signal(ticker)
-        quote = fetch_quote(ticker)
-        rows.append(
-            {
-                "Ticker": ticker,
-                "Price": fmt_price(quote.get("price")),
-                "Daily Move": fmt_daily_move(quote.get("daily_change_pct")),
-                "Signal": prior.get("signal_label") if prior else "Not refreshed",
-                "Score": prior.get("composite_score") if prior else "N/A",
-                "Confidence": prior.get("confidence") if prior else "N/A",
-                "Last Updated": fmt_date(prior.get("timestamp")) if prior else "N/A",
-                "Alert (D/D Change)": "Refresh watchlist to calculate.",
-            }
-        )
+        snapshot = latest_quote_snapshot(ticker)
+        if snapshot is None:
+            quote = fetch_quote(ticker)
+            snapshot = save_quote_snapshot(ticker, quote)
+        signal = {
+            "signal_label": prior.get("signal_label") if prior else "No Rating / Insufficient Data",
+            "composite_score": prior.get("composite_score") if prior else None,
+            "confidence": prior.get("confidence") if prior else "N/A",
+        }
+        alert = "Refresh watchlist to calculate." if prior is None else "No material change."
+        row_status = snapshot.get("status", "Partial") if prior is None else snapshot.get("status", "OK")
+        rows.append(_row_from_parts(ticker, snapshot, signal, alert, row_status, prior.get("timestamp") if prior else snapshot.get("timestamp")))
     return pd.DataFrame(rows)
 
 
