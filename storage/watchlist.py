@@ -8,7 +8,7 @@ import pandas as pd
 from data.market_data import DEFAULT_TICKERS, fetch_quote
 from signals.signal_engine import compute_signal
 from storage.db import connect, init_db
-from utils.formatting import clean_ticker, fmt_percent, fmt_price, now_et
+from utils.formatting import clean_ticker, fmt_date, fmt_percent, fmt_price, now_et
 
 
 def fmt_daily_move(value) -> str:
@@ -166,7 +166,7 @@ def refresh_watchlist() -> pd.DataFrame:
                 "Signal": signal.get("signal_label", "No Rating / Insufficient Data"),
                 "Score": signal.get("composite_score", "N/A"),
                 "Confidence": signal.get("confidence", "Low"),
-                "Last Updated": now_et().strftime("%m/%d/%Y %I:%M %p ET"),
+                "Last Updated": fmt_date(now_et()),
                 "Alert (D/D Change)": alert,
             }
         )
@@ -187,7 +187,7 @@ def latest_watchlist_table() -> pd.DataFrame:
                 "Signal": prior.get("signal_label") if prior else "Not refreshed",
                 "Score": prior.get("composite_score") if prior else "N/A",
                 "Confidence": prior.get("confidence") if prior else "N/A",
-                "Last Updated": prior.get("timestamp") if prior else "N/A",
+                "Last Updated": fmt_date(prior.get("timestamp")) if prior else "N/A",
                 "Alert (D/D Change)": "Refresh watchlist to calculate.",
             }
         )

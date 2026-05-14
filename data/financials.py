@@ -8,7 +8,7 @@ import yfinance as yf
 
 from data.filings import extract_sec_concept_value, fetch_latest_periodic_sec_filing, fetch_latest_sec_filing, get_sec_company_facts
 from data.market_data import fetch_quote
-from utils.formatting import clean_ticker, now_et, safe_div, to_float
+from utils.formatting import clean_ticker, now_et, safe_div, safe_format_date, to_float
 from utils.validation import status_from_warnings
 
 FIELD_MAP = {
@@ -101,15 +101,8 @@ def _label_list(values: list[str], limit: int = 5) -> str:
 
 
 def _date_label(value) -> str | None:
-    if value in (None, "", "N/A"):
-        return None
-    try:
-        parsed = pd.to_datetime(value, errors="coerce")
-        if pd.isna(parsed):
-            return None
-        return parsed.strftime("%Y-%m-%d")
-    except Exception:
-        return str(value)
+    formatted = safe_format_date(value)
+    return None if formatted == "N/A" else formatted
 
 
 def _value_present(value) -> bool:

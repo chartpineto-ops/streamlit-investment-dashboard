@@ -38,6 +38,7 @@ from utils.formatting import (
     fmt_number,
     fmt_percent,
     fmt_price,
+    get_date_normalization_status,
     now_et,
     safe_div,
     tone_for_number,
@@ -128,6 +129,11 @@ def df_display(frame: pd.DataFrame, height: int = 320) -> None:
     if frame is None or frame.empty:
         empty_state("No data available.")
         return
+    frame = frame.copy()
+    date_like_columns = ("Date", "Updated", "Refresh", "Published", "Timestamp")
+    for column in frame.columns:
+        if any(token in str(column) for token in date_like_columns):
+            frame[column] = frame[column].map(fmt_date)
     config = {}
     if "Link" in frame.columns:
         config["Link"] = st.column_config.LinkColumn("Link", display_text="Open")
@@ -518,21 +524,24 @@ def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict
         st.caption(f"Chart source: {chart_source.get('label', 'N/A')} | Status: {chart_source.get('status', 'N/A')} | {chart_source.get('note', '')}")
     col1, col2 = st.columns(2)
     with col1:
-        fig = go.Figure()
-        fig.add_trace(
-            go.Bar(
-                x=chart_frame["period"],
-                y=chart_frame["revenue"],
-                name="Actual Revenue",
-                marker_color="#7dd3fc",
-                text=[fmt_currency(v, 1) for v in chart_frame["revenue"]],
-                textposition="outside",
-                cliponaxis=False,
+        if "revenue" in chart_frame and chart_frame["revenue"].notna().any():
+            fig = go.Figure()
+            fig.add_trace(
+                go.Bar(
+                    x=chart_frame["period"],
+                    y=chart_frame["revenue"],
+                    name="Actual Revenue",
+                    marker_color="#7dd3fc",
+                    text=[fmt_currency(v, 1) for v in chart_frame["revenue"]],
+                    textposition="outside",
+                    cliponaxis=False,
+                )
             )
-        )
-        fig = plotly_layout(fig, height=340)
-        fig.update_yaxes(title="Revenue")
-        st.plotly_chart(fig, use_container_width=True)
+            fig = plotly_layout(fig, height=340)
+            fig.update_yaxes(title="Revenue")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            empty_state("Revenue history unavailable.")
     with col2:
         if "eps" in chart_frame and chart_frame["eps"].notna().any():
             fig = go.Figure()
@@ -1055,10 +1064,12 @@ def data_health_page(ticker: str) -> None:
     sec_latest = fetch_latest_sec_filing(ticker)
     sec_periodic = fetch_latest_periodic_sec_filing(ticker)
     _, cik_status = ticker_to_cik(ticker)
+    reconciliation = financials.get("reconciliation") or {}
     try:
         openai_status = "OK" if st.secrets.get("OPENAI_API_KEY") else "Missing"
     except Exception:
         openai_status = "Missing"
+    date_status = get_date_normalization_status()
     health = pd.DataFrame(
         [
             {"Source": "Yahoo Finance/yfinance quote", "Status": quote.get("status"), "Last Refresh": quote.get("last_updated"), "Cache TTL": "5 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": quote.get("error", "")},
@@ -1077,6 +1088,7 @@ def data_health_page(ticker: str) -> None:
             {"Source": "Financial chart source", "Status": financials.get("source_metadata", {}).get("chart_source_status", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": financials.get("source_metadata", {}).get("chart_source_note", "")},
             {"Source": "Missing metric periods", "Status": "Partial" if reconciliation.get("missing_chart_fields") or reconciliation.get("missing_metric_periods") else "OK", "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "; ".join((reconciliation.get("missing_chart_fields") or []) + (reconciliation.get("missing_metric_periods") or [])), "Error": ""},
             {"Source": "Margin calculation validity", "Status": financials.get("source_metadata", {}).get("margin_validity", "N/A"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": "", "Error": " ".join(reconciliation.get("margin_notes", []))},
+            {"Source": "Date/time normalization", "Status": date_status.get("Status"), "Last Refresh": date_status.get("Last Updated"), "Cache TTL": "Runtime", "Filing Period": "", "Structured Period": "", "Missing Fields": date_status.get("Affected Field", ""), "Error": date_status.get("Error", "")},
             {"Source": filing_status.get("Source"), "Status": filing_status.get("Status"), "Last Refresh": filing_status.get("Last Updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": filing_status.get("Error", "")},
             {"Source": "SQLite watchlist", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "Persistent local DB", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
             {"Source": "OpenAI API", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "OPENAI_API_KEY not configured" if openai_status == "Missing" else ""},
