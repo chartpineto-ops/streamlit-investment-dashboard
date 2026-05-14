@@ -438,8 +438,7 @@ def build_company_hero_summary(ticker: str, data_packet: dict, signal_output: di
         chips.append(_hero_chip("52W Position", f"{range_pct:.1f}% of range", "warn" if range_pct >= 80 else "neutral"))
     if valuation and valuation != "Not meaningful / insufficient data":
         chips.append(_hero_chip("Valuation", valuation, "warn" if valuation in {"Expensive", "Very expensive"} else "good" if valuation in {"Cheap", "Reasonable"} else "neutral"))
-    if not chips:
-        chips.append(_hero_chip("Data Coverage", _fmt_completeness(completeness), "warn" if completeness is not None and completeness < 75 else "neutral"))
+    chips.append(_hero_chip("Completeness", _fmt_completeness(completeness), "warn" if completeness is not None and completeness < 75 else "good" if completeness is not None and completeness >= 90 else "neutral"))
 
     data_quality_note = ""
     if completeness is not None and completeness < 75:
@@ -486,15 +485,12 @@ def render_company_hero(quote: dict, summary: dict) -> None:
     change_abs = f"{'+' if move_amount > 0 else '-' if move_amount < 0 else ''}{fmt_price(abs(move_amount))}" if move_amount is not None else "N/A"
     score = to_float(summary.get("composite_score"))
     score_text = f"{score:.1f}/100" if score is not None else "N/A"
-    completeness_text = _fmt_completeness(summary.get("data_completeness"))
-    chip_html = "".join(
-        f'<span class="hero-chip {escape(str(chip.get("tone") or ""))}"><span>{escape(str(chip.get("label")))}</span><strong>{escape(str(chip.get("value")))}</strong></span>'
+    stat_html = "".join(
+        f'<div class="hero-stat-chip {escape(str(chip.get("tone") or ""))}"><span>{escape(str(chip.get("label")))}:</span><strong>{escape(str(chip.get("value")))}</strong></div>'
         for chip in summary.get("key_stat_chips", [])
     )
     signal_tone = escape(str(summary.get("research_signal_tone") or "neutral"))
     stance_tone = escape(str(summary.get("market_stance_tone") or "neutral"))
-    data_quality_note = summary.get("data_quality_note")
-    quality_html = f'<div class="hero-quality-note">{escape(str(data_quality_note))}</div>' if data_quality_note else ""
 
     st.markdown(
         f"""
@@ -513,23 +509,23 @@ def render_company_hero(quote: dict, summary: dict) -> None:
                 </div>
               </div>
             </div>
-            <div class="hero-summary">
-              <div class="rt-label">Executive Summary</div>
-              <div class="hero-summary-headline">{escape(str(summary.get("headline") or "Research summary unavailable."))}</div>
-              <div class="hero-chip-row">{chip_html}</div>
-              {quality_html}
+            <div class="hero-quick-read">
+              <div class="rt-label">Key Stats / Quick Read</div>
+              <div class="hero-stat-grid">{stat_html}</div>
             </div>
             <div class="hero-signal-panel">
-              <div class="hero-badge-label">Overall Research Signal</div>
-              <div class="hero-badge {signal_tone}">{escape(str(summary.get("research_signal") or "N/A"))}</div>
-              <div class="hero-badge-label">Market Stance</div>
-              <div class="hero-badge {stance_tone}">{escape(str(summary.get("market_stance") or "No Rating"))}</div>
-              <div class="hero-signal-stats">
-                <div><span>Score</span><strong>{escape(score_text)}</strong></div>
-                <div><span>Confidence</span><strong>{escape(str(summary.get("confidence") or "N/A"))}</strong></div>
-                <div><span>Completeness</span><strong>{escape(completeness_text)}</strong></div>
+              <div class="rt-label">Signal Snapshot</div>
+              <div class="hero-signal-card {signal_tone}"><span>Overall Research Signal:</span><strong>{escape(str(summary.get("research_signal") or "N/A"))}</strong></div>
+              <div class="hero-signal-card {stance_tone}"><span>Market Stance:</span><strong>{escape(str(summary.get("market_stance") or "No Rating"))}</strong></div>
+              <div class="hero-signal-stat-grid">
+                <div class="hero-signal-mini"><span>Score:</span><strong>{escape(score_text)}</strong></div>
+                <div class="hero-signal-mini"><span>Confidence:</span><strong>{escape(str(summary.get("confidence") or "N/A"))}</strong></div>
               </div>
             </div>
+          </div>
+          <div class="hero-exec-summary">
+            <div class="rt-label">Executive Summary</div>
+            <div class="hero-summary-sentence">{escape(str(summary.get("headline") or "Research summary unavailable."))}</div>
           </div>
         </div>
         """,
