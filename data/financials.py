@@ -1027,6 +1027,125 @@ def _cash_runway(latest: dict) -> float | None:
     return cash / abs(fcf) if fcf else None
 
 
+def _metric_meta(reconciliation: dict, metric: str) -> dict:
+    for row in reconciliation.get("rows") or []:
+        if row.get("metric") == metric:
+            return row
+    return {}
+
+
+def _metric_period(reconciliation: dict, metric: str, fallback: str | None = None) -> str | None:
+    row = _metric_meta(reconciliation, metric)
+    return row.get("Period") or fallback
+
+
+def _metric_source(reconciliation: dict, metric: str, fallback: str | None = None) -> str | None:
+    row = _metric_meta(reconciliation, metric)
+    return row.get("Source") or fallback
+
+
+def _metric_status_note(reconciliation: dict, metric: str) -> tuple[str, str]:
+    row = _metric_meta(reconciliation, metric)
+    return row.get("Status") or "OK", row.get("Missing / Note") or ""
+
+
+def _same_period_margin(numerator, revenue, numerator_period: str | None, revenue_period: str | None) -> tuple[float | None, str]:
+    if numerator_period and revenue_period and numerator_period != revenue_period:
+        return None, "Period mismatch"
+    margin = _safe_margin(numerator, revenue)
+    if margin is None:
+        revenue_value = to_float(revenue)
+        numerator_value = to_float(numerator)
+        if revenue_value is None or numerator_value is None:
+            return None, "N/A"
+        if abs(revenue_value) < MIN_MEANINGFUL_REVENUE:
+            return None, "NM: small revenue denominator"
+        calculated = numerator_value / revenue_value * 100
+        if abs(calculated) > 300:
+            return None, "NM: extreme margin"
+    return margin, "OK"
+
+
+def _liquidity_status(cash_runway: float | None, cash, debt) -> str:
+    if cash_runway is not None:
+        if cash_runway > 8:
+            return "Strong liquidity"
+        if cash_runway >= 4:
+            return "Moderate liquidity"
+        if cash_runway >= 1:
+            return "Tight liquidity"
+        return "High liquidity risk"
+    if cash is None:
+        return "Insufficient data"
+    if debt is None:
+        return "Insufficient data"
+    return "Strong liquidity" if cash > debt else "Net debt"
+
+
+def _cash_burn_status(fcf, cash_runway: float | None) -> str:
+    fcf_value = to_float(fcf)
+    if fcf_value is None:
+        return "N/A"
+    if fcf_value >= 0:
+        return "FCF positive"
+    if cash_runway is not None and cash_runway < 4:
+        return "Elevated burn"
+    return "Burning cash"
+
+
+def _profitability_status(operating_income, net_income) -> str:
+    net = to_float(net_income)
+    operating = to_float(operating_income)
+    if net is not None and net > 0:
+        return "Profitable"
+    if operating is not None and operating > 0:
+        return "Operating profitable"
+    if net is not None and net < 0:
+        return "Unprofitable"
+    return "N/A"
+
+
+def _data_quality_status(source_status: str, missing_fields: list[str], reconciliation: dict) -> str:
+    if source_status == "Stale structured values":
+        return "Stale"
+    if source_status in {"Insufficient data", "Source error", "Not applicable"}:
+        return "Insufficient"
+    if reconciliation.get("has_mismatch") or source_status == "Partial" or missing_fields:
+        return "Partial"
+    return "OK"
+
+
+def _analyst_takeaway(symbol: str, income: dict, balance: dict, cash_flow: dict, health: dict, missing_fields: list[str]) -> str:
+    pieces = []
+    revenue = to_float(income.get("revenue"))
+    gross_profit = to_float(income.get("gross_profit"))
+    net_income = to_float(income.get("net_income"))
+    fcf = to_float(cash_flow.get("free_cash_flow"))
+    runway = cash_flow.get("cash_runway")
+    if revenue is not None and gross_profit is not None:
+        pieces.append("gross profit is positive" if gross_profit > 0 else "gross profit is negative")
+    elif revenue is not None:
+        pieces.append("revenue is available, but gross profit is not")
+    else:
+        pieces.append("latest revenue is unavailable")
+    if net_income is not None:
+        pieces.append(f"{symbol} is profitable on net income" if net_income > 0 else f"{symbol} remains unprofitable")
+    else:
+        pieces.append("net income is unavailable")
+    if fcf is not None:
+        if fcf >= 0:
+            pieces.append("free cash flow is positive")
+        elif runway is not None:
+            pieces.append(f"cash runway is approximately {runway:.1f} quarters based on latest quarterly free cash flow")
+        else:
+            pieces.append("free cash flow is negative, but runway cannot be estimated from available cash data")
+    else:
+        pieces.append("free cash flow is unavailable")
+    if missing_fields:
+        pieces.append("data is partial")
+    return ". ".join(piece[:1].upper() + piece[1:] for piece in pieces if piece) + "."
+
+
 def build_three_statement_visual_data(ticker: str, financials: dict | None = None) -> dict:
     symbol = clean_ticker(ticker)
     data = financials or load_latest_company_financials(symbol)
@@ -1075,26 +1194,88 @@ def build_three_statement_visual_data(ticker: str, financials: dict | None = Non
                 continue
             if value is None:
                 missing_fields.append(key)
-    net_income = income_statement.get("net_income")
-    fcf = cash_flow.get("free_cash_flow")
+    revenue_period = _metric_period(reconciliation, "revenue", reported_period)
+    margins = {}
+    margin_notes = []
+    for metric, label, numerator in (
+        ("gross_margin", "Gross Margin", income_statement.get("gross_profit")),
+        ("operating_margin", "Operating Margin", income_statement.get("operating_income")),
+        ("net_margin", "Net Margin", income_statement.get("net_income")),
+        ("fcf_margin", "FCF Margin", cash_flow.get("free_cash_flow")),
+    ):
+        source_metric = {
+            "gross_margin": "gross_profit",
+            "operating_margin": "operating_income",
+            "net_margin": "net_income",
+            "fcf_margin": "free_cash_flow",
+        }[metric]
+        metric_period = _metric_period(reconciliation, source_metric, reported_period)
+        value, note = _same_period_margin(numerator, income_statement.get("revenue"), metric_period, revenue_period)
+        margins[metric] = {"value": value, "status": note}
+        if note != "OK":
+            margin_notes.append(f"{label}: {note}.")
     health_summary = {
-        "profitability_status": "Profitable" if net_income is not None and net_income > 0 else "Unprofitable" if net_income is not None and net_income < 0 else "Insufficient data",
-        "liquidity_status": "Cash-rich" if cash is not None and total_debt is not None and cash >= total_debt else "Net debt" if cash is not None and total_debt is not None else "Debt data unavailable",
-        "cash_burn_status": "FCF positive" if fcf is not None and fcf >= 0 else "Burning cash" if fcf is not None else "Insufficient data",
-        "data_completeness_status": "Complete" if not missing_fields else "Partial data" if len(missing_fields) <= 5 else "Insufficient data",
+        "profitability_status": _profitability_status(income_statement.get("operating_income"), income_statement.get("net_income")),
+        "liquidity_status": _liquidity_status(cash_flow.get("cash_runway"), cash, total_debt),
+        "cash_burn_status": _cash_burn_status(cash_flow.get("free_cash_flow"), cash_flow.get("cash_runway")),
+        "data_completeness_status": _data_quality_status(source_status, missing_fields, reconciliation),
     }
+    detailed_specs = [
+        ("Income Statement", "revenue", "Revenue", income_statement.get("revenue")),
+        ("Income Statement", "gross_profit", "Gross Profit", income_statement.get("gross_profit")),
+        ("Income Statement", "operating_income", "Operating Income / Loss", income_statement.get("operating_income")),
+        ("Income Statement", "net_income", "Net Income / Loss", income_statement.get("net_income")),
+        ("Income Statement", "eps", "EPS", income_statement.get("eps")),
+        ("Balance Sheet", "cash", "Cash & Equivalents", balance_sheet.get("cash")),
+        ("Balance Sheet", "total_debt", "Total Debt", balance_sheet.get("total_debt")),
+        ("Balance Sheet", "net_cash_or_debt", "Net Cash / Net Debt", balance_sheet.get("net_cash_or_debt")),
+        ("Balance Sheet", "total_assets", "Total Assets", balance_sheet.get("total_assets")),
+        ("Balance Sheet", "shareholders_equity", "Shareholders' Equity", balance_sheet.get("shareholders_equity")),
+        ("Cash Flow", "operating_cash_flow", "Operating Cash Flow", cash_flow.get("operating_cash_flow")),
+        ("Cash Flow", "capital_expenditures", "Capital Expenditures", cash_flow.get("capex")),
+        ("Cash Flow", "free_cash_flow", "Free Cash Flow", cash_flow.get("free_cash_flow")),
+        ("Cash Flow", "cash_runway", "Cash Runway", cash_flow.get("cash_runway")),
+    ]
+    detailed_rows = []
+    for statement, key, label, value in detailed_specs:
+        lookup_key = "capital_expenditures" if key == "capital_expenditures" else key
+        status, note = _metric_status_note(reconciliation, lookup_key)
+        if value is None:
+            status = "Missing"
+        detailed_rows.append(
+            {
+                "statement": statement,
+                "metric": key,
+                "label": label,
+                "value": value,
+                "period": _metric_period(reconciliation, lookup_key, reported_period) or reported_period,
+                "source": _metric_source(reconciliation, lookup_key, source) or source,
+                "status": status,
+                "note": note or ("Unavailable from latest structured source." if value is None else ""),
+            }
+        )
+    reconciliation_notes = list(reconciliation.get("warnings") or [])
+    if margin_notes:
+        reconciliation_notes.extend(margin_notes)
+    if reconciliation.get("has_mismatch"):
+        reconciliation_notes.append("Financial statement values are partially sourced or period-mismatched. Review detailed table before relying on this view.")
+    data_quality_note = release.get("source_status_reason") or release.get("data_quality_note") or source_metadata.get("chart_source_note")
     return {
         "ticker": symbol,
         "reported_period": reported_period,
         "period_end_date": period_end,
         "source": source,
         "source_status": source_status,
+        "data_quality_note": data_quality_note,
+        "analyst_takeaway": _analyst_takeaway(symbol, income_statement, balance_sheet, cash_flow, health_summary, missing_fields),
         "income_statement": income_statement,
         "balance_sheet": balance_sheet,
         "cash_flow": cash_flow,
+        "margins": margins,
         "health_summary": health_summary,
         "missing_fields": missing_fields,
-        "data_quality_note": release.get("source_status_reason") or release.get("data_quality_note") or source_metadata.get("chart_source_note"),
+        "reconciliation_notes": reconciliation_notes,
+        "detailed_rows": detailed_rows,
         "reconciliation": reconciliation,
     }
 

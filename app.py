@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape
 from math import isnan
 
 import pandas as pd
@@ -574,23 +575,32 @@ def render_financial_charts(history: pd.DataFrame, view: str, chart_source: dict
         st.plotly_chart(fig, use_container_width=True)
 
 
-def render_statement_table(latest: dict) -> None:
-    rows = [
-        ("Income Statement", "Revenue", fmt_currency(latest.get("revenue"), 1)),
-        ("Income Statement", "Gross Profit", fmt_currency(latest.get("gross_profit"), 1)),
-        ("Income Statement", "Operating Income", fmt_currency(latest.get("operating_income"), 1)),
-        ("Income Statement", "Net Income", fmt_currency(latest.get("net_income"), 1)),
-        ("Income Statement", "EPS", fmt_eps(latest.get("eps"))),
-        ("Balance Sheet", "Cash & Equivalents", fmt_currency(latest.get("cash"), 1)),
-        ("Balance Sheet", "Total Assets", fmt_currency(latest.get("total_assets"), 1)),
-        ("Balance Sheet", "Total Debt", fmt_currency(latest.get("total_debt"), 1)),
-        ("Balance Sheet", "Shareholders' Equity", fmt_currency(latest.get("shareholders_equity"), 1)),
-        ("Cash Flow", "Operating Cash Flow", fmt_currency(latest.get("operating_cash_flow"), 1)),
-        ("Cash Flow", "Capital Expenditures", fmt_currency(latest.get("capital_expenditures"), 1)),
-        ("Cash Flow", "Free Cash Flow", fmt_currency(latest.get("free_cash_flow"), 1)),
-        ("Cash Flow", "Financing Cash Flow", fmt_currency(latest.get("financing_cash_flow"), 1)),
-    ]
-    df_display(pd.DataFrame(rows, columns=["Statement", "Metric", "Latest Value"]), height=420)
+def _statement_display_value(metric: str, value) -> str:
+    if metric == "eps":
+        return fmt_eps(value)
+    if metric == "cash_runway":
+        number = to_float(value)
+        return f"{number:.1f} quarters" if number is not None else "N/A"
+    return fmt_currency(value, 1)
+
+
+def render_statement_table(visual: dict) -> None:
+    rows = []
+    for row in visual.get("detailed_rows") or []:
+        rows.append(
+            {
+                "Statement": row.get("statement"),
+                "Metric": row.get("label"),
+                "Latest Value": _statement_display_value(row.get("metric"), row.get("value")),
+                "Period": row.get("period") or "N/A",
+                "Source": row.get("source") or "N/A",
+                "Status / Note": row.get("note") or row.get("status") or "OK",
+            }
+        )
+    if not rows:
+        empty_state("Detailed 3-statement rows unavailable.")
+        return
+    df_display(pd.DataFrame(rows), height=420)
 
 
 def _statement_tone(value) -> str:
@@ -605,39 +615,99 @@ def _statement_tone(value) -> str:
 
 
 def _status_tone(status: str) -> str:
-    if status in {"Complete", "Profitable", "Cash-rich", "FCF positive", "OK"}:
+    if status in {"Complete", "Profitable", "Operating profitable", "Cash-rich", "FCF positive", "OK", "Strong liquidity"}:
         return "good"
-    if status in {"Partial data", "Unprofitable", "Burning cash", "Net debt", "Partial"}:
+    if status in {"Partial data", "Partial", "Unprofitable", "Burning cash", "Elevated burn", "Net debt", "Moderate liquidity", "Tight liquidity", "Stale"}:
         return "warn"
-    if status in {"Insufficient data", "Debt data unavailable", "Source error", "Error"}:
+    if status in {"Insufficient data", "Insufficient", "Debt data unavailable", "Source error", "Error", "High liquidity risk", "N/A"}:
         return "bad"
     return "neutral"
 
 
-def _compact_bar_chart(title: str, labels: list[str], values: list[float | None], *, currency: bool = True, height: int = 220) -> None:
+def _compact_bar_chart(title: str, labels: list[str], values: list[float | None], *, currency: bool = True, height: int = 220, orientation: str = "h") -> None:
     rows = [(label, to_float(value)) for label, value in zip(labels, values) if to_float(value) is not None]
     if not rows:
         empty_state(f"{title} unavailable.")
         return
-    y_labels = [row[0] for row in rows]
-    x_values = [row[1] for row in rows]
-    colors = ["#7bd88f" if value >= 0 else "#f87171" for value in x_values]
-    fig = go.Figure(
-        go.Bar(
-            x=x_values,
-            y=y_labels,
+    labels_clean = [row[0] for row in rows]
+    values_clean = [row[1] for row in rows]
+    colors = ["#7bd88f" if value >= 0 else "#f87171" for value in values_clean]
+    text = [fmt_currency(value, 1) if currency else fmt_number(value, 1) for value in values_clean]
+    if orientation == "v":
+        bar = go.Bar(
+            x=labels_clean,
+            y=values_clean,
+            marker_color=colors,
+            text=text,
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="%{x}: %{text}<extra></extra>",
+        )
+    else:
+        bar = go.Bar(
+            x=values_clean,
+            y=labels_clean,
             orientation="h",
             marker_color=colors,
-            text=[fmt_currency(value, 1) if currency else fmt_number(value, 1) for value in x_values],
+            text=text,
             textposition="auto",
             cliponaxis=False,
             hovertemplate="%{y}: %{text}<extra></extra>",
         )
+    fig = go.Figure(
+        bar
     )
     fig = plotly_layout(fig, height=height)
-    fig.update_layout(showlegend=False, margin={"l": 112, "r": 20, "t": 18, "b": 28})
+    fig.update_layout(showlegend=False, margin={"l": 86 if orientation == "h" else 22, "r": 20, "t": 18, "b": 46 if orientation == "v" else 28})
     fig.update_xaxes(zeroline=True, zerolinecolor="#5b7782")
+    if orientation == "h":
+        fig.update_yaxes(autorange="reversed")
     st.plotly_chart(fig, use_container_width=True)
+
+
+def _statement_header_strip(visual: dict) -> None:
+    status = str(visual.get("source_status") or "N/A")
+    tone = _status_tone(status)
+    tone_class = {"good": "rt-good", "bad": "rt-bad", "warn": "rt-warn"}.get(tone, "rt-neutral")
+    parts = [
+        escape(str(visual.get("ticker") or "N/A")),
+        escape(str(visual.get("reported_period") or "N/A")),
+        f"Period ended {escape(fmt_date(visual.get('period_end_date')))}",
+        f"Source: {escape(str(visual.get('source') or 'N/A'))}",
+        f'<span class="{tone_class}">Status: {escape(status)}</span>',
+    ]
+    st.markdown(
+        f'<div class="rt-card small" style="display:flex;flex-wrap:wrap;gap:0.6rem;align-items:center;">{" | ".join(parts)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _analyst_takeaway_box(text: str) -> None:
+    st.markdown(
+        f"""
+        <div class="rt-card small" style="border-color:rgba(125,211,252,0.32);">
+          <div class="rt-label">Analyst Takeaway</div>
+          <div class="rt-caption" style="font-size:0.9rem;color:#d8e5e8;">{escape(text or "Latest 3-statement takeaway unavailable.")}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _margin_text(entry: dict) -> str:
+    value = to_float((entry or {}).get("value"))
+    if value is None:
+        status = str((entry or {}).get("status") or "N/A")
+        return "NM" if status.startswith("NM") or "mismatch" in status.casefold() else "N/A"
+    return fmt_meaningful_percent(value)
+
+
+def _runway_text(cash_flow: dict) -> str:
+    fcf = to_float(cash_flow.get("free_cash_flow"))
+    runway = cash_flow.get("cash_runway")
+    if fcf is not None and fcf >= 0:
+        return "FCF positive"
+    return f"Approx. {runway:.1f} quarters" if runway is not None else "N/A"
 
 
 def render_three_statement_visual(ticker: str, financials: dict) -> None:
@@ -645,18 +715,15 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
     income = visual.get("income_statement", {})
     balance = visual.get("balance_sheet", {})
     cash_flow = visual.get("cash_flow", {})
+    margins = visual.get("margins", {})
     health = visual.get("health_summary", {})
-    render_metric_grid(
-        [
-            ("Reported Period", str(visual.get("reported_period") or "N/A"), "Latest quarterly release basis", "neutral"),
-            ("Period End Date", fmt_date(visual.get("period_end_date")), "Not filing date", "neutral"),
-            ("Source", str(visual.get("source") or "N/A"), str(visual.get("source_status") or "N/A"), _status_tone(str(visual.get("source_status") or ""))),
-        ],
-        columns=3,
-        small=True,
-    )
-    if visual.get("missing_fields") or str(visual.get("source_status")) == "Partial":
-        st.caption("Some values are unavailable or sourced from a fallback provider. Review the detailed table for source alignment.")
+    _statement_header_strip(visual)
+    if visual.get("missing_fields") or str(visual.get("source_status")) in {"Partial", "Stale structured values"}:
+        note = visual.get("data_quality_note") or "Some values are unavailable or sourced from a fallback provider. Review detailed table."
+        st.warning(note)
+    _analyst_takeaway_box(visual.get("analyst_takeaway", ""))
+    if visual.get("reconciliation", {}).get("has_mismatch"):
+        st.warning("Financial statement values are partially sourced or period-mismatched. Review detailed table before relying on this view.")
     col_income, col_balance, col_cash = st.columns(3)
     with col_income:
         st.markdown("#### Income Statement")
@@ -664,17 +731,28 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
             [
                 ("Revenue", fmt_currency(income.get("revenue"), 1), "Top line", "neutral"),
                 ("Gross Profit", fmt_currency(income.get("gross_profit"), 1), "After cost of revenue", _statement_tone(income.get("gross_profit"))),
-                ("Operating Income", fmt_currency(income.get("operating_income"), 1), "Operating result", _statement_tone(income.get("operating_income"))),
-                ("Net Income", fmt_currency(income.get("net_income"), 1), "Bottom line", _statement_tone(income.get("net_income"))),
+                ("Operating Income / Loss", fmt_currency(income.get("operating_income"), 1), "Operating result", _statement_tone(income.get("operating_income"))),
+                ("Net Income / Loss", fmt_currency(income.get("net_income"), 1), "Bottom line", _statement_tone(income.get("net_income"))),
                 ("EPS", fmt_eps(income.get("eps")), "Per diluted share where available", _statement_tone(income.get("eps"))),
             ],
             columns=1,
             small=True,
         )
         _compact_bar_chart(
-            "Income Statement Flow",
+            "Revenue To Net Income",
             ["Revenue", "Gross Profit", "Operating Income", "Net Income"],
             [income.get("revenue"), income.get("gross_profit"), income.get("operating_income"), income.get("net_income")],
+            orientation="v",
+            height=250,
+        )
+        render_metric_grid(
+            [
+                ("Gross Margin", _margin_text(margins.get("gross_margin", {})), (margins.get("gross_margin", {}) or {}).get("status", ""), "neutral"),
+                ("Operating Margin", _margin_text(margins.get("operating_margin", {})), (margins.get("operating_margin", {}) or {}).get("status", ""), "neutral"),
+                ("Net Margin", _margin_text(margins.get("net_margin", {})), (margins.get("net_margin", {}) or {}).get("status", ""), "neutral"),
+            ],
+            columns=3,
+            small=True,
         )
     with col_balance:
         st.markdown("#### Balance Sheet")
@@ -690,37 +768,51 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
             columns=1,
             small=True,
         )
-        if balance.get("total_debt") is None:
-            st.caption("Debt data unavailable.")
-        _compact_bar_chart("Cash vs Debt", ["Cash", "Total Debt"], [balance.get("cash"), balance.get("total_debt")])
+        render_metric_grid(
+            [
+                ("Liquidity Label", health.get("liquidity_status", "N/A"), _runway_text(cash_flow), _status_tone(health.get("liquidity_status", ""))),
+            ],
+            columns=1,
+            small=True,
+        )
+        if balance.get("cash") is not None and balance.get("total_debt") is not None:
+            _compact_bar_chart("Cash vs Debt", ["Cash", "Total Debt"], [balance.get("cash"), balance.get("total_debt")], height=190)
+        elif balance.get("cash") is not None:
+            st.caption("Debt data unavailable. Cash is shown, but net cash/debt is not calculated.")
+        else:
+            empty_state("Insufficient balance sheet data.")
     with col_cash:
         st.markdown("#### Cash Flow")
-        runway = cash_flow.get("cash_runway")
-        runway_text = f"Approx. {runway:.1f} quarter(s)" if runway is not None else "N/A"
         render_metric_grid(
             [
                 ("Operating Cash Flow", fmt_currency(cash_flow.get("operating_cash_flow"), 1), "Cash from operations", _statement_tone(cash_flow.get("operating_cash_flow"))),
                 ("Capital Expenditures", fmt_currency(cash_flow.get("capex"), 1), "Normalized as cash outflow", _statement_tone(cash_flow.get("capex"))),
                 ("Free Cash Flow", fmt_currency(cash_flow.get("free_cash_flow"), 1), "OCF less capex outflow", _statement_tone(cash_flow.get("free_cash_flow"))),
-                ("Cash Runway", runway_text, "Approximation from latest quarterly FCF", "warn" if runway is not None and runway < 4 else "neutral"),
+                ("Cash Runway", _runway_text(cash_flow), "Approximation from latest quarterly FCF", _status_tone(health.get("liquidity_status", ""))),
             ],
             columns=1,
             small=True,
         )
-        _compact_bar_chart("OCF To FCF Bridge", ["Operating CF", "Capex", "Free CF"], [cash_flow.get("operating_cash_flow"), cash_flow.get("capex"), cash_flow.get("free_cash_flow")])
+        _compact_bar_chart("OCF To FCF Bridge", ["Operating CF", "Capex Outflow", "Free CF"], [cash_flow.get("operating_cash_flow"), cash_flow.get("capex"), cash_flow.get("free_cash_flow")], height=210)
+        st.caption("FCF calculated as operating cash flow less capex.")
     st.markdown("#### 3-Statement Health Summary")
     render_metric_grid(
         [
             ("Profitability", health.get("profitability_status", "N/A"), "Net income based", _status_tone(health.get("profitability_status", ""))),
-            ("Liquidity", health.get("liquidity_status", "N/A"), "Cash vs debt", _status_tone(health.get("liquidity_status", ""))),
+            ("Liquidity", health.get("liquidity_status", "N/A"), "Cash runway and debt availability", _status_tone(health.get("liquidity_status", ""))),
             ("Cash Burn", health.get("cash_burn_status", "N/A"), "Free cash flow based", _status_tone(health.get("cash_burn_status", ""))),
             ("Data Completeness", health.get("data_completeness_status", "N/A"), visual.get("data_quality_note") or "Latest-quarter fields", _status_tone(health.get("data_completeness_status", ""))),
         ],
         columns=4,
         small=True,
     )
+    notes = visual.get("reconciliation_notes") or []
+    if notes:
+        with st.expander("3-Statement Reconciliation Notes"):
+            for note in notes:
+                st.write(f"- {note}")
     with st.expander("Detailed 3-Statement Table"):
-        render_statement_table(financials.get("latest_financials") or {})
+        render_statement_table(visual)
 
 
 def home_page(ticker: str) -> None:
