@@ -728,13 +728,19 @@ h3 {
 .pt-identity-lockup,
 .pt-logo-column,
 .pt-company-logo,
-.pt-logo-placeholder {
+.pt-logo-placeholder,
+.pt-company-logo-frame {
   box-sizing: border-box;
   flex: 0 0 auto;
   box-shadow: 0 10px 22px rgba(0,0,0,0.22);
 }
-.pt-company-logo img {
-  display: block;
+.pt-company-logo-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 7px;
 }
 .pt-company-header-logo {
   width: 72px !important;
@@ -830,11 +836,31 @@ h3 {
   border-color: rgba(169,182,188,0.72) !important;
 }
 .pt-dashboard-logo img,
-.pt-company-logo img {
+.pt-company-logo img,
+.pt-company-logo-frame img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
   image-rendering: auto;
+}
+.pt-logo-fallback {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--pine-bright);
+  font-size: 1.22rem;
+  font-weight: 980;
+  line-height: 1;
+}
+.pt-company-logo-frame.pt-logo-placeholder {
+  background: linear-gradient(135deg, rgba(16,27,34,0.98), rgba(7,26,61,0.82)) !important;
+  border: 1px solid rgba(109,187,90,0.42) !important;
+}
+.pt-company-logo-frame.pt-logo-placeholder .pt-logo-fallback {
+  display: flex;
 }
 .pt-identity-main {
   min-width: 0;

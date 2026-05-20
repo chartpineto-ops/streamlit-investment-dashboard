@@ -910,21 +910,24 @@ def _company_logo_html(view_model: dict, size: int = 68) -> str:
     initials = escape(str(view_model.get("fallback_initials") or ticker[:2] or "PT"))
     logo_url = str(view_model.get("logo_url") or "").strip()
     logo_data_uri = str(view_model.get("logo_data_uri") or "").strip()
-    # Prefer the validated embedded image first. Remote logo URLs can fail in the
-    # browser while the server-side data URI has already been checked.
-    logo_src = logo_data_uri if logo_data_uri.startswith("data:image") else logo_url
+    # Match the Home-page behavior first: use the public logo URL in the browser.
+    # Keep the server-validated data URI as a fallback for environments that do
+    # not expose a remote logo URL.
+    logo_src = logo_url if logo_url.startswith("http") else logo_data_uri
     if logo_src.startswith(("http", "data:image")):
         return (
-            f'<div class="quote-logo pt-dashboard-logo pt-company-logo" style="width:{size}px;height:{size}px;min-width:{size}px;" '
+            f'<div class="pt-dashboard-logo pt-company-logo-frame" style="width:{size}px;height:{size}px;min-width:{size}px;" '
             f'title="{escape(str(view_model.get("logo_source") or "Company logo"))}">'
             f'<img src="{escape(logo_src, quote=True)}" alt="{escape(ticker)} logo" '
             f'loading="eager" decoding="async" referrerpolicy="no-referrer" '
-            f'onerror="this.style.display=\'none\'; this.parentNode.classList.add(\'pt-logo-placeholder\'); this.parentNode.textContent=\'{initials}\';">'
+            f'onerror="this.remove(); this.parentNode.classList.add(\'pt-logo-placeholder\');">'
+            f'<span class="pt-logo-fallback">{initials}</span>'
             "</div>"
         )
     return (
-        f'<div class="quote-logo pt-dashboard-logo pt-logo-placeholder" style="width:{size}px;height:{size}px;min-width:{size}px;" '
-        f'title="Logo unavailable: {escape(str(view_model.get("logo_status") or "Placeholder"))}">{initials}</div>'
+        f'<div class="pt-dashboard-logo pt-company-logo-frame pt-logo-placeholder" style="width:{size}px;height:{size}px;min-width:{size}px;" '
+        f'title="Logo unavailable: {escape(str(view_model.get("logo_status") or "Placeholder"))}">'
+        f'<span class="pt-logo-fallback">{initials}</span></div>'
     )
 
 
@@ -1172,7 +1175,7 @@ def render_terminal_company_hero(view_model: dict) -> None:
           <div class="pt-dashboard-top-grid">
             <div class="pt-company-identity-card">
               <div class="pt-identity-row">
-                {_company_logo_html(view_model, 84)}
+                {_company_logo_html(view_model, 96)}
                 <div class="pt-identity-main">
                   <div class="pt-ticker-line">
                     <span class="pt-dashboard-ticker">{escape(ticker)}</span>
