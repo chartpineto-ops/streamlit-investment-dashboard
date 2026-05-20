@@ -855,7 +855,7 @@ def _pt_chip(chip: dict, css_class: str = "pt-chip") -> str:
     return (
         f'<span class="{escape(css_class)}" style="display:inline-flex;align-items:center;gap:0.1rem;'
         f'border:1px solid {tone["border"]};background:{tone["bg"]};color:{tone["color"]};'
-        f'border-radius:999px;padding:0.26rem 0.6rem;font-size:0.72rem;font-weight:900;'
+        f'border-radius:999px;padding:0.28rem 0.64rem;font-size:0.78rem;font-weight:900;'
         f'line-height:1.1;text-transform:uppercase;white-space:nowrap;">'
         f'{escape(str(chip.get("label") or "N/A"))}{value_html}</span>'
     )
@@ -866,10 +866,10 @@ def _pt_stat_card(label: str, value: str, tone: str = "neutral", note: str = "")
     note_html = f'<div class="pt-stat-note">{escape(str(note))}</div>' if not _is_unavailable_text(note) else ""
     return (
         f'<div class="pt-hero-meta" style="border:1px solid {BRAND_COLORS["border"]};'
-        f'border-radius:10px;background:{BRAND_COLORS["card_alt"]};padding:0.5rem 0.58rem;min-width:0;">'
-        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.66rem;font-weight:850;'
+        f'border-radius:10px;background:{BRAND_COLORS["card_alt"]};padding:0.62rem 0.68rem;min-width:0;">'
+        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.73rem;font-weight:850;'
         f'letter-spacing:0.04em;text-transform:uppercase;margin-bottom:0.18rem;">{escape(label)}</div>'
-        f'<div style="color:{tone_style["color"]};font-size:0.92rem;font-weight:930;'
+        f'<div style="color:{tone_style["color"]};font-size:1.08rem;font-weight:930;'
         f'line-height:1.15;overflow-wrap:anywhere;">{escape(str(value or "N/A"))}</div>'
         f"{note_html}"
         "</div>"
