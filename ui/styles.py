@@ -744,6 +744,54 @@ h3 {
   font-size: 1.2rem !important;
   box-shadow: 0 10px 22px rgba(0,0,0,0.24);
 }
+.pt-quarterly-metric-card {
+  min-height: 150px !important;
+  display: flex;
+  flex-direction: column;
+}
+.pt-quarterly-metric-card .rt-caption {
+  min-height: 2.2rem;
+}
+.pt-trend-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.46rem;
+  border-top: 1px solid var(--border);
+  margin-top: auto;
+  padding-top: 0.58rem;
+}
+.pt-trend-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.025);
+  padding: 0.32rem 0.42rem;
+  min-width: 0;
+}
+.pt-trend-period {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pt-trend-value {
+  font-size: 0.78rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.pt-trend-good .pt-trend-value {
+  color: var(--green);
+}
+.pt-trend-bad .pt-trend-value {
+  color: var(--red);
+}
+.pt-trend-neutral .pt-trend-value {
+  color: var(--muted);
+}
 .pt-chip,
 .pt-entry-signal,
 .pt-signal-badge,

@@ -1043,6 +1043,136 @@ def render_latest_earnings(financials: dict) -> None:
     render_metric_grid(cards, columns=3, small=True)
 
 
+def calculate_pct_change(current, comparison) -> float | None:
+    current_value = to_float(current)
+    comparison_value = to_float(comparison)
+    if current_value is None or comparison_value is None or comparison_value == 0:
+        return None
+    return ((current_value - comparison_value) / abs(comparison_value)) * 100
+
+
+def format_pct_change(value) -> str:
+    number = to_float(value)
+    if number is None:
+        return "N/A"
+    return fmt_percent(number, decimals=1, signed=True)
+
+
+def get_trend_arrow(change_pct) -> str:
+    number = to_float(change_pct)
+    if number is None:
+        return "–"
+    if number > 0:
+        return "↑"
+    if number < 0:
+        return "↓"
+    return "→"
+
+
+def get_trend_tone(change_pct, favorable_direction: str = "up") -> str:
+    number = to_float(change_pct)
+    if number is None or number == 0:
+        return "neutral"
+    if favorable_direction == "down":
+        return "good" if number < 0 else "bad"
+    return "good" if number > 0 else "bad"
+
+
+def _metric_comparison_card(
+    label: str,
+    value: str,
+    subtitle: str,
+    yoy_pct=None,
+    qoq_pct=None,
+    favorable_direction: str = "up",
+    tone: str = "neutral",
+) -> str:
+    value_tone = {"good": "rt-good", "bad": "rt-bad", "warn": "rt-warn"}.get(tone, "rt-neutral")
+
+    def chip(period_label: str, change) -> str:
+        trend_tone = get_trend_tone(change, favorable_direction)
+        css_class = {"good": "pt-trend-good", "bad": "pt-trend-bad"}.get(trend_tone, "pt-trend-neutral")
+        return (
+            f'<div class="pt-trend-chip {css_class}">'
+            f'<span class="pt-trend-period">{escape(period_label)}</span>'
+            f'<span class="pt-trend-value">{escape(get_trend_arrow(change))} {escape(format_pct_change(change))}</span>'
+            "</div>"
+        )
+
+    return (
+        '<div class="rt-card small pt-quarterly-metric-card">'
+        f'<div class="rt-label">{escape(str(label))}</div>'
+        f'<div class="rt-value {value_tone}">{escape(str(value))}</div>'
+        f'<div class="rt-caption">{escape(str(subtitle or ""))}</div>'
+        '<div class="pt-trend-row">'
+        f'{chip("YoY", yoy_pct)}'
+        f'{chip("QoQ", qoq_pct)}'
+        "</div>"
+        "</div>"
+    )
+
+
+def _quarterly_metric_comparisons(financials: dict, release: dict, metric: str, current_value) -> tuple[float | None, float | None]:
+    history = view_history(financials, "Quarterly")
+    if history is None or history.empty or "period_date" not in history.columns:
+        return None, None
+    frame = history.copy()
+    frame["period_date"] = pd.to_datetime(frame["period_date"], errors="coerce")
+    frame = frame.dropna(subset=["period_date"]).sort_values("period_date").reset_index(drop=True)
+    if frame.empty:
+        return None, None
+    if metric == "cash_debt_ratio" and metric not in frame.columns and {"cash", "total_debt"}.issubset(frame.columns):
+        frame[metric] = frame.apply(
+            lambda row: safe_div(row.get("cash"), row.get("total_debt"), 100) if to_float(row.get("total_debt")) not in (None, 0) else None,
+            axis=1,
+        )
+
+    target_date = pd.to_datetime(
+        release.get("structured_values_period_end_date")
+        or release.get("structured_values_date")
+        or release.get("period_end_date"),
+        errors="coerce",
+    )
+    if pd.notna(target_date):
+        exact = frame.index[frame["period_date"].dt.date == target_date.date()].tolist()
+        current_idx = exact[-1] if exact else int((frame["period_date"] - target_date).abs().idxmin())
+    else:
+        current_idx = len(frame) - 1
+
+    if current_idx < 0 or current_idx >= len(frame):
+        return None, None
+    qoq_value = frame.iloc[current_idx - 1].get(metric) if current_idx >= 1 and metric in frame.columns else None
+    yoy_value = frame.iloc[current_idx - 4].get(metric) if current_idx >= 4 and metric in frame.columns else None
+    return calculate_pct_change(current_value, yoy_value), calculate_pct_change(current_value, qoq_value)
+
+
+def _latest_release_metric_card_html(financials: dict, release: dict, label: str, metric: str, value, formatted_value: str, subtitle: str, favorable_direction: str, tone: str = "neutral") -> str:
+    yoy, qoq = _quarterly_metric_comparisons(financials, release, metric, value)
+    return _metric_comparison_card(label, formatted_value, subtitle, yoy, qoq, favorable_direction, tone)
+
+
+def _render_latest_release_metric_cards(financials: dict, release: dict, cards: list[dict], columns: int = 4) -> None:
+    if not cards:
+        return
+    cols = st.columns(columns)
+    for idx, card in enumerate(cards):
+        with cols[idx % columns]:
+            st.markdown(
+                _latest_release_metric_card_html(
+                    financials,
+                    release,
+                    card["label"],
+                    card["metric"],
+                    card.get("value"),
+                    card["formatted_value"],
+                    card.get("subtitle", ""),
+                    card.get("favorable_direction", "up"),
+                    card.get("tone", "neutral"),
+                ),
+                unsafe_allow_html=True,
+            )
+
+
 def render_latest_quarterly_release(financials: dict) -> None:
     release = financials.get("latest_quarterly_release") or {}
     packet = financials.get("financial_data_packet") or {}
@@ -1073,17 +1203,26 @@ def render_latest_quarterly_release(financials: dict) -> None:
     value_period_caption = structured_source if not show_structured_period else f"{structured_source}; period: {structured_period}"
     cards.extend(
         [
-            ("Revenue", fmt_currency(release.get("revenue"), 1), value_period_caption, "neutral"),
-            ("EPS", fmt_eps(release.get("eps")), "N/A if unavailable", tone_for_number(release.get("eps"))),
-            ("Net Income", fmt_currency(release.get("net_income"), 1), value_period_caption, tone_for_number(release.get("net_income"))),
-            ("Free Cash Flow", fmt_currency(release.get("free_cash_flow"), 1), "OCF less normalized capex", tone_for_number(release.get("free_cash_flow"))),
-            ("Cash", fmt_currency(release.get("cash"), 1), "Nearest matching balance sheet", "neutral"),
-            ("Total Debt", fmt_currency(release.get("total_debt"), 1), "Nearest matching balance sheet", "neutral"),
             ("Source Status", status, packet.get("data_quality_note") or release.get("compact_source_status_note") or release.get("period_alignment_status") or "Review reconciliation.", tone),
             ("Data Completeness", _fmt_completeness(packet.get("completeness_score", release.get("data_completeness_score"))), packet.get("data_quality_note") or release.get("compact_source_status_note") or "Latest-period core fields", tone),
         ]
     )
     render_metric_grid(cards, columns=3, small=True)
+    cash = to_float(release.get("cash"))
+    debt = to_float(release.get("total_debt"))
+    net_debt = debt - cash if cash is not None and debt is not None else None
+    cash_debt = safe_div(cash, debt, 100) if cash is not None and debt not in (None, 0) else None
+    metric_cards = [
+        {"label": "Revenue", "metric": "revenue", "value": release.get("revenue"), "formatted_value": fmt_currency(release.get("revenue"), 1), "subtitle": value_period_caption, "favorable_direction": "up", "tone": "neutral"},
+        {"label": "EPS", "metric": "eps", "value": release.get("eps"), "formatted_value": fmt_eps(release.get("eps")), "subtitle": "Diluted EPS where available", "favorable_direction": "up", "tone": tone_for_number(release.get("eps"))},
+        {"label": "Net Income", "metric": "net_income", "value": release.get("net_income"), "formatted_value": fmt_currency(release.get("net_income"), 1), "subtitle": value_period_caption, "favorable_direction": "up", "tone": tone_for_number(release.get("net_income"))},
+        {"label": "Free Cash Flow", "metric": "free_cash_flow", "value": release.get("free_cash_flow"), "formatted_value": fmt_currency(release.get("free_cash_flow"), 1), "subtitle": "OCF less normalized capex", "favorable_direction": "up", "tone": tone_for_number(release.get("free_cash_flow"))},
+        {"label": "Cash", "metric": "cash", "value": release.get("cash"), "formatted_value": fmt_currency(release.get("cash"), 1), "subtitle": "Nearest matching balance sheet", "favorable_direction": "up", "tone": "neutral"},
+        {"label": "Total Debt", "metric": "total_debt", "value": release.get("total_debt"), "formatted_value": fmt_currency(release.get("total_debt"), 1), "subtitle": "Nearest matching balance sheet", "favorable_direction": "down", "tone": "neutral"},
+        {"label": "Net Debt", "metric": "net_debt", "value": net_debt, "formatted_value": fmt_currency(net_debt, 1), "subtitle": "Total debt less cash", "favorable_direction": "down", "tone": tone_for_number(-net_debt if net_debt is not None else None)},
+        {"label": "Cash / Debt", "metric": "cash_debt_ratio", "value": cash_debt, "formatted_value": fmt_percent(cash_debt, decimals=1), "subtitle": "Cash as a share of total debt", "favorable_direction": "up", "tone": tone_for_number(cash_debt)},
+    ]
+    _render_latest_release_metric_cards(financials, release, metric_cards, columns=4)
     if show_structured_period or release.get("period_alignment_status") == "Filing newer than structured values":
         st.warning(release.get("data_quality_note") or f"Latest filing detected for {reported_period}; structured financial values may still reflect {structured_period}.")
     filing_url = release.get("filing_url")
