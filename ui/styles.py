@@ -45,10 +45,32 @@ TERMINAL_CSS = """
   background: radial-gradient(circle at top left, rgba(47, 125, 58, 0.22), transparent 28rem), radial-gradient(circle at top right, rgba(7, 26, 61, 0.44), transparent 30rem), var(--bg);
   color: var(--text);
 }
-.block-container {
-  max-width: 1480px;
-  padding-top: 1.1rem;
-  padding-bottom: 2.5rem;
+.stApp .block-container,
+.main .block-container,
+.block-container,
+[data-testid="stMainBlockContainer"] {
+  max-width: none !important;
+  width: 100% !important;
+  padding-left: 2rem !important;
+  padding-right: 2rem !important;
+  padding-top: 1.5rem !important;
+  padding-bottom: 2.5rem !important;
+  box-sizing: border-box;
+}
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stMain"] > div {
+  width: 100% !important;
+  max-width: none !important;
+}
+.pine-page,
+.pine-page-shell,
+.pine-tab-content,
+.dashboard-content,
+.page-content {
+  width: 100% !important;
+  max-width: none !important;
+  box-sizing: border-box;
 }
 h1, h2, h3 {
   letter-spacing: 0;
@@ -69,9 +91,61 @@ h3 {
 [data-testid="stSidebar"] {
   background: linear-gradient(180deg, #061014 0%, #071A3D 160%);
   border-right: 1px solid var(--border);
+  min-width: 240px;
+  max-width: 280px;
+}
+[data-testid="stSidebar"] > div {
+  width: 260px;
+  max-width: 280px;
 }
 [data-testid="stSidebar"] * {
   color: var(--text);
+}
+.pine-grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  width: 100%;
+}
+.pine-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  width: 100%;
+}
+.pine-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  width: 100%;
+}
+.pine-grid-6 {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1rem;
+  width: 100%;
+}
+.pine-grid-main-sidebar {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(300px, 1fr);
+  gap: 1rem;
+  width: 100%;
+}
+.pine-grid-wide-score {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(360px, 1fr);
+  gap: 1rem;
+  width: 100%;
+}
+@media (max-width: 1100px) {
+  .pine-grid-2,
+  .pine-grid-3,
+  .pine-grid-4,
+  .pine-grid-6,
+  .pine-grid-main-sidebar,
+  .pine-grid-wide-score {
+    grid-template-columns: 1fr;
+  }
 }
 .terminal-subtitle {
   color: var(--muted);

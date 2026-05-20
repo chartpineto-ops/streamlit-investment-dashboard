@@ -84,7 +84,7 @@ PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
 LOGO_PATH = Path("assets/pineterminal_logo.png")
 
 
-st.set_page_config(page_title="PineTerminal", page_icon="PT", layout="wide")
+st.set_page_config(page_title="PineTerminal", page_icon="PT", layout="wide", initial_sidebar_state="expanded")
 apply_brand_theme()
 init_db()
 
