@@ -983,20 +983,20 @@ h3 {
   position: absolute;
   left: 0;
   right: 0;
-  top: 76px;
+  top: 84px;
   text-align: center;
 }
 .pt-score-number {
   color: var(--text);
-  font-size: clamp(3.8rem, 5.45vw, 5.65rem);
+  font-size: clamp(3.05rem, 4.1vw, 4.35rem);
   line-height: 0.95;
   font-weight: 980;
 }
 .pt-score-rating {
-  font-size: clamp(1.22rem, 1.55vw, 1.48rem);
+  font-size: clamp(1.02rem, 1.22vw, 1.2rem);
   font-weight: 980;
   line-height: 1.12;
-  margin-top: 0.46rem;
+  margin-top: 0.38rem;
 }
 .pt-score-rating.good { color: var(--green); }
 .pt-score-rating.warn,
