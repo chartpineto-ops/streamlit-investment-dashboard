@@ -184,6 +184,18 @@ def plotly_layout(fig: go.Figure, height: int = 340) -> go.Figure:
     return fig
 
 
+def apply_terminal_chart_layout(fig: go.Figure, height: int = 300, margin: dict | None = None) -> go.Figure:
+    fig = plotly_layout(fig, height=height)
+    fig.update_layout(
+        showlegend=False,
+        margin=margin or {"l": 64, "r": 18, "t": 16, "b": 34},
+        font={"color": BRAND_COLORS["text"], "family": "Inter, Arial, sans-serif", "size": 11},
+    )
+    fig.update_xaxes(gridcolor=BRAND_COLORS["border"], zerolinecolor=BRAND_COLORS["muted"], tickfont={"size": 10})
+    fig.update_yaxes(gridcolor=BRAND_COLORS["border"], zerolinecolor=BRAND_COLORS["muted"], tickfont={"size": 10})
+    return fig
+
+
 def render_terminal_chart(fig: go.Figure) -> None:
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
@@ -218,6 +230,21 @@ def latest_row(financials: dict, view: str = "Quarterly") -> dict:
     if history is None or history.empty:
         return {}
     return history.iloc[-1].to_dict()
+
+
+def canonical_quarterly_latest(financials: dict) -> dict:
+    packet = financials.get("financial_data_packet") or {}
+    fields = packet.get("fields") or {}
+    if not fields:
+        return latest_row(financials, "Quarterly")
+    latest = {key: (detail or {}).get("value") for key, detail in fields.items() if isinstance(detail, dict)}
+    latest["period"] = packet.get("structured_values_period_label") or packet.get("reported_period_label") or "Quarterly"
+    latest["period_date"] = packet.get("structured_values_period_end_date") or packet.get("period_end_date")
+    latest["source_status"] = packet.get("source_status")
+    latest["data_completeness_score"] = packet.get("completeness_score")
+    if "capex" in latest and "capital_expenditures" not in latest:
+        latest["capital_expenditures"] = latest.get("capex")
+    return latest
 
 
 def valuation_label(signal: dict) -> str:
@@ -568,6 +595,11 @@ def build_company_header_view_model(
         "company_name": company_identity.get("company_name") or quote_data.get("company_name") or symbol,
         "sector": company_identity.get("sector") or quote_data.get("sector") or "N/A",
         "industry": company_identity.get("industry") or quote_data.get("industry") or "N/A",
+        "logo_url": company_identity.get("logo_url") or quote_data.get("logo_url"),
+        "logo_data_uri": company_identity.get("logo_data_uri") or quote_data.get("logo_data_uri"),
+        "logo_status": company_identity.get("logo_status") or "Placeholder",
+        "logo_source": company_identity.get("logo_source") or "Initials placeholder",
+        "fallback_initials": company_identity.get("fallback_initials") or "".join(ch for ch in symbol if ch.isalnum())[:2].upper() or "PT",
         "price": quote_data.get("price"),
         "daily_move_pct": quote_data.get("daily_change_pct"),
         "daily_change_amount": quote_data.get("daily_change"),
@@ -687,6 +719,23 @@ def _pt_case_card(case: dict) -> str:
 
 def render_terminal_company_hero(view_model: dict) -> None:
     ticker = view_model.get("ticker") or "N/A"
+    initials = escape(str(view_model.get("fallback_initials") or ticker[:2] or "PT"))
+    logo_url = str(view_model.get("logo_url") or "").strip()
+    logo_data_uri = str(view_model.get("logo_data_uri") or "").strip()
+    # Match the Home / Market Monitor logo behavior, which has proven reliable in Streamlit.
+    logo_src = logo_url if logo_url.startswith("http") else logo_data_uri
+    if logo_src.startswith(("http", "data:image")):
+        logo_html = (
+            f'<div class="quote-logo pt-company-header-logo" title="{escape(str(view_model.get("logo_source") or "Company logo"))}">'
+            f'<img src="{escape(logo_src, quote=True)}" alt="{escape(str(ticker))} logo" '
+            f'onerror="this.style.display=\'none\'; this.parentNode.textContent=\'{initials}\';">'
+            "</div>"
+        )
+    else:
+        logo_html = (
+            f'<div class="quote-logo pt-company-header-logo pt-logo-placeholder" '
+            f'title="Logo unavailable: {escape(str(view_model.get("logo_status") or "Placeholder"))}">{initials}</div>'
+        )
     score = to_float(view_model.get("composite_score"))
     score_text = f"{score:.1f}" if score is not None else "N/A"
     score_caption = f"Composite: {score:.1f} / 100" if score is not None else "Composite: N/A"
@@ -714,7 +763,10 @@ def render_terminal_company_hero(view_model: dict) -> None:
     st.markdown(
         f"""
         <div class="pt-hero-card" style="background:linear-gradient(135deg,{BRAND_COLORS["card"]},#0B141A);border:1px solid {BRAND_COLORS["border"]};border-radius:16px;padding:1.1rem 1.15rem;box-shadow:0 18px 34px rgba(0,0,0,0.24);">
-          <div class="pt-hero-grid" style="display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,0.82fr);gap:1.25rem;align-items:stretch;">
+          <div class="pt-hero-grid" style="display:grid;grid-template-columns:84px minmax(0,1.45fr) minmax(280px,0.82fr);gap:1.25rem;align-items:start;">
+            <div class="pt-logo-column" style="display:flex;align-items:flex-start;justify-content:center;padding-top:0.15rem;">
+              {logo_html}
+            </div>
             <div class="pt-company-left" style="min-width:0;">
               <div style="display:flex;align-items:baseline;gap:0.85rem;flex-wrap:wrap;">
                 <div class="pt-ticker" style="color:{BRAND_COLORS["text"]};font-size:clamp(2.8rem,5vw,4.9rem);line-height:0.92;font-weight:980;letter-spacing:0.02em;">{escape(str(ticker))}</div>
@@ -1089,6 +1141,7 @@ def render_financial_reconciliation(financials: dict) -> None:
                         "Status": row.get("Status"),
                         "Provider": row.get("Provider"),
                         "Source": row.get("Source"),
+                        "Concept/Fallback Used": row.get("SEC Concept Used") or row.get("Fallback Source") or row.get("Fallback Used"),
                         "SEC Concept Used": row.get("SEC Concept Used"),
                         "Component Concepts Used": row.get("Component Concepts Used"),
                         "Calculation Formula": row.get("Calculation Formula"),
@@ -1246,7 +1299,7 @@ def _fmt_completeness(value) -> str:
 def _compact_bar_chart(title: str, labels: list[str], values: list[float | None], *, currency: bool = True, height: int = 220, orientation: str = "h") -> None:
     rows = [(label, to_float(value)) for label, value in zip(labels, values) if to_float(value) is not None]
     if not rows:
-        empty_state(f"{title} unavailable.")
+        _chart_placeholder(f"{title} unavailable.", height=height)
         return
     labels_clean = [row[0] for row in rows]
     values_clean = [row[1] for row in rows]
@@ -1273,15 +1326,46 @@ def _compact_bar_chart(title: str, labels: list[str], values: list[float | None]
             cliponaxis=False,
             hovertemplate="%{y}: %{text}<extra></extra>",
         )
-    fig = go.Figure(
-        bar
+    fig = go.Figure(bar)
+    fig = apply_terminal_chart_layout(
+        fig,
+        height=height,
+        margin={"l": 86 if orientation == "h" else 22, "r": 20, "t": 18, "b": 46 if orientation == "v" else 28},
     )
-    fig = plotly_layout(fig, height=height)
-    fig.update_layout(showlegend=False, margin={"l": 86 if orientation == "h" else 22, "r": 20, "t": 18, "b": 46 if orientation == "v" else 28})
     fig.update_xaxes(zeroline=True, zerolinecolor=BRAND_COLORS["muted"])
     if orientation == "h":
         fig.update_yaxes(autorange="reversed")
     render_terminal_chart(fig)
+
+
+def _chart_placeholder(message: str, *, height: int = 300) -> None:
+    st.markdown(
+        f"""
+        <div class="pt-chart-placeholder" style="height:{int(height)}px;border:1px dashed {BRAND_COLORS["border"]};
+          border-radius:12px;background:{BRAND_COLORS["card_alt"]};display:flex;align-items:center;
+          justify-content:center;color:{BRAND_COLORS["muted"]};font-size:0.88rem;font-weight:800;text-align:center;
+          padding:0.8rem;">
+          {escape(message or "Insufficient data for chart.")}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _statement_metric_card(label: str, value: str, caption: str = "", tone: str = "neutral") -> str:
+    tone_class = {"good": "rt-good", "bad": "rt-bad", "warn": "rt-warn"}.get(tone, "rt-neutral")
+    return (
+        '<div class="rt-card small pt-statement-metric-card">'
+        f'<div class="rt-label">{escape(str(label))}</div>'
+        f'<div class="rt-value {tone_class}">{escape(str(value))}</div>'
+        f'<div class="rt-caption">{escape(str(caption))}</div>'
+        "</div>"
+    )
+
+
+def _statement_metric_stack(cards: list[tuple[str, str, str, str]]) -> None:
+    html = "".join(_statement_metric_card(label, value, caption, tone) for label, value, caption, tone in cards)
+    st.markdown(f'<div class="pt-statement-metrics">{html}</div>', unsafe_allow_html=True)
 
 
 def _statement_header_strip(visual: dict) -> None:
@@ -1336,6 +1420,8 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
     cash_flow = visual.get("cash_flow", {})
     margins = visual.get("margins", {})
     health = visual.get("health_summary", {})
+    chart_height = 300
+    reported_period = visual.get("reported_period") or "N/A"
     _statement_header_strip(visual)
     if visual.get("missing_fields") or str(visual.get("source_status")) in {"Partial", "Stale structured values"}:
         note = visual.get("data_quality_note") or "Some values are unavailable or sourced from a fallback provider. Review detailed table."
@@ -1343,27 +1429,66 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
     _analyst_takeaway_box(visual.get("analyst_takeaway", ""))
     if visual.get("reconciliation", {}).get("has_mismatch"):
         st.warning("Financial statement values are partially sourced or period-mismatched. Review detailed table before relying on this view.")
-    col_income, col_balance, col_cash = st.columns(3)
-    with col_income:
+    metric_col_income, metric_col_balance, metric_col_cash = st.columns(3)
+    with metric_col_income:
         st.markdown("#### Income Statement")
-        render_metric_grid(
+        _statement_metric_stack(
             [
                 ("Revenue", fmt_currency(income.get("revenue"), 1), "Top line", "neutral"),
-                ("Gross Profit", fmt_currency(income.get("gross_profit"), 1), "After cost of revenue", _statement_tone(income.get("gross_profit"))),
+                ("Gross Profit", fmt_currency(income.get("gross_profit"), 1), "Gross profit", _statement_tone(income.get("gross_profit"))),
                 ("Operating Income / Loss", fmt_currency(income.get("operating_income"), 1), "Operating result", _statement_tone(income.get("operating_income"))),
                 ("Net Income / Loss", fmt_currency(income.get("net_income"), 1), "Bottom line", _statement_tone(income.get("net_income"))),
-                ("EPS", fmt_eps(income.get("eps")), "Per diluted share where available", _statement_tone(income.get("eps"))),
-            ],
-            columns=1,
-            small=True,
+                ("EPS", fmt_eps(income.get("eps")), "Diluted EPS", _statement_tone(income.get("eps"))),
+                ("Statement Period", str(reported_period), "Income anchor", "neutral"),
+            ]
         )
+    with metric_col_balance:
+        st.markdown("#### Balance Sheet")
+        net_cash = balance.get("net_cash_or_debt")
+        _statement_metric_stack(
+            [
+                ("Cash & Equivalents", fmt_currency(balance.get("cash"), 1), "Cash balance", "neutral"),
+                ("Total Debt", fmt_currency(balance.get("total_debt"), 1), "Debt balance", "warn" if balance.get("total_debt") is None else "neutral"),
+                ("Net Cash / Debt", fmt_currency(net_cash, 1), "Cash less debt", _statement_tone(net_cash)),
+                ("Total Assets", fmt_currency(balance.get("total_assets"), 1), "Assets", "neutral"),
+                ("Shareholders' Equity", fmt_currency(balance.get("shareholders_equity"), 1), "Book equity", _statement_tone(balance.get("shareholders_equity"))),
+                ("Liquidity Label", health.get("liquidity_status", "N/A"), _runway_text(cash_flow), _status_tone(health.get("liquidity_status", ""))),
+            ]
+        )
+    with metric_col_cash:
+        st.markdown("#### Cash Flow")
+        _statement_metric_stack(
+            [
+                ("Operating Cash Flow", fmt_currency(cash_flow.get("operating_cash_flow"), 1), "OCF", _statement_tone(cash_flow.get("operating_cash_flow"))),
+                ("Capital Expenditures", fmt_currency(cash_flow.get("capex"), 1), "Cash outflow", _statement_tone(cash_flow.get("capex"))),
+                ("Free Cash Flow", fmt_currency(cash_flow.get("free_cash_flow"), 1), "OCF less capex outflow", _statement_tone(cash_flow.get("free_cash_flow"))),
+                ("Cash Runway", _runway_text(cash_flow), "Runway", _status_tone(health.get("liquidity_status", ""))),
+                ("FCF Margin", _margin_text(margins.get("fcf_margin", {})), (margins.get("fcf_margin", {}) or {}).get("status", ""), "neutral"),
+                ("Statement Period", str(reported_period), "Cash flow anchor", "neutral"),
+            ]
+        )
+
+    chart_col_income, chart_col_balance, chart_col_cash = st.columns(3)
+    with chart_col_income:
         _compact_bar_chart(
             "Revenue To Net Income",
             ["Revenue", "Gross Profit", "Operating Income", "Net Income"],
             [income.get("revenue"), income.get("gross_profit"), income.get("operating_income"), income.get("net_income")],
             orientation="v",
-            height=250,
+            height=chart_height,
         )
+    with chart_col_balance:
+        if balance.get("cash") is not None and balance.get("total_debt") is not None:
+            _compact_bar_chart("Cash vs Debt", ["Cash", "Total Debt"], [balance.get("cash"), balance.get("total_debt")], height=chart_height)
+        elif balance.get("cash") is not None:
+            _chart_placeholder("Debt data unavailable. Cash is shown above, but net cash/debt is not calculated.", height=chart_height)
+        else:
+            _chart_placeholder("Insufficient balance sheet data for chart.", height=chart_height)
+    with chart_col_cash:
+        _compact_bar_chart("OCF To FCF Bridge", ["Operating CF", "Capex Outflow", "Free CF"], [cash_flow.get("operating_cash_flow"), cash_flow.get("capex"), cash_flow.get("free_cash_flow")], height=chart_height)
+
+    footer_col_income, footer_col_balance, footer_col_cash = st.columns(3)
+    with footer_col_income:
         render_metric_grid(
             [
                 ("Gross Margin", _margin_text(margins.get("gross_margin", {})), (margins.get("gross_margin", {}) or {}).get("status", ""), "neutral"),
@@ -1373,46 +1498,9 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
             columns=3,
             small=True,
         )
-    with col_balance:
-        st.markdown("#### Balance Sheet")
-        net_cash = balance.get("net_cash_or_debt")
-        render_metric_grid(
-            [
-                ("Cash & Equivalents", fmt_currency(balance.get("cash"), 1), "Latest matching balance sheet", "neutral"),
-                ("Total Debt", fmt_currency(balance.get("total_debt"), 1), "Debt data unavailable if N/A", "warn" if balance.get("total_debt") is None else "neutral"),
-                ("Net Cash / Debt", fmt_currency(net_cash, 1), "Cash less debt", _statement_tone(net_cash)),
-                ("Total Assets", fmt_currency(balance.get("total_assets"), 1), "Latest matching balance sheet", "neutral"),
-                ("Shareholders' Equity", fmt_currency(balance.get("shareholders_equity"), 1), "Book equity", _statement_tone(balance.get("shareholders_equity"))),
-            ],
-            columns=1,
-            small=True,
-        )
-        render_metric_grid(
-            [
-                ("Liquidity Label", health.get("liquidity_status", "N/A"), _runway_text(cash_flow), _status_tone(health.get("liquidity_status", ""))),
-            ],
-            columns=1,
-            small=True,
-        )
-        if balance.get("cash") is not None and balance.get("total_debt") is not None:
-            _compact_bar_chart("Cash vs Debt", ["Cash", "Total Debt"], [balance.get("cash"), balance.get("total_debt")], height=190)
-        elif balance.get("cash") is not None:
-            st.caption("Debt data unavailable. Cash is shown, but net cash/debt is not calculated.")
-        else:
-            empty_state("Insufficient balance sheet data.")
-    with col_cash:
-        st.markdown("#### Cash Flow")
-        render_metric_grid(
-            [
-                ("Operating Cash Flow", fmt_currency(cash_flow.get("operating_cash_flow"), 1), "Cash from operations", _statement_tone(cash_flow.get("operating_cash_flow"))),
-                ("Capital Expenditures", fmt_currency(cash_flow.get("capex"), 1), "Normalized as cash outflow", _statement_tone(cash_flow.get("capex"))),
-                ("Free Cash Flow", fmt_currency(cash_flow.get("free_cash_flow"), 1), "OCF less capex outflow", _statement_tone(cash_flow.get("free_cash_flow"))),
-                ("Cash Runway", _runway_text(cash_flow), "Approximation from latest quarterly FCF", _status_tone(health.get("liquidity_status", ""))),
-            ],
-            columns=1,
-            small=True,
-        )
-        _compact_bar_chart("OCF To FCF Bridge", ["Operating CF", "Capex Outflow", "Free CF"], [cash_flow.get("operating_cash_flow"), cash_flow.get("capex"), cash_flow.get("free_cash_flow")], height=210)
+    with footer_col_balance:
+        st.caption("Balance sheet chart uses cash and debt from the latest matching structured period.")
+    with footer_col_cash:
         st.caption("FCF calculated as operating cash flow less capex.")
     st.markdown("#### 3-Statement Health Summary")
     render_metric_grid(
@@ -1482,7 +1570,12 @@ def company_page(ticker: str) -> None:
     identity = get_company_identity(ticker)
     header_view_model = build_company_header_view_model(ticker, quote, identity, financials, signal, {"valuation_label": valuation_label(signal)}, signal.get("technicals", {}))
     render_company_hero(header_view_model)
-    source_line(financials.get("source_metadata", {}).get("financials", "Yahoo Finance/yfinance"), financials.get("last_updated"), financials.get("status"))
+    packet = financials.get("financial_data_packet") or {}
+    source_line(
+        packet.get("source_used") or financials.get("source_metadata", {}).get("financials", "Yahoo Finance/yfinance"),
+        financials.get("last_updated"),
+        packet.get("source_status") or financials.get("status"),
+    )
     section("Signal Center", "Transparent research score with factor breakdown, confidence, and missing-data warnings.")
     render_signal_summary(ticker, signal)
     section("Technical Entry Setup")
@@ -1508,7 +1601,7 @@ def company_page(ticker: str) -> None:
     section("Financial Summary")
     view = st.radio("Financial statement view", ["Quarterly", "Annual"], index=0, horizontal=True, key="company_financial_view")
     history = view_history(financials, view)
-    latest = latest_row(financials, view)
+    latest = canonical_quarterly_latest(financials) if view == "Quarterly" else latest_row(financials, view)
     period = latest.get("period", view)
     risk_label, risk_tone = balance_sheet_risk_label(latest)
     render_metric_grid(
@@ -1853,7 +1946,16 @@ def data_health_page(ticker: str) -> None:
     health = pd.DataFrame(
         [
             {"Source": "Yahoo Finance/yfinance quote", "Status": quote.get("status"), "Last Refresh": quote.get("last_updated"), "Cache TTL": "5 minutes", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": quote.get("error", "")},
-            {"Source": "Company identity / logo", "Status": identity.get("logo_status"), "Last Refresh": identity.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": identity.get("error", "")},
+            {
+                "Source": "Company identity / logo",
+                "Status": identity.get("logo_status"),
+                "Last Refresh": identity.get("last_updated"),
+                "Cache TTL": "24 hours",
+                "Filing Period": "",
+                "Structured Period": "",
+                "Missing Fields": "" if identity.get("logo_url") else "Logo URL unavailable; initials placeholder used",
+                "Error": identity.get("error") or f"Logo source: {identity.get('logo_source', 'N/A')}",
+            },
             {"Source": "Yahoo Finance/yfinance financials", "Status": financials.get("status"), "Last Refresh": financials.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(financials.get("missing_fields", [])), "Error": financials.get("error", "")},
             {"Source": "Latest quarterly release", "Status": latest_release.get("source_status"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("filing_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("data_quality_note", "")},
             {"Source": "Latest cards source", "Status": latest_release.get("source_status"), "Last Refresh": latest_release.get("last_updated"), "Cache TTL": "24 hours", "Filing Period": latest_release.get("reported_period_label", ""), "Structured Period": latest_release.get("structured_values_period_label", ""), "Missing Fields": ", ".join(latest_release.get("missing_fields", [])), "Error": latest_release.get("compact_source_status_note", "")},

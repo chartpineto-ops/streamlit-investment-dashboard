@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from urllib.parse import urlparse
 
 import requests
@@ -36,15 +37,21 @@ def _fallback_initials(ticker: str, company_name: str | None) -> str:
     return "".join(ch for ch in ticker if ch.isalnum())[:2].upper() or "PT"
 
 
-def _logo_looks_valid(url: str | None) -> bool:
+def _fetch_logo_data_uri(url: str | None) -> str | None:
     if not url or not str(url).startswith("https://"):
-        return False
+        return None
     try:
         response = requests.get(url, headers=LOGO_HEADERS, timeout=4, stream=True)
         content_type = response.headers.get("content-type", "")
-        return response.status_code < 400 and "image" in content_type.lower()
+        if response.status_code >= 400 or "image" not in content_type.lower():
+            return None
+        payload = response.content
+        if not payload:
+            return None
+        encoded = base64.b64encode(payload).decode("ascii")
+        return f"data:{content_type.split(';')[0]};base64,{encoded}"
     except Exception:
-        return False
+        return None
 
 
 def _candidate_logo_urls(info: dict, domain: str | None) -> list[tuple[str, str]]:
@@ -54,8 +61,9 @@ def _candidate_logo_urls(info: dict, domain: str | None) -> list[tuple[str, str]
         if value.startswith("https://"):
             candidates.append((value, "Yahoo Finance logo URL"))
     if domain:
-        candidates.append((f"https://logo.clearbit.com/{domain}", "Clearbit domain logo"))
+        candidates.append((f"https://icons.duckduckgo.com/ip3/{domain}.ico", "DuckDuckGo favicon fallback"))
         candidates.append((f"https://www.google.com/s2/favicons?sz=128&domain={domain}", "Google favicon fallback"))
+        candidates.append((f"https://logo.clearbit.com/{domain}", "Clearbit domain logo"))
     return candidates
 
 
@@ -75,6 +83,7 @@ def get_company_identity(ticker: str) -> dict:
             "website": None,
             "domain": None,
             "logo_url": None,
+            "logo_data_uri": None,
             "logo_status": "Invalid ticker",
             "logo_source": "N/A",
             "fallback_initials": "PT",
@@ -87,14 +96,22 @@ def get_company_identity(ticker: str) -> dict:
         website = info.get("website")
         domain = _domain_from_website(website)
         logo_url = None
+        logo_data_uri = None
         logo_source = "Initials placeholder"
         logo_status = "Missing website" if not domain else "Placeholder"
+        fallback_candidate = None
         for candidate, source in _candidate_logo_urls(info, domain):
-            if _logo_looks_valid(candidate):
+            fallback_candidate = fallback_candidate or (candidate, source)
+            data_uri = _fetch_logo_data_uri(candidate)
+            if data_uri:
                 logo_url = candidate
+                logo_data_uri = data_uri
                 logo_source = source
                 logo_status = "OK"
                 break
+        if logo_url is None and fallback_candidate:
+            logo_url, logo_source = fallback_candidate
+            logo_status = "OK"
         return {
             "ticker": symbol,
             "company_name": company_name,
@@ -106,6 +123,7 @@ def get_company_identity(ticker: str) -> dict:
             "website": website,
             "domain": domain,
             "logo_url": logo_url,
+            "logo_data_uri": logo_data_uri,
             "logo_status": logo_status,
             "logo_source": logo_source,
             "fallback_initials": _fallback_initials(symbol, company_name),
@@ -123,6 +141,7 @@ def get_company_identity(ticker: str) -> dict:
             "website": None,
             "domain": None,
             "logo_url": None,
+            "logo_data_uri": None,
             "logo_status": "Source error",
             "logo_source": "N/A",
             "fallback_initials": _fallback_initials(symbol, symbol),
