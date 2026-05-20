@@ -855,7 +855,7 @@ def _pt_chip(chip: dict, css_class: str = "pt-chip") -> str:
     return (
         f'<span class="{escape(css_class)}" style="display:inline-flex;align-items:center;gap:0.1rem;'
         f'border:1px solid {tone["border"]};background:{tone["bg"]};color:{tone["color"]};'
-        f'border-radius:999px;padding:0.28rem 0.64rem;font-size:0.78rem;font-weight:900;'
+        f'border-radius:999px;padding:0.3rem 0.68rem;font-size:0.84rem;font-weight:900;'
         f'line-height:1.1;text-transform:uppercase;white-space:nowrap;">'
         f'{escape(str(chip.get("label") or "N/A"))}{value_html}</span>'
     )
@@ -866,10 +866,10 @@ def _pt_stat_card(label: str, value: str, tone: str = "neutral", note: str = "")
     note_html = f'<div class="pt-stat-note">{escape(str(note))}</div>' if not _is_unavailable_text(note) else ""
     return (
         f'<div class="pt-hero-meta" style="border:1px solid {BRAND_COLORS["border"]};'
-        f'border-radius:10px;background:{BRAND_COLORS["card_alt"]};padding:0.62rem 0.68rem;min-width:0;">'
-        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.73rem;font-weight:850;'
+        f'border-radius:10px;background:{BRAND_COLORS["card_alt"]};padding:0.68rem 0.74rem;min-width:0;">'
+        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.78rem;font-weight:850;'
         f'letter-spacing:0.04em;text-transform:uppercase;margin-bottom:0.18rem;">{escape(label)}</div>'
-        f'<div style="color:{tone_style["color"]};font-size:1.08rem;font-weight:930;'
+        f'<div style="color:{tone_style["color"]};font-size:1.16rem;font-weight:930;'
         f'line-height:1.15;overflow-wrap:anywhere;">{escape(str(value or "N/A"))}</div>'
         f"{note_html}"
         "</div>"
@@ -881,9 +881,9 @@ def _pt_signal_badge(label: str, value: str, tone: str = "neutral") -> str:
     return (
         f'<div class="pt-signal-badge" style="border:1px solid {tone_style["border"]};'
         f'background:{tone_style["bg"]};border-radius:12px;padding:0.54rem 0.65rem;margin-top:0.5rem;">'
-        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.66rem;font-weight:850;'
+        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.74rem;font-weight:850;'
         f'text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.16rem;">{escape(label)}</div>'
-        f'<div style="color:{tone_style["color"]};font-size:0.98rem;font-weight:940;'
+        f'<div style="color:{tone_style["color"]};font-size:1.06rem;font-weight:940;'
         f'line-height:1.15;overflow-wrap:anywhere;">{escape(str(value or "N/A"))}</div>'
         "</div>"
     )
@@ -895,11 +895,11 @@ def _pt_case_card(case: dict) -> str:
     return (
         f'<div class="pt-case-card pt-{escape(str(case.get("tone") or "base"))}" style="border:1px solid {tone["border"]};'
         f'background:{BRAND_COLORS["card_alt"]};border-radius:14px;padding:0.86rem 0.9rem;min-width:0;">'
-        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.72rem;font-weight:920;'
+        f'<div style="color:{BRAND_COLORS["muted"]};font-size:0.78rem;font-weight:920;'
         f'letter-spacing:0.05em;text-transform:uppercase;">{escape(str(case.get("title") or "Scenario"))}</div>'
-        f'<div style="color:{tone["color"]};font-size:1rem;font-weight:950;line-height:1.18;'
+        f'<div style="color:{tone["color"]};font-size:1.08rem;font-weight:950;line-height:1.18;'
         f'margin-top:0.28rem;">{escape(str(case.get("label") or "N/A"))}</div>'
-        f'<ul style="color:{BRAND_COLORS["text_secondary"]};font-size:0.82rem;line-height:1.35;'
+        f'<ul style="color:{BRAND_COLORS["text_secondary"]};font-size:0.9rem;line-height:1.35;'
         f'margin:0.58rem 0 0 1rem;padding:0;">{points}</ul>'
         "</div>"
     )
@@ -910,13 +910,16 @@ def _company_logo_html(view_model: dict, size: int = 68) -> str:
     initials = escape(str(view_model.get("fallback_initials") or ticker[:2] or "PT"))
     logo_url = str(view_model.get("logo_url") or "").strip()
     logo_data_uri = str(view_model.get("logo_data_uri") or "").strip()
-    logo_src = logo_url if logo_url.startswith("http") else logo_data_uri
+    # Prefer the validated embedded image first. Remote logo URLs can fail in the
+    # browser while the server-side data URI has already been checked.
+    logo_src = logo_data_uri if logo_data_uri.startswith("data:image") else logo_url
     if logo_src.startswith(("http", "data:image")):
         return (
             f'<div class="quote-logo pt-dashboard-logo pt-company-logo" style="width:{size}px;height:{size}px;min-width:{size}px;" '
             f'title="{escape(str(view_model.get("logo_source") or "Company logo"))}">'
             f'<img src="{escape(logo_src, quote=True)}" alt="{escape(ticker)} logo" '
-            f'onerror="this.style.display=\'none\'; this.parentNode.textContent=\'{initials}\';">'
+            f'loading="eager" decoding="async" referrerpolicy="no-referrer" '
+            f'onerror="this.style.display=\'none\'; this.parentNode.classList.add(\'pt-logo-placeholder\'); this.parentNode.textContent=\'{initials}\';">'
             "</div>"
         )
     return (

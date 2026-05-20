@@ -54,12 +54,17 @@ def _fetch_logo_data_uri(url: str | None) -> str | None:
         return None
 
 
-def _candidate_logo_urls(info: dict, domain: str | None) -> list[tuple[str, str]]:
+def _candidate_logo_urls(info: dict, domain: str | None, symbol: str | None = None) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
     for key in ("logo_url", "logoUrl", "logoURL"):
         value = str(info.get(key) or "").strip()
         if value.startswith("https://"):
             candidates.append((value, "Yahoo Finance logo URL"))
+    clean_symbol = clean_ticker(symbol or "")
+    if clean_symbol:
+        logo_symbol = clean_symbol.replace(".", "-")
+        candidates.append((f"https://financialmodelingprep.com/image-stock/{logo_symbol}.png", "Financial Modeling Prep public logo"))
+        candidates.append((f"https://companiesmarketcap.com/img/company-logos/128/{logo_symbol}.png", "CompaniesMarketCap public logo"))
     if domain:
         candidates.append((f"https://logo.clearbit.com/{domain}?size=256", "Clearbit domain logo"))
         candidates.append((f"https://www.google.com/s2/favicons?sz=256&domain={domain}", "Google favicon fallback"))
@@ -100,7 +105,7 @@ def get_company_identity(ticker: str) -> dict:
         logo_source = "Initials placeholder"
         logo_status = "Missing website" if not domain else "Placeholder"
         fallback_candidate = None
-        for candidate, source in _candidate_logo_urls(info, domain):
+        for candidate, source in _candidate_logo_urls(info, domain, symbol):
             fallback_candidate = fallback_candidate or (candidate, source)
             data_uri = _fetch_logo_data_uri(candidate)
             if data_uri:

@@ -113,14 +113,14 @@ h3 {
 }
 .rt-label {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.84rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .rt-value {
   color: var(--text);
-  font-size: 1.48rem;
+  font-size: 1.6rem;
   font-weight: 850;
   line-height: 1.18;
   margin-top: 0.22rem;
@@ -128,7 +128,7 @@ h3 {
 }
 .rt-caption {
   color: var(--muted);
-  font-size: 0.86rem;
+  font-size: 0.94rem;
   margin-top: 0.22rem;
   line-height: 1.25;
   overflow-wrap: anywhere;
@@ -144,7 +144,7 @@ h3 {
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0.15rem 0.48rem;
-  font-size: 0.78rem;
+  font-size: 0.84rem;
   font-weight: 850;
   text-transform: uppercase;
   color: var(--muted);
@@ -773,13 +773,13 @@ h3 {
 }
 .pt-trend-period {
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.82rem;
   font-weight: 850;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 .pt-trend-value {
-  font-size: 0.88rem;
+  font-size: 0.96rem;
   font-weight: 900;
   white-space: nowrap;
 }
@@ -856,7 +856,7 @@ h3 {
   border: 1px solid rgba(30,52,64,0.95);
   border-radius: 999px;
   padding: 0.2rem 0.58rem;
-  font-size: 0.9rem;
+  font-size: 0.98rem;
   font-weight: 940;
   background: rgba(255,255,255,0.035);
   white-space: nowrap;
@@ -876,7 +876,7 @@ h3 {
 }
 .pt-dashboard-company {
   color: var(--text);
-  font-size: 1.28rem;
+  font-size: 1.38rem;
   font-weight: 850;
   margin-top: 0.45rem;
   overflow-wrap: anywhere;
@@ -903,7 +903,7 @@ h3 {
 .pt-score-detail-row span {
   display: block;
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: 0.8rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -911,7 +911,7 @@ h3 {
 .pt-dashboard-info-row strong {
   display: block;
   color: var(--text);
-  font-size: 0.98rem;
+  font-size: 1.08rem;
   line-height: 1.25;
   margin-top: 0.2rem;
   overflow-wrap: anywhere;
@@ -929,7 +929,7 @@ h3 {
 }
 .pt-stat-note {
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.82rem;
   font-weight: 760;
   margin-top: 0.18rem;
   white-space: nowrap;
@@ -1016,7 +1016,7 @@ h3 {
 }
 .pt-score-detail-row strong {
   color: var(--text);
-  font-size: 0.98rem;
+  font-size: 1.08rem;
   text-align: right;
   white-space: nowrap;
 }
@@ -1053,7 +1053,7 @@ h3 {
   display: flex;
   justify-content: space-between;
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.88rem;
   margin-top: 0.48rem;
 }
 .pt-score-why {
@@ -1063,7 +1063,7 @@ h3 {
 }
 .pt-mini-title {
   color: var(--text);
-  font-size: 0.8rem;
+  font-size: 0.88rem;
   font-weight: 950;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1078,7 +1078,7 @@ h3 {
 }
 .pt-score-why span:first-child {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.84rem;
   font-weight: 850;
   min-width: 72px;
 }
@@ -1088,7 +1088,7 @@ h3 {
   border-radius: 999px;
   padding: 0.2rem 0.5rem;
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.82rem;
   font-weight: 800;
   background: rgba(255,255,255,0.03);
 }
@@ -1113,14 +1113,14 @@ h3 {
 .pt-executive-banner span,
 .pt-panel-title {
   color: var(--text);
-  font-size: 0.9rem;
+  font-size: 0.98rem;
   font-weight: 950;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 .pt-executive-banner strong {
   color: var(--text);
-  font-size: 1.05rem;
+  font-size: 1.14rem;
   line-height: 1.32;
   font-weight: 780;
 }
@@ -1133,7 +1133,7 @@ h3 {
 }
 .pt-current-view {
   color: var(--muted);
-  font-size: 0.95rem;
+  font-size: 1.04rem;
   margin-top: 0.25rem;
 }
 .pt-current-view strong {
@@ -1159,7 +1159,7 @@ h3 {
 }
 .pt-decision-trigger-grid span {
   color: var(--text);
-  font-size: 0.84rem;
+  font-size: 0.92rem;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1174,7 +1174,7 @@ h3 {
   margin: 0.45rem 0 0 1rem;
   padding: 0;
   color: var(--muted);
-  font-size: 0.88rem;
+  font-size: 0.96rem;
   line-height: 1.35;
 }
 .pt-lower-dashboard-grid {
@@ -1207,7 +1207,7 @@ h3 {
 }
 .pt-panel-title small {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.86rem;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: none;
@@ -1222,7 +1222,7 @@ h3 {
   color: var(--green) !important;
   background: rgba(109,187,90,0.08);
   text-decoration: none !important;
-  font-size: 0.8rem;
+  font-size: 0.88rem;
   font-weight: 900;
   padding: 0.34rem 0.58rem;
   white-space: nowrap;
@@ -1257,7 +1257,7 @@ h3 {
   align-items: center;
   justify-content: center;
   color: var(--green);
-  font-size: 0.86rem;
+  font-size: 0.94rem;
   font-weight: 920;
   flex: 0 0 auto;
   background: rgba(109,187,90,0.1);
@@ -1267,12 +1267,12 @@ h3 {
 }
 .pt-highlight-label {
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.84rem;
   font-weight: 820;
 }
 .pt-highlight-value {
   color: var(--text);
-  font-size: 1.38rem;
+  font-size: 1.52rem;
   font-weight: 900;
   line-height: 1.18;
   margin-top: 0.1rem;
@@ -1284,7 +1284,7 @@ h3 {
   display: flex;
   gap: 0.35rem;
   color: var(--muted);
-  font-size: 0.84rem;
+  font-size: 0.92rem;
   margin-top: 0.16rem;
 }
 .pt-highlight-trend strong {
@@ -1292,7 +1292,7 @@ h3 {
 }
 .pt-highlight-period {
   color: var(--muted-2);
-  font-size: 0.76rem;
+  font-size: 0.84rem;
   font-weight: 760;
   margin-top: 0.12rem;
 }
@@ -1330,11 +1330,11 @@ h3 {
 }
 .pt-snapshot-row span {
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.9rem;
 }
 .pt-snapshot-row strong {
   color: var(--text);
-  font-size: 0.84rem;
+  font-size: 0.92rem;
   text-align: right;
   overflow-wrap: anywhere;
 }
@@ -1347,7 +1347,7 @@ h3 {
   text-decoration: none !important;
   text-align: center;
   padding: 0.58rem 0.65rem;
-  font-size: 0.9rem;
+  font-size: 0.98rem;
   font-weight: 820;
   background: rgba(255,255,255,0.025);
 }
@@ -1359,14 +1359,14 @@ h3 {
   border-radius: 10px;
   color: var(--muted);
   background: rgba(255,255,255,0.02);
-  font-size: 0.86rem;
+  font-size: 0.94rem;
   line-height: 1.35;
   padding: 0.72rem;
   margin-top: 0.72rem;
 }
 .pt-health-status {
   color: var(--yellow);
-  font-size: 1.08rem;
+  font-size: 1.18rem;
   font-weight: 930;
   margin-top: 0.45rem;
 }
@@ -1376,7 +1376,7 @@ h3 {
 }
 .pt-health-note {
   color: var(--muted);
-  font-size: 0.84rem;
+  font-size: 0.92rem;
   line-height: 1.35;
   margin-top: 0.3rem;
 }
@@ -1390,14 +1390,14 @@ h3 {
 }
 .pt-health-grid span {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.82rem;
   font-weight: 820;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .pt-health-grid strong {
   color: var(--text);
-  font-size: 0.78rem;
+  font-size: 0.86rem;
   text-align: right;
   overflow-wrap: anywhere;
 }
@@ -1421,7 +1421,7 @@ h3 {
 .pt-decision-card.bull { border-color: rgba(109,187,90,0.55); }
 .pt-case-eyebrow {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.84rem;
   font-weight: 900;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1429,7 +1429,7 @@ h3 {
 }
 .pt-case-label {
   color: var(--yellow);
-  font-size: 1.05rem;
+  font-size: 1.14rem;
   font-weight: 920;
   padding: 0.25rem 0.82rem 0;
 }
@@ -1437,7 +1437,7 @@ h3 {
 .pt-decision-card.bull .pt-case-label { color: var(--green); }
 .pt-decision-card ul {
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.98rem;
   line-height: 1.35;
   min-height: 4.3rem;
   margin: 0.55rem 0.8rem 0.65rem 1.6rem;
@@ -1459,12 +1459,12 @@ h3 {
 .pt-case-footer small {
   display: block;
   color: var(--muted);
-  font-size: 0.74rem;
+  font-size: 0.8rem;
 }
 .pt-case-footer strong {
   display: block;
   color: var(--text);
-  font-size: 0.92rem;
+  font-size: 1rem;
   margin-top: 0.12rem;
 }
 .pt-dashboard-source-line {
