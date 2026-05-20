@@ -966,9 +966,9 @@ def _score_half_donut_html(score, label: str, tone: str = "neutral") -> str:
     color = _score_gauge_color(number)
     return (
         '<div class="pt-score-gauge">'
-        '<svg class="pt-half-donut" viewBox="0 0 220 150" role="img" aria-label="Composite score gauge">'
-        '<path class="pt-gauge-bg" d="M 24 118 A 86 86 0 0 1 196 118" pathLength="100" />'
-        f'<path class="pt-gauge-fill" d="M 24 118 A 86 86 0 0 1 196 118" pathLength="100" '
+        '<svg class="pt-half-donut" viewBox="0 0 260 185" role="img" aria-label="Composite score gauge">'
+        '<path class="pt-gauge-bg" d="M 30 132 A 100 100 0 0 1 230 132" pathLength="100" />'
+        f'<path class="pt-gauge-fill" d="M 30 132 A 100 100 0 0 1 230 132" pathLength="100" '
         f'style="stroke:{escape(color)};stroke-dasharray:{pct:.1f} 100;" />'
         '</svg>'
         '<div class="pt-score-gauge-center">'

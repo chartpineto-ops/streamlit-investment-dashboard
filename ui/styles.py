@@ -938,10 +938,10 @@ h3 {
 }
 .pt-score-summary-card {
   border-color: rgba(229,167,42,0.55);
-  padding: 1rem;
+  padding: 1.08rem 1.14rem;
   display: grid;
-  grid-template-columns: minmax(190px, 0.9fr) minmax(230px, 1fr);
-  gap: 1rem;
+  grid-template-columns: minmax(250px, 1fr) minmax(230px, 1fr);
+  gap: 1.14rem;
   align-items: center;
   overflow: visible;
 }
@@ -951,20 +951,25 @@ h3 {
 }
 .pt-score-gauge {
   position: relative;
-  width: min(100%, 220px);
+  width: min(100%, 282px);
+  height: 218px;
   margin: 0 auto;
   overflow: visible;
 }
 .pt-half-donut {
   display: block;
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
   width: 100%;
-  height: auto;
+  height: 185px;
   overflow: visible;
 }
 .pt-gauge-bg,
 .pt-gauge-fill {
   fill: none;
-  stroke-width: 18;
+  stroke-width: 36;
   stroke-linecap: round;
 }
 .pt-gauge-bg {
@@ -975,19 +980,23 @@ h3 {
   transition: stroke-dasharray 240ms ease;
 }
 .pt-score-gauge-center {
-  margin-top: -3.35rem;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 76px;
   text-align: center;
 }
 .pt-score-number {
   color: var(--text);
-  font-size: clamp(2.9rem, 4.4vw, 4.35rem);
+  font-size: clamp(3.8rem, 5.45vw, 5.65rem);
   line-height: 0.95;
   font-weight: 980;
 }
 .pt-score-rating {
-  font-size: 1.05rem;
-  font-weight: 950;
-  margin-top: 0.35rem;
+  font-size: clamp(1.22rem, 1.55vw, 1.48rem);
+  font-weight: 980;
+  line-height: 1.12;
+  margin-top: 0.46rem;
 }
 .pt-score-rating.good { color: var(--green); }
 .pt-score-rating.warn,
