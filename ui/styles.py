@@ -13,6 +13,7 @@ BRAND_COLORS = {
     "pine_dark": "#1F5A2E",
     "navy": "#071A3D",
     "gold": "#E5A72A",
+    "blue": "#7BC7E8",
     "text": "#EAF0F2",
     "text_secondary": "#A9B6BC",
     "muted": "#6F7E86",
@@ -38,6 +39,7 @@ TERMINAL_CSS = """
   --green: #6DBB5A;
   --red: #E57368;
   --yellow: #E5A72A;
+  --blue: #7BC7E8;
 }
 .stApp {
   background: radial-gradient(circle at top left, rgba(47, 125, 58, 0.22), transparent 28rem), radial-gradient(circle at top right, rgba(7, 26, 61, 0.44), transparent 30rem), var(--bg);
@@ -740,7 +742,7 @@ h3 {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  padding: 7px;
+  padding: 8px;
 }
 .pt-company-header-logo {
   width: 72px !important;
@@ -820,13 +822,13 @@ h3 {
   box-sizing: border-box;
 }
 .pt-company-identity-card {
-  padding: 1.22rem 1.35rem 1.14rem;
-  min-height: 330px;
+  padding: 1.16rem 1.35rem 1rem;
+  min-height: 314px;
 }
 .pt-identity-row {
   display: flex;
   align-items: center;
-  gap: 1.22rem;
+  gap: 1.08rem;
   min-width: 0;
 }
 .pt-dashboard-logo {
@@ -911,7 +913,7 @@ h3 {
   display: flex;
   flex-wrap: wrap;
   gap: 0.55rem;
-  margin-top: 1rem;
+  margin-top: 0.82rem;
 }
 .pt-dashboard-info-row {
   display: grid;
@@ -919,8 +921,8 @@ h3 {
   gap: 0.8rem;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  margin-top: 1.08rem;
-  padding: 0.84rem 0;
+  margin-top: 0.95rem;
+  padding: 0.76rem 0;
 }
 .pt-dashboard-info-row div {
   min-width: 0;
@@ -1231,6 +1233,7 @@ h3 {
 }
 .pt-financial-highlights-card {
   margin-top: 0.9rem;
+  padding: 0.95rem 1.08rem 1.05rem;
 }
 .pt-panel-title-row {
   display: flex;
@@ -1267,23 +1270,30 @@ h3 {
 .pt-financial-highlights-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0.8rem;
+  gap: 0;
   margin-top: 0.82rem;
 }
 .pt-financial-highlight {
   display: flex;
   align-items: center;
-  gap: 0.72rem;
+  gap: 0.76rem;
   min-width: 0;
-  border: 1px solid rgba(30,52,64,0.85);
-  border-radius: 12px;
-  background: rgba(11,23,29,0.58);
-  padding: 0.82rem 0.78rem;
-  min-height: 118px;
+  border-right: 1px solid rgba(30,52,64,0.86);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.9rem 1rem;
+  min-height: 124px;
+}
+.pt-financial-highlight:first-child {
+  padding-left: 0;
+}
+.pt-financial-highlight:last-child {
+  border-right: 0;
+  padding-right: 0;
 }
 .pt-highlight-icon {
-  width: 42px;
-  height: 42px;
+  width: 48px;
+  height: 48px;
   border-radius: 999px;
   border: 1px solid rgba(109,187,90,0.5);
   display: flex;
@@ -1294,6 +1304,36 @@ h3 {
   font-weight: 920;
   flex: 0 0 auto;
   background: rgba(109,187,90,0.1);
+}
+.pt-highlight-icon.pt-icon-good {
+  color: var(--green);
+  border-color: rgba(109,187,90,0.52);
+  background: rgba(109,187,90,0.12);
+}
+.pt-highlight-icon.pt-icon-bad {
+  color: var(--red);
+  border-color: rgba(229,115,104,0.52);
+  background: rgba(229,115,104,0.12);
+}
+.pt-highlight-icon.pt-icon-warn {
+  color: var(--yellow);
+  border-color: rgba(229,167,42,0.52);
+  background: rgba(229,167,42,0.12);
+}
+.pt-highlight-icon.pt-icon-info {
+  color: var(--blue);
+  border-color: rgba(123,199,232,0.52);
+  background: rgba(123,199,232,0.12);
+}
+.pt-highlight-icon.pt-icon-purple {
+  color: #B879FF;
+  border-color: rgba(184,121,255,0.52);
+  background: rgba(184,121,255,0.13);
+}
+.pt-highlight-icon.pt-icon-teal {
+  color: #3DD7C2;
+  border-color: rgba(61,215,194,0.52);
+  background: rgba(61,215,194,0.13);
 }
 .pt-highlight-copy {
   min-width: 0;
@@ -1452,19 +1492,52 @@ h3 {
 .pt-decision-card.bear { border-color: rgba(229,115,104,0.55); }
 .pt-decision-card.base { border-color: rgba(229,167,42,0.55); }
 .pt-decision-card.bull { border-color: rgba(109,187,90,0.55); }
+.pt-case-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.72rem;
+  padding: 0.78rem 0.82rem 0;
+}
+.pt-case-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 1.1rem;
+  font-weight: 950;
+  flex: 0 0 auto;
+}
+.pt-decision-card.bear .pt-case-icon {
+  color: var(--red);
+  border-color: rgba(229,115,104,0.56);
+  background: rgba(229,115,104,0.12);
+}
+.pt-decision-card.base .pt-case-icon {
+  color: var(--yellow);
+  border-color: rgba(229,167,42,0.56);
+  background: rgba(229,167,42,0.12);
+}
+.pt-decision-card.bull .pt-case-icon {
+  color: var(--green);
+  border-color: rgba(109,187,90,0.56);
+  background: rgba(109,187,90,0.12);
+}
 .pt-case-eyebrow {
   color: var(--muted);
   font-size: 0.84rem;
   font-weight: 900;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding: 0.72rem 0.82rem 0;
+  padding: 0;
 }
 .pt-case-label {
   color: var(--yellow);
   font-size: 1.14rem;
   font-weight: 920;
-  padding: 0.25rem 0.82rem 0;
+  padding: 0.24rem 0 0;
 }
 .pt-decision-card.bear .pt-case-label { color: var(--red); }
 .pt-decision-card.bull .pt-case-label { color: var(--green); }

@@ -604,12 +604,12 @@ def _header_financial_highlights(financial_packet: dict, release: dict, latest: 
     revenue_base_effect = bool(latest.get("revenue_yoy_base_effect") or release.get("revenue_yoy_base_effect") or (revenue_yoy is not None and abs(revenue_yoy) > 500))
 
     return [
-        {"label": "Revenue", "value": fmt_currency(revenue, 1), "trend": revenue_yoy, "trend_label": "YoY", "tone": "neutral", "favorable": "up", "icon": "$", "period": "Quarterly", "note": "Base-effect driven" if revenue_base_effect else ""},
-        {"label": "Gross Margin", "value": fmt_meaningful_percent(gross_margin), "trend": None, "trend_label": "YoY", "tone": tone_for_number(gross_margin), "favorable": "up", "icon": "%", "period": "Quarterly"},
-        {"label": "Net Income", "value": fmt_currency(net_income, 1), "trend": yoy_for("net_income", net_income), "trend_label": "YoY", "tone": tone_for_number(net_income), "favorable": "up", "icon": "NI", "period": "Quarterly"},
-        {"label": "Operating Cash Flow", "value": fmt_currency(operating_cash_flow, 1), "trend": yoy_for("operating_cash_flow", operating_cash_flow), "trend_label": "YoY", "tone": tone_for_number(operating_cash_flow), "favorable": "up", "icon": "OCF", "period": "Quarterly"},
-        {"label": "Free Cash Flow", "value": fmt_currency(fcf, 1), "trend": yoy_for("free_cash_flow", fcf), "trend_label": "YoY", "tone": tone_for_number(fcf), "favorable": "up", "icon": "FCF", "period": "Quarterly"},
-        {"label": "Total Debt", "value": fmt_currency(total_debt, 1), "trend": yoy_for("total_debt", total_debt), "trend_label": "YoY", "tone": "warn" if total_debt is not None and total_debt > 0 else "neutral", "favorable": "down", "icon": "D", "period": "Balance Sheet"},
+        {"label": "Revenue", "value": fmt_currency(revenue, 1), "trend": revenue_yoy, "trend_label": "YoY", "tone": "neutral", "icon_tone": "good", "favorable": "up", "icon": "$", "period": "Quarterly", "note": "Base-effect driven" if revenue_base_effect else ""},
+        {"label": "Gross Margin", "value": fmt_meaningful_percent(gross_margin), "trend": None, "trend_label": "YoY", "tone": tone_for_number(gross_margin), "icon_tone": "bad" if gross_margin is not None and gross_margin < 25 else "good", "favorable": "up", "icon": "%", "period": "Quarterly"},
+        {"label": "Net Income", "value": fmt_currency(net_income, 1), "trend": yoy_for("net_income", net_income), "trend_label": "YoY", "tone": tone_for_number(net_income), "icon_tone": "warn", "favorable": "up", "icon": "NI", "period": "Quarterly"},
+        {"label": "Operating Cash Flow", "value": fmt_currency(operating_cash_flow, 1), "trend": yoy_for("operating_cash_flow", operating_cash_flow), "trend_label": "YoY", "tone": tone_for_number(operating_cash_flow), "icon_tone": "info", "favorable": "up", "icon": "OCF", "period": "Quarterly"},
+        {"label": "Free Cash Flow", "value": fmt_currency(fcf, 1), "trend": yoy_for("free_cash_flow", fcf), "trend_label": "YoY", "tone": tone_for_number(fcf), "icon_tone": "purple", "favorable": "up", "icon": "FCF", "period": "Quarterly"},
+        {"label": "Total Debt", "value": fmt_currency(total_debt, 1), "trend": yoy_for("total_debt", total_debt), "trend_label": "YoY", "tone": "warn" if total_debt is not None and total_debt > 0 else "neutral", "icon_tone": "teal", "favorable": "down", "icon": "D", "period": "Balance Sheet"},
     ]
 
 
@@ -755,7 +755,7 @@ def build_company_header_view_model(
     industry = company_identity.get("industry") or quote_data.get("industry")
     classification_chips = []
     if not _is_unavailable_text(sector):
-        classification_chips.append(_hero_chip(str(sector), "", "neutral"))
+        classification_chips.append(_hero_chip(str(sector), "", "info"))
     classification_chips.extend(
         [
             _hero_chip(market_cap_label, "", market_cap_tone),
@@ -843,6 +843,7 @@ def _pt_tone_style(tone: str) -> dict:
         "good": {"color": BRAND_COLORS["pine_bright"], "border": "rgba(109,187,90,0.45)", "bg": "rgba(109,187,90,0.12)"},
         "warn": {"color": BRAND_COLORS["gold"], "border": "rgba(229,167,42,0.45)", "bg": "rgba(229,167,42,0.12)"},
         "bad": {"color": BRAND_COLORS["red"], "border": "rgba(229,115,104,0.45)", "bg": "rgba(229,115,104,0.12)"},
+        "info": {"color": BRAND_COLORS["blue"], "border": "rgba(123,199,232,0.45)", "bg": "rgba(123,199,232,0.12)"},
         "neutral": {"color": BRAND_COLORS["text_secondary"], "border": "rgba(30,52,64,0.95)", "bg": "rgba(123,199,232,0.08)"},
     }
     return palette.get(tone, palette["neutral"])
@@ -1003,12 +1004,13 @@ def _trend_tone_class(value, favorable_direction: str = "up") -> str:
 def _financial_highlight_html(item: dict) -> str:
     tone_class = {"good": "rt-good", "bad": "rt-bad", "warn": "rt-warn"}.get(str(item.get("tone") or ""), "")
     trend_class = _trend_tone_class(item.get("trend"), str(item.get("favorable") or "up"))
+    icon_tone = str(item.get("icon_tone") or item.get("tone") or "neutral")
     note = str(item.get("note") or "").strip()
     note_html = f'<span class="pt-highlight-note">{escape(note)}</span>' if note else ""
     period = _clean_period_label(item.get("period"))
     return (
         '<div class="pt-financial-highlight">'
-        f'<div class="pt-highlight-icon">{escape(str(item.get("icon") or ""))}</div>'
+        f'<div class="pt-highlight-icon pt-icon-{escape(icon_tone)}">{escape(str(item.get("icon") or ""))}</div>'
         '<div class="pt-highlight-copy">'
         f'<div class="pt-highlight-label">{escape(str(item.get("label") or "N/A"))}</div>'
         f'<div class="pt-highlight-value {tone_class}">{escape(str(item.get("value") or "N/A"))}</div>'
@@ -1118,10 +1120,15 @@ def _investment_decision_html(view_model: dict) -> str:
 
 def _scenario_decision_card(case: dict, footer: dict, tone: str) -> str:
     points = "".join(f"<li>{escape(str(point))}</li>" for point in (case.get("points") or [])[:4])
+    icon = {"bear": "↓", "base": "⚖", "bull": "↑"}.get(tone, "•")
     return (
         f'<div class="pt-decision-card {escape(tone)}">'
+        '<div class="pt-case-heading">'
+        f'<span class="pt-case-icon">{escape(icon)}</span>'
+        '<span>'
         f'<div class="pt-case-eyebrow">{escape(str(case.get("title") or "Case"))}</div>'
         f'<div class="pt-case-label">{escape(str(case.get("label") or "N/A"))}</div>'
+        '</span></div>'
         f'<ul>{points}</ul>'
         '<div class="pt-case-footer">'
         f'<span><small>Probability</small><strong>{escape(str(footer.get("probability") or "N/A"))}</strong></span>'
@@ -2112,14 +2119,14 @@ def company_page(ticker: str) -> None:
     st.title("Company Analysis")
     st.markdown('<div class="terminal-subtitle">Latest quote, financials, valuation, balance sheet risk, filings, options, and 3-statement snapshot.</div>', unsafe_allow_html=True)
     financials = load_latest_company_financials(ticker)
-    refresh_col, asof_col = st.columns([0.18, 0.82], vertical_alignment="center")
+    refresh_col, asof_col = st.columns([0.22, 0.78], vertical_alignment="center")
     with refresh_col:
-        if st.button("Refresh Financial Data", type="primary"):
+        if st.button("↻ Refresh Financial Data", type="primary"):
             reset_data_caches()
             st.rerun()
     with asof_col:
         st.markdown(
-            f'<div class="pt-data-asof">Data as of {escape(fmt_date(financials.get("last_updated")))}</div>',
+            f'<div class="pt-data-asof">Data as of {escape(fmt_date(financials.get("last_updated")))} <span title="Latest available refresh timestamp">ⓘ</span></div>',
             unsafe_allow_html=True,
         )
     quote = _quote_for_company_analysis(ticker, financials)
