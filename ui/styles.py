@@ -1215,7 +1215,14 @@ h3 {
   grid-template-columns: minmax(0, 3fr) minmax(280px, 1fr);
   gap: 1rem;
   margin-top: 1rem;
-  align-items: start;
+  align-items: stretch;
+}
+.pt-scenario-quick-grid > .pt-scenario-decision-card {
+  margin-top: 0;
+  height: 100%;
+}
+.pt-scenario-quick-grid .pt-quick-snapshot-card {
+  height: 100%;
 }
 .pt-financial-highlights-card,
 .pt-quick-snapshot-card,
