@@ -948,6 +948,37 @@ def _stance_gauge_html(view_model: dict) -> str:
     )
 
 
+def _score_gauge_color(score) -> str:
+    number = to_float(score)
+    if number is None:
+        return BRAND_COLORS["muted"]
+    if number < 40:
+        return BRAND_COLORS["red"]
+    if number < 65:
+        return BRAND_COLORS["gold"]
+    return BRAND_COLORS["pine_bright"]
+
+
+def _score_half_donut_html(score, label: str, tone: str = "neutral") -> str:
+    number = to_float(score)
+    pct = max(0.0, min(100.0, number if number is not None else 0.0))
+    score_text = f"{number:.1f}" if number is not None else "N/A"
+    color = _score_gauge_color(number)
+    return (
+        '<div class="pt-score-gauge">'
+        '<svg class="pt-half-donut" viewBox="0 0 220 150" role="img" aria-label="Composite score gauge">'
+        '<path class="pt-gauge-bg" d="M 24 118 A 86 86 0 0 1 196 118" pathLength="100" />'
+        f'<path class="pt-gauge-fill" d="M 24 118 A 86 86 0 0 1 196 118" pathLength="100" '
+        f'style="stroke:{escape(color)};stroke-dasharray:{pct:.1f} 100;" />'
+        '</svg>'
+        '<div class="pt-score-gauge-center">'
+        f'<div class="pt-score-number">{escape(score_text)}</div>'
+        f'<div class="pt-score-rating {escape(tone)}">{escape(str(label or "N/A"))}</div>'
+        '</div>'
+        '</div>'
+    )
+
+
 def _score_detail_row(label: str, value: str, tone: str = "neutral") -> str:
     tone_class = {"good": "rt-good", "bad": "rt-bad", "warn": "rt-warn"}.get(tone, "")
     return f'<div class="pt-score-detail-row"><span>{escape(label)}</span><strong class="{tone_class}">{escape(value)}</strong></div>'
@@ -1138,7 +1169,7 @@ def render_terminal_company_hero(view_model: dict) -> None:
           <div class="pt-dashboard-top-grid">
             <div class="pt-company-identity-card">
               <div class="pt-identity-row">
-                {_company_logo_html(view_model, 68)}
+                {_company_logo_html(view_model, 84)}
                 <div class="pt-identity-main">
                   <div class="pt-ticker-line">
                     <span class="pt-dashboard-ticker">{escape(ticker)}</span>
@@ -1157,9 +1188,7 @@ def render_terminal_company_hero(view_model: dict) -> None:
             </div>
             <div class="pt-score-summary-card">
               <div class="pt-score-left">
-                <div class="pt-score-arc"></div>
-                <div class="pt-score-number">{escape(score_text)}</div>
-                <div class="pt-score-rating {escape(score_tone)}">{escape(str(view_model.get("overall_research_signal") or "N/A"))}</div>
+                {_score_half_donut_html(score, str(view_model.get("overall_research_signal") or "N/A"), score_tone)}
               </div>
               <div class="pt-score-details">{score_detail}</div>
               {_stance_gauge_html(view_model)}
@@ -1170,16 +1199,14 @@ def render_terminal_company_hero(view_model: dict) -> None:
             <span>Executive Summary</span>
             <strong>{escape(str(view_model.get("executive_summary") or "Insufficient data to generate a reliable summary."))}</strong>
           </div>
-          <div class="pt-lower-dashboard-grid">
-            <div>
-              <div class="pt-financial-highlights-card">
-                {_financial_highlights_header_html()}
-                <div class="pt-financial-highlights-grid">{highlights}</div>
-              </div>
-              <div class="pt-scenario-decision-card">
-                <div class="pt-panel-title">Research Scenario Snapshot</div>
-                <div class="pt-scenario-decision-grid">{bear}{base}{bull}</div>
-              </div>
+          <div class="pt-financial-highlights-card">
+            {_financial_highlights_header_html()}
+            <div class="pt-financial-highlights-grid">{highlights}</div>
+          </div>
+          <div class="pt-scenario-quick-grid">
+            <div class="pt-scenario-decision-card">
+              <div class="pt-panel-title">Research Scenario Snapshot</div>
+              <div class="pt-scenario-decision-grid">{bear}{base}{bull}</div>
             </div>
             <div>{right_panel}</div>
           </div>

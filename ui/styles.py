@@ -797,8 +797,8 @@ h3 {
 }
 .pt-dashboard-top-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(360px, 0.95fr);
-  gap: 0.9rem;
+  grid-template-columns: minmax(0, 1.5fr) minmax(380px, 1fr);
+  gap: 1rem;
   align-items: stretch;
 }
 .pt-company-identity-card,
@@ -814,17 +814,27 @@ h3 {
   box-sizing: border-box;
 }
 .pt-company-identity-card {
-  padding: 1rem 1.1rem 0.92rem;
+  padding: 1.22rem 1.35rem 1.14rem;
+  min-height: 330px;
 }
 .pt-identity-row {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 1.22rem;
   min-width: 0;
 }
 .pt-dashboard-logo {
-  border-radius: 14px !important;
+  border-radius: 18px !important;
   box-shadow: 0 10px 24px rgba(0,0,0,0.28);
+  background: rgba(234,240,242,0.96) !important;
+  border-color: rgba(169,182,188,0.72) !important;
+}
+.pt-dashboard-logo img,
+.pt-company-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: auto;
 }
 .pt-identity-main {
   min-width: 0;
@@ -832,12 +842,12 @@ h3 {
 .pt-ticker-line {
   display: flex;
   align-items: center;
-  gap: 0.8rem;
+  gap: 0.95rem;
   flex-wrap: wrap;
 }
 .pt-dashboard-ticker {
   color: var(--text);
-  font-size: clamp(2.6rem, 4.6vw, 4.2rem);
+  font-size: clamp(3.1rem, 5.2vw, 5.05rem);
   font-weight: 980;
   line-height: 0.9;
   letter-spacing: 0.01em;
@@ -866,16 +876,16 @@ h3 {
 }
 .pt-dashboard-company {
   color: var(--text);
-  font-size: 1.05rem;
+  font-size: 1.18rem;
   font-weight: 850;
-  margin-top: 0.34rem;
+  margin-top: 0.45rem;
   overflow-wrap: anywhere;
 }
 .pt-dashboard-chip-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
-  margin-top: 0.85rem;
+  gap: 0.55rem;
+  margin-top: 1rem;
 }
 .pt-dashboard-info-row {
   display: grid;
@@ -883,8 +893,8 @@ h3 {
   gap: 0.8rem;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  margin-top: 0.95rem;
-  padding: 0.72rem 0;
+  margin-top: 1.08rem;
+  padding: 0.84rem 0;
 }
 .pt-dashboard-info-row div {
   min-width: 0;
@@ -914,8 +924,8 @@ h3 {
 .pt-dashboard-stat-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.48rem;
-  margin-top: 0.72rem;
+  gap: 0.58rem;
+  margin-top: 0.86rem;
 }
 .pt-stat-note {
   color: var(--muted);
@@ -930,36 +940,47 @@ h3 {
   border-color: rgba(229,167,42,0.55);
   padding: 1rem;
   display: grid;
-  grid-template-columns: minmax(150px, 0.8fr) minmax(220px, 1fr);
-  gap: 0.9rem;
+  grid-template-columns: minmax(190px, 0.9fr) minmax(230px, 1fr);
+  gap: 1rem;
   align-items: center;
+  overflow: visible;
 }
 .pt-score-left {
   text-align: center;
   min-width: 0;
 }
-.pt-score-arc {
-  width: 132px;
-  height: 66px;
-  margin: 0 auto -0.28rem;
-  border: 15px solid rgba(30,52,64,0.9);
-  border-bottom: 0;
-  border-radius: 132px 132px 0 0;
+.pt-score-gauge {
   position: relative;
-  overflow: hidden;
+  width: min(100%, 220px);
+  margin: 0 auto;
+  overflow: visible;
 }
-.pt-score-arc::before {
-  content: "";
-  position: absolute;
-  inset: -15px;
-  border: 15px solid var(--yellow);
-  border-right-color: transparent;
-  border-bottom: 0;
-  border-radius: 132px 132px 0 0;
+.pt-half-donut {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.pt-gauge-bg,
+.pt-gauge-fill {
+  fill: none;
+  stroke-width: 18;
+  stroke-linecap: round;
+}
+.pt-gauge-bg {
+  stroke: rgba(30,52,64,0.92);
+}
+.pt-gauge-fill {
+  stroke-dashoffset: 0;
+  transition: stroke-dasharray 240ms ease;
+}
+.pt-score-gauge-center {
+  margin-top: -3.35rem;
+  text-align: center;
 }
 .pt-score-number {
   color: var(--text);
-  font-size: clamp(2.4rem, 4vw, 3.9rem);
+  font-size: clamp(2.9rem, 4.4vw, 4.35rem);
   line-height: 0.95;
   font-weight: 980;
 }
@@ -1154,10 +1175,20 @@ h3 {
   margin-top: 0.72rem;
   align-items: stretch;
 }
+.pt-scenario-quick-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(280px, 1fr);
+  gap: 1rem;
+  margin-top: 1rem;
+  align-items: start;
+}
 .pt-financial-highlights-card,
 .pt-quick-snapshot-card,
 .pt-scenario-decision-card {
-  padding: 0.86rem 0.95rem;
+  padding: 1rem 1.08rem;
+}
+.pt-financial-highlights-card {
+  margin-top: 0.9rem;
 }
 .pt-panel-title-row {
   display: flex;
@@ -1194,30 +1225,30 @@ h3 {
 .pt-financial-highlights-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0.6rem;
-  margin-top: 0.68rem;
+  gap: 0.8rem;
+  margin-top: 0.82rem;
 }
 .pt-financial-highlight {
   display: flex;
   align-items: center;
-  gap: 0.56rem;
+  gap: 0.72rem;
   min-width: 0;
-  border-right: 1px solid var(--border);
-  padding-right: 0.6rem;
-}
-.pt-financial-highlight:last-child {
-  border-right: 0;
+  border: 1px solid rgba(30,52,64,0.85);
+  border-radius: 12px;
+  background: rgba(11,23,29,0.58);
+  padding: 0.82rem 0.78rem;
+  min-height: 118px;
 }
 .pt-highlight-icon {
-  width: 34px;
-  height: 34px;
+  width: 42px;
+  height: 42px;
   border-radius: 999px;
   border: 1px solid rgba(109,187,90,0.5);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--green);
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 920;
   flex: 0 0 auto;
   background: rgba(109,187,90,0.1);
@@ -1232,7 +1263,7 @@ h3 {
 }
 .pt-highlight-value {
   color: var(--text);
-  font-size: 1.02rem;
+  font-size: 1.26rem;
   font-weight: 900;
   line-height: 1.18;
   margin-top: 0.1rem;
@@ -1244,7 +1275,7 @@ h3 {
   display: flex;
   gap: 0.35rem;
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.76rem;
   margin-top: 0.16rem;
 }
 .pt-highlight-trend strong {
@@ -1252,7 +1283,7 @@ h3 {
 }
 .pt-highlight-period {
   color: var(--muted-2);
-  font-size: 0.66rem;
+  font-size: 0.69rem;
   font-weight: 760;
   margin-top: 0.12rem;
 }
@@ -1483,16 +1514,16 @@ h3 {
 }
 @media (max-width: 1050px) {
   .pt-dashboard-top-grid,
-  .pt-lower-dashboard-grid {
+  .pt-lower-dashboard-grid,
+  .pt-scenario-quick-grid {
     grid-template-columns: 1fr;
   }
   .pt-financial-highlights-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .pt-financial-highlight {
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.55rem;
+    border: 1px solid rgba(30,52,64,0.85);
+    padding: 0.82rem 0.78rem;
   }
   .pt-scenario-decision-grid {
     grid-template-columns: 1fr;

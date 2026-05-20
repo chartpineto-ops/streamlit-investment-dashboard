@@ -61,9 +61,9 @@ def _candidate_logo_urls(info: dict, domain: str | None) -> list[tuple[str, str]
         if value.startswith("https://"):
             candidates.append((value, "Yahoo Finance logo URL"))
     if domain:
+        candidates.append((f"https://logo.clearbit.com/{domain}?size=256", "Clearbit domain logo"))
+        candidates.append((f"https://www.google.com/s2/favicons?sz=256&domain={domain}", "Google favicon fallback"))
         candidates.append((f"https://icons.duckduckgo.com/ip3/{domain}.ico", "DuckDuckGo favicon fallback"))
-        candidates.append((f"https://www.google.com/s2/favicons?sz=128&domain={domain}", "Google favicon fallback"))
-        candidates.append((f"https://logo.clearbit.com/{domain}", "Clearbit domain logo"))
     return candidates
 
 
