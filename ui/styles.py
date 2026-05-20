@@ -1159,6 +1159,12 @@ h3 {
 .pt-scenario-decision-card {
   padding: 0.86rem 0.95rem;
 }
+.pt-panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
 .pt-panel-title small {
   color: var(--muted);
   font-size: 0.7rem;
@@ -1166,6 +1172,24 @@ h3 {
   letter-spacing: 0;
   text-transform: none;
   margin-left: 0.5rem;
+}
+.pt-view-financials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(109,187,90,0.42);
+  border-radius: 8px;
+  color: var(--green) !important;
+  background: rgba(109,187,90,0.08);
+  text-decoration: none !important;
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 0.34rem 0.58rem;
+  white-space: nowrap;
+}
+.pt-view-financials:hover {
+  border-color: var(--yellow);
+  color: var(--yellow) !important;
 }
 .pt-financial-highlights-grid {
   display: grid;

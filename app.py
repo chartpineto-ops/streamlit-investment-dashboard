@@ -577,6 +577,15 @@ def _data_health_summary(quality: dict, completeness, quote_data: dict, source: 
     }
 
 
+def _quote_for_company_analysis(ticker: str, financials: dict) -> dict:
+    """Use one fresh quote snapshot for identity, price, logo, and profile metadata."""
+    cached_quote = financials.get("latest_quote") or {}
+    fresh_quote = fetch_quote(ticker)
+    if fresh_quote.get("status") == "OK" or to_float(fresh_quote.get("price")) is not None:
+        return fresh_quote
+    return cached_quote or fresh_quote
+
+
 def _header_financial_highlights(financial_packet: dict, release: dict, latest: dict) -> list[dict]:
     def yoy_for(metric: str, current):
         try:
@@ -904,7 +913,7 @@ def _company_logo_html(view_model: dict, size: int = 68) -> str:
     logo_src = logo_url if logo_url.startswith("http") else logo_data_uri
     if logo_src.startswith(("http", "data:image")):
         return (
-            f'<div class="quote-logo pt-dashboard-logo" style="width:{size}px;height:{size}px;min-width:{size}px;" '
+            f'<div class="quote-logo pt-dashboard-logo pt-company-logo" style="width:{size}px;height:{size}px;min-width:{size}px;" '
             f'title="{escape(str(view_model.get("logo_source") or "Company logo"))}">'
             f'<img src="{escape(logo_src, quote=True)}" alt="{escape(ticker)} logo" '
             f'onerror="this.style.display=\'none\'; this.parentNode.textContent=\'{initials}\';">'
@@ -995,6 +1004,16 @@ def _quick_snapshot_html(view_model: dict) -> str:
         '<div class="pt-panel-title">Quick Snapshot</div>'
         f'{body}'
         f'{button}'
+        '</div>'
+    )
+
+
+def _financial_highlights_header_html() -> str:
+    return (
+        '<div class="pt-panel-title-row">'
+        '<div class="pt-panel-title">Financial Highlights '
+        '<small>Latest available period; values may mix quarterly, TTM, and balance sheet fields.</small></div>'
+        '<a class="pt-view-financials" href="#financial-summary">View Financials</a>'
         '</div>'
     )
 
@@ -1102,9 +1121,10 @@ def render_terminal_company_hero(view_model: dict) -> None:
         ]
     )
     highlights = "".join(_financial_highlight_html(item) for item in view_model.get("financial_highlights", []))
-    right_panel = _quick_snapshot_html(view_model) + _data_health_html(view_model)
+    right_panel = _quick_snapshot_html(view_model)
     score_why = _score_why_html(view_model)
     decision_panel = _investment_decision_html(view_model)
+    data_health_panel = _data_health_html(view_model)
     bear = _scenario_decision_card(view_model.get("bear_case", {}), {"probability": "25%", "impact": "Low", "score_range": "10 - 35"}, "bear")
     base = _scenario_decision_card(view_model.get("base_case", {}), {"probability": "50%", "impact": "Medium", "score_range": "40 - 65"}, "base")
     bull = _scenario_decision_card(view_model.get("bull_case", {}), {"probability": "25%", "impact": "High", "score_range": "65 - 100"}, "bull")
@@ -1150,11 +1170,10 @@ def render_terminal_company_hero(view_model: dict) -> None:
             <span>Executive Summary</span>
             <strong>{escape(str(view_model.get("executive_summary") or "Insufficient data to generate a reliable summary."))}</strong>
           </div>
-          {decision_panel}
           <div class="pt-lower-dashboard-grid">
             <div>
               <div class="pt-financial-highlights-card">
-                <div class="pt-panel-title">Financial Highlights <small>Latest available period; values may mix quarterly, TTM, and balance sheet fields.</small></div>
+                {_financial_highlights_header_html()}
                 <div class="pt-financial-highlights-grid">{highlights}</div>
               </div>
               <div class="pt-scenario-decision-card">
@@ -1164,6 +1183,8 @@ def render_terminal_company_hero(view_model: dict) -> None:
             </div>
             <div>{right_panel}</div>
           </div>
+          {decision_panel}
+          {data_health_panel}
           <div class="pt-dashboard-source-line">Source: {escape(source)} | Status: {escape(source_status)} | Updated: {escape(updated)}<br><span>{escape(str(view_model.get("source_status_note") or ""))}</span></div>
         </div>
         """,
@@ -1551,7 +1572,7 @@ def render_latest_quarterly_release(financials: dict) -> None:
     status = packet.get("source_status") or release.get("source_status", "N/A")
     tone = (
         "good"
-        if status in {"OK", "Complete", "Mostly complete"}
+        if status in {"OK", "Complete", "Mostly Complete"}
         else "warn"
         if status in {"Partial", "Limited", "Not applicable", "Stale structured values", "Filing metadata only", "Structured values only"}
         else "neutral"
@@ -1790,7 +1811,7 @@ def _statement_tone(value) -> str:
 
 
 def _status_tone(status: str) -> str:
-    if status in {"Complete", "Mostly complete", "Profitable", "Operating profitable", "Cash-rich", "FCF positive", "OK", "Strong liquidity"}:
+    if status in {"Complete", "Mostly Complete", "Profitable", "Operating profitable", "Cash-rich", "FCF positive", "OK", "Strong liquidity"}:
         return "good"
     if status in {"Partial data", "Partial", "Limited", "Unprofitable", "Burning cash", "Elevated burn", "Net debt", "Moderate liquidity", "Tight liquidity", "Stale"}:
         return "warn"
@@ -1937,8 +1958,8 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
     _analyst_takeaway_box(visual.get("analyst_takeaway", ""))
     if visual.get("reconciliation", {}).get("has_mismatch"):
         st.warning("Financial statement values are partially sourced or period-mismatched. Review detailed table before relying on this view.")
-    metric_col_income, metric_col_balance, metric_col_cash = st.columns(3)
-    with metric_col_income:
+    statement_col_income, statement_col_balance, statement_col_cash = st.columns(3)
+    with statement_col_income:
         st.markdown("#### Income Statement")
         _statement_metric_stack(
             [
@@ -1950,7 +1971,23 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
                 ("Statement Period", str(reported_period), "Income anchor", "neutral"),
             ]
         )
-    with metric_col_balance:
+        _compact_bar_chart(
+            "Revenue To Net Income",
+            ["Revenue", "Gross Profit", "Operating Income", "Net Income"],
+            [income.get("revenue"), income.get("gross_profit"), income.get("operating_income"), income.get("net_income")],
+            orientation="v",
+            height=chart_height,
+        )
+        render_metric_grid(
+            [
+                ("Gross Margin", _margin_text(margins.get("gross_margin", {})), (margins.get("gross_margin", {}) or {}).get("status", ""), "neutral"),
+                ("Operating Margin", _margin_text(margins.get("operating_margin", {})), (margins.get("operating_margin", {}) or {}).get("status", ""), "neutral"),
+                ("Net Margin", _margin_text(margins.get("net_margin", {})), (margins.get("net_margin", {}) or {}).get("status", ""), "neutral"),
+            ],
+            columns=3,
+            small=True,
+        )
+    with statement_col_balance:
         st.markdown("#### Balance Sheet")
         net_cash = balance.get("net_cash_or_debt")
         _statement_metric_stack(
@@ -1963,7 +2000,14 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
                 ("Liquidity Label", health.get("liquidity_status", "N/A"), _runway_text(cash_flow), _status_tone(health.get("liquidity_status", ""))),
             ]
         )
-    with metric_col_cash:
+        if balance.get("cash") is not None and balance.get("total_debt") is not None:
+            _compact_bar_chart("Cash vs Debt", ["Cash", "Total Debt"], [balance.get("cash"), balance.get("total_debt")], height=chart_height)
+        elif balance.get("cash") is not None:
+            _chart_placeholder("Debt data unavailable. Cash is shown above, but net cash/debt is not calculated.", height=chart_height)
+        else:
+            _chart_placeholder("Insufficient balance sheet data for chart.", height=chart_height)
+        st.caption("Balance sheet chart uses cash and debt from the latest matching structured period.")
+    with statement_col_cash:
         st.markdown("#### Cash Flow")
         _statement_metric_stack(
             [
@@ -1975,40 +2019,7 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
                 ("Statement Period", str(reported_period), "Cash flow anchor", "neutral"),
             ]
         )
-
-    chart_col_income, chart_col_balance, chart_col_cash = st.columns(3)
-    with chart_col_income:
-        _compact_bar_chart(
-            "Revenue To Net Income",
-            ["Revenue", "Gross Profit", "Operating Income", "Net Income"],
-            [income.get("revenue"), income.get("gross_profit"), income.get("operating_income"), income.get("net_income")],
-            orientation="v",
-            height=chart_height,
-        )
-    with chart_col_balance:
-        if balance.get("cash") is not None and balance.get("total_debt") is not None:
-            _compact_bar_chart("Cash vs Debt", ["Cash", "Total Debt"], [balance.get("cash"), balance.get("total_debt")], height=chart_height)
-        elif balance.get("cash") is not None:
-            _chart_placeholder("Debt data unavailable. Cash is shown above, but net cash/debt is not calculated.", height=chart_height)
-        else:
-            _chart_placeholder("Insufficient balance sheet data for chart.", height=chart_height)
-    with chart_col_cash:
         _compact_bar_chart("OCF To FCF Bridge", ["Operating CF", "Capex Outflow", "Free CF"], [cash_flow.get("operating_cash_flow"), cash_flow.get("capex"), cash_flow.get("free_cash_flow")], height=chart_height)
-
-    footer_col_income, footer_col_balance, footer_col_cash = st.columns(3)
-    with footer_col_income:
-        render_metric_grid(
-            [
-                ("Gross Margin", _margin_text(margins.get("gross_margin", {})), (margins.get("gross_margin", {}) or {}).get("status", ""), "neutral"),
-                ("Operating Margin", _margin_text(margins.get("operating_margin", {})), (margins.get("operating_margin", {}) or {}).get("status", ""), "neutral"),
-                ("Net Margin", _margin_text(margins.get("net_margin", {})), (margins.get("net_margin", {}) or {}).get("status", ""), "neutral"),
-            ],
-            columns=3,
-            small=True,
-        )
-    with footer_col_balance:
-        st.caption("Balance sheet chart uses cash and debt from the latest matching structured period.")
-    with footer_col_cash:
         st.caption("FCF calculated as operating cash flow less capex.")
     st.markdown("#### 3-Statement Health Summary")
     render_metric_grid(
@@ -2078,7 +2089,7 @@ def company_page(ticker: str) -> None:
             f'<div class="pt-data-asof">Data as of {escape(fmt_date(financials.get("last_updated")))}</div>',
             unsafe_allow_html=True,
         )
-    quote = financials.get("latest_quote") or fetch_quote(ticker)
+    quote = _quote_for_company_analysis(ticker, financials)
     latest = latest_row(financials, "Quarterly")
     signal = compute_signal(ticker)
     options = fetch_options_summary(ticker, quote.get("price"))
@@ -2108,6 +2119,7 @@ def company_page(ticker: str) -> None:
     section("Latest Quarterly Release", "Newest available quarterly statement values plus latest SEC filing metadata where available.")
     render_latest_quarterly_release(financials)
     render_financial_reconciliation(financials)
+    st.markdown('<div id="financial-summary"></div>', unsafe_allow_html=True)
     section("Financial Summary")
     view = st.radio("Financial statement view", ["Quarterly", "Annual"], index=0, horizontal=True, key="company_financial_view")
     history = view_history(financials, view)

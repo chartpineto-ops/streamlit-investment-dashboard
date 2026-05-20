@@ -346,11 +346,11 @@ def _completeness_status(score: float | int | None, ticker_type: str | None = No
         return "Not applicable" if ticker_type != "invalid_unknown" else "Insufficient"
     if score is None:
         return "Insufficient"
-    if score >= 95:
+    if score >= 98:
         return "Complete"
-    if score >= 85:
-        return "Mostly complete"
-    if score >= 60:
+    if score >= 95:
+        return "Mostly Complete"
+    if score >= 80:
         return "Partial"
     if score >= 25:
         return "Limited"
@@ -2062,7 +2062,7 @@ def _profitability_status(operating_income, net_income) -> str:
 def _data_quality_status(source_status: str, missing_fields: list[str], reconciliation: dict) -> str:
     if source_status == "Not applicable":
         return "Not applicable"
-    if source_status in {"Complete", "Mostly complete"}:
+    if source_status in {"Complete", "Mostly Complete"}:
         return source_status
     if source_status == "Limited":
         return "Limited"
