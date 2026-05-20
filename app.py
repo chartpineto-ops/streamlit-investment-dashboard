@@ -476,6 +476,51 @@ def _scenario_card(title: str, label: str, points: list[str], tone: str = "neutr
     return {"title": title, "label": label, "points": clean_points, "tone": tone}
 
 
+def _format_employee_count(value) -> str:
+    number = to_float(value)
+    if number is None:
+        return "N/A"
+    return f"{number:,.0f}"
+
+
+def _profile_snapshot(quote_data: dict, company_identity: dict) -> dict:
+    website = company_identity.get("website") or quote_data.get("website") or quote_data.get("profile_url")
+    return {
+        "Employees": _format_employee_count(quote_data.get("employees")),
+        "Headquarters": quote_data.get("headquarters") or "N/A",
+        "IPO Date": fmt_date(quote_data.get("ipo_date")),
+        "Next Earnings": fmt_date(quote_data.get("next_earnings_date")),
+        "Fiscal Year End": fmt_date(quote_data.get("fiscal_year_end")),
+        "Website": website or "",
+    }
+
+
+def _header_financial_highlights(financial_packet: dict, release: dict, latest: dict) -> list[dict]:
+    def yoy_for(metric: str, current):
+        try:
+            yoy, _qoq = _quarterly_metric_comparisons(financial_packet, release, metric, current)
+            return yoy
+        except Exception:
+            return None
+
+    revenue = _first_number(release.get("revenue"), latest.get("revenue"))
+    gross_margin = _first_number(release.get("gross_margin"), latest.get("gross_margin"))
+    net_income = _first_number(release.get("net_income"), latest.get("net_income"))
+    operating_cash_flow = _first_number(release.get("operating_cash_flow"), latest.get("operating_cash_flow"))
+    fcf = _first_number(release.get("free_cash_flow"), latest.get("free_cash_flow"))
+    total_debt = _first_number(release.get("total_debt"), latest.get("total_debt"))
+    revenue_yoy = _first_number(release.get("revenue_yoy_growth"), latest.get("revenue_yoy_growth"), yoy_for("revenue", revenue))
+
+    return [
+        {"label": "Revenue", "value": fmt_currency(revenue, 1), "trend": revenue_yoy, "trend_label": "YoY", "tone": "neutral", "favorable": "up", "icon": "$"},
+        {"label": "Gross Margin", "value": fmt_meaningful_percent(gross_margin), "trend": None, "trend_label": "YoY", "tone": tone_for_number(gross_margin), "favorable": "up", "icon": "%"},
+        {"label": "Net Income", "value": fmt_currency(net_income, 1), "trend": yoy_for("net_income", net_income), "trend_label": "YoY", "tone": tone_for_number(net_income), "favorable": "up", "icon": "NI"},
+        {"label": "Operating Cash Flow", "value": fmt_currency(operating_cash_flow, 1), "trend": yoy_for("operating_cash_flow", operating_cash_flow), "trend_label": "YoY", "tone": tone_for_number(operating_cash_flow), "favorable": "up", "icon": "OCF"},
+        {"label": "Free Cash Flow", "value": fmt_currency(fcf, 1), "trend": yoy_for("free_cash_flow", fcf), "trend_label": "YoY", "tone": tone_for_number(fcf), "favorable": "up", "icon": "FCF"},
+        {"label": "Total Debt", "value": fmt_currency(total_debt, 1), "trend": yoy_for("total_debt", total_debt), "trend_label": "YoY", "tone": "warn" if total_debt is not None and total_debt > 0 else "neutral", "favorable": "down", "icon": "D"},
+    ]
+
+
 def build_company_header_view_model(
     ticker: str,
     quote_data: dict,
@@ -590,6 +635,7 @@ def build_company_header_view_model(
     upside_label = "Strong" if len(bull_drivers) >= 3 else "Moderate" if bull_drivers else "Limited"
 
     score = to_float(signal_output.get("composite_score"))
+    profile = _profile_snapshot(quote_data, company_identity)
     return {
         "ticker": symbol,
         "company_name": company_identity.get("company_name") or quote_data.get("company_name") or symbol,
@@ -621,6 +667,8 @@ def build_company_header_view_model(
         "expected_value": "N/A",
         "executive_summary": executive_summary,
         "quick_stats": quick_stats,
+        "financial_highlights": _header_financial_highlights(financial_packet, release, latest),
+        "quick_snapshot": profile,
         "classification_chips": [
             _hero_chip(str(company_identity.get("sector") or quote_data.get("sector") or "N/A"), "", "neutral"),
             _hero_chip(market_cap_label, "", market_cap_tone),
@@ -631,6 +679,7 @@ def build_company_header_view_model(
         "base_case": _scenario_card("Base Case", f"Current view: {signal_label}", [f"Score: {score:.1f}/100" if score is not None else "Score: N/A", f"Confidence: {signal_output.get('confidence') or 'N/A'}", f"Valuation: {valuation or 'N/A'}"], stance_tone),
         "bull_case": _scenario_card("Bull Case", f"Upside drivers: {upside_label}", bull_drivers, "good" if upside_label in {"Strong", "Moderate"} else "neutral"),
         "source_status": financial_packet.get("status") or packet.get("source_status") or "N/A",
+        "source": packet.get("source_used") or release.get("source") or financial_packet.get("source_metadata", {}).get("financials") or "N/A",
         "last_updated": financial_packet.get("last_updated") or quote_data.get("last_updated"),
     }
 
@@ -717,85 +766,199 @@ def _pt_case_card(case: dict) -> str:
     )
 
 
-def render_terminal_company_hero(view_model: dict) -> None:
-    ticker = view_model.get("ticker") or "N/A"
+def _company_logo_html(view_model: dict, size: int = 68) -> str:
+    ticker = str(view_model.get("ticker") or "PT")
     initials = escape(str(view_model.get("fallback_initials") or ticker[:2] or "PT"))
     logo_url = str(view_model.get("logo_url") or "").strip()
     logo_data_uri = str(view_model.get("logo_data_uri") or "").strip()
-    # Match the Home / Market Monitor logo behavior, which has proven reliable in Streamlit.
     logo_src = logo_url if logo_url.startswith("http") else logo_data_uri
     if logo_src.startswith(("http", "data:image")):
-        logo_html = (
-            f'<div class="quote-logo pt-company-header-logo" title="{escape(str(view_model.get("logo_source") or "Company logo"))}">'
-            f'<img src="{escape(logo_src, quote=True)}" alt="{escape(str(ticker))} logo" '
+        return (
+            f'<div class="quote-logo pt-dashboard-logo" style="width:{size}px;height:{size}px;min-width:{size}px;" '
+            f'title="{escape(str(view_model.get("logo_source") or "Company logo"))}">'
+            f'<img src="{escape(logo_src, quote=True)}" alt="{escape(ticker)} logo" '
             f'onerror="this.style.display=\'none\'; this.parentNode.textContent=\'{initials}\';">'
             "</div>"
         )
-    else:
-        logo_html = (
-            f'<div class="quote-logo pt-company-header-logo pt-logo-placeholder" '
-            f'title="Logo unavailable: {escape(str(view_model.get("logo_status") or "Placeholder"))}">{initials}</div>'
-        )
+    return (
+        f'<div class="quote-logo pt-dashboard-logo pt-logo-placeholder" style="width:{size}px;height:{size}px;min-width:{size}px;" '
+        f'title="Logo unavailable: {escape(str(view_model.get("logo_status") or "Placeholder"))}">{initials}</div>'
+    )
+
+
+def _score_marker_pct(view_model: dict) -> float:
+    stance = str(view_model.get("market_stance") or "").casefold()
+    if "bear" in stance:
+        return 16.0
+    if "bull" in stance:
+        return 84.0
+    score = to_float(view_model.get("composite_score"))
+    if score is None:
+        return 50.0
+    return max(5.0, min(95.0, score))
+
+
+def _stance_gauge_html(view_model: dict) -> str:
+    marker = _score_marker_pct(view_model)
+    return (
+        '<div class="pt-stance-gauge">'
+        '<div class="pt-stance-track"><span class="bear"></span><span class="neutral"></span><span class="bull"></span>'
+        f'<i style="left:{marker:.1f}%"></i></div>'
+        '<div class="pt-stance-labels"><span>Bearish</span><span>Neutral</span><span>Bullish</span></div>'
+        '</div>'
+    )
+
+
+def _score_detail_row(label: str, value: str, tone: str = "neutral") -> str:
+    tone_class = {"good": "rt-good", "bad": "rt-bad", "warn": "rt-warn"}.get(tone, "")
+    return f'<div class="pt-score-detail-row"><span>{escape(label)}</span><strong class="{tone_class}">{escape(value)}</strong></div>'
+
+
+def _trend_text(value) -> str:
+    number = to_float(value)
+    return format_pct_change(number) if number is not None else "N/A"
+
+
+def _trend_tone_class(value, favorable_direction: str = "up") -> str:
+    tone = get_trend_tone(value, favorable_direction)
+    return {"good": "rt-good", "bad": "rt-bad"}.get(tone, "rt-neutral")
+
+
+def _financial_highlight_html(item: dict) -> str:
+    tone_class = {"good": "rt-good", "bad": "rt-bad", "warn": "rt-warn"}.get(str(item.get("tone") or ""), "")
+    trend_class = _trend_tone_class(item.get("trend"), str(item.get("favorable") or "up"))
+    return (
+        '<div class="pt-financial-highlight">'
+        f'<div class="pt-highlight-icon">{escape(str(item.get("icon") or ""))}</div>'
+        '<div class="pt-highlight-copy">'
+        f'<div class="pt-highlight-label">{escape(str(item.get("label") or "N/A"))}</div>'
+        f'<div class="pt-highlight-value {tone_class}">{escape(str(item.get("value") or "N/A"))}</div>'
+        f'<div class="pt-highlight-trend"><span>{escape(str(item.get("trend_label") or "YoY"))}</span><strong class="{trend_class}">{escape(_trend_text(item.get("trend")))}</strong></div>'
+        '</div></div>'
+    )
+
+
+def _quick_snapshot_html(view_model: dict) -> str:
+    snapshot = view_model.get("quick_snapshot") or {}
+    rows = []
+    for label in ("Employees", "Headquarters", "IPO Date", "Next Earnings", "Fiscal Year End"):
+        rows.append(f'<div class="pt-snapshot-row"><span>{escape(label)}</span><strong>{escape(str(snapshot.get(label) or "N/A"))}</strong></div>')
+    website = str(snapshot.get("Website") or "").strip()
+    button = (
+        f'<a class="pt-profile-button" href="{escape(website, quote=True)}" target="_blank" rel="noopener noreferrer">View Company Profile</a>'
+        if website.startswith("http")
+        else '<div class="pt-profile-button disabled">Profile Link N/A</div>'
+    )
+    return (
+        '<div class="pt-quick-snapshot-card">'
+        '<div class="pt-panel-title">Quick Snapshot</div>'
+        f'{"".join(rows)}'
+        f'{button}'
+        '</div>'
+    )
+
+
+def _scenario_decision_card(case: dict, footer: dict, tone: str) -> str:
+    points = "".join(f"<li>{escape(str(point))}</li>" for point in (case.get("points") or [])[:4])
+    return (
+        f'<div class="pt-decision-card {escape(tone)}">'
+        f'<div class="pt-case-eyebrow">{escape(str(case.get("title") or "Case"))}</div>'
+        f'<div class="pt-case-label">{escape(str(case.get("label") or "N/A"))}</div>'
+        f'<ul>{points}</ul>'
+        '<div class="pt-case-footer">'
+        f'<span><small>Probability</small><strong>{escape(str(footer.get("probability") or "N/A"))}</strong></span>'
+        f'<span><small>Impact</small><strong>{escape(str(footer.get("impact") or "N/A"))}</strong></span>'
+        f'<span><small>Score Range</small><strong>{escape(str(footer.get("score_range") or "N/A"))}</strong></span>'
+        '</div></div>'
+    )
+
+
+def render_terminal_company_hero(view_model: dict) -> None:
+    ticker = str(view_model.get("ticker") or "N/A")
     score = to_float(view_model.get("composite_score"))
     score_text = f"{score:.1f}" if score is not None else "N/A"
-    score_caption = f"Composite: {score:.1f} / 100" if score is not None else "Composite: N/A"
+    score_caption = f"{score:.1f} / 100" if score is not None else "N/A"
     move = view_model.get("daily_move_pct")
-    move_amount = to_float(view_model.get("daily_change_amount"))
     move_text = fmt_percent(move, decimals=2, signed=True) if move is not None else "N/A"
     move_tone = {"good": "good", "bad": "bad"}.get(tone_for_number(move), "neutral")
+    move_class = {"good": "good", "bad": "bad"}.get(move_tone, "neutral")
+    move_amount = to_float(view_model.get("daily_change_amount"))
     change_abs = f"{'+' if move_amount > 0 else '-' if move_amount < 0 else ''}{fmt_price(abs(move_amount))}" if move_amount is not None else "N/A"
-    move_style = _pt_tone_style(move_tone)
-    score_tone = _pt_tone_style(str(view_model.get("overall_tone") or "neutral"))
     classification = "".join(_pt_chip(chip) for chip in view_model.get("classification_chips", []))
     quick_stats = "".join(
         _pt_stat_card(str(chip.get("label") or "N/A"), str(chip.get("value") or "N/A"), str(chip.get("tone") or "neutral"))
         for chip in view_model.get("quick_stats", [])
     )
-    scenarios = "".join(_pt_case_card(view_model.get(key, {})) for key in ("bear_case", "base_case", "bull_case"))
-    score_meta = "".join(
+    score_tone = str(view_model.get("overall_tone") or "neutral")
+    score_detail = "".join(
         [
-            _pt_stat_card("Data Confidence", _fmt_completeness(view_model.get("data_completeness")), "warn" if to_float(view_model.get("data_completeness")) is not None and to_float(view_model.get("data_completeness")) < 75 else "good"),
-            _pt_stat_card("Confidence", str(view_model.get("confidence") or "N/A"), "neutral"),
-            _pt_stat_card("Expected Value", str(view_model.get("expected_value") or "N/A"), "neutral"),
-            _pt_stat_card("Market Stance", str(view_model.get("market_stance") or "N/A"), str(view_model.get("market_stance_tone") or "neutral")),
+            _score_detail_row("Composite Score", score_caption),
+            _score_detail_row("Data Confidence", _fmt_completeness(view_model.get("data_completeness")), "good" if (to_float(view_model.get("data_completeness")) or 0) >= 85 else "warn"),
+            _score_detail_row("Confidence", str(view_model.get("confidence") or "N/A"), "warn" if str(view_model.get("confidence") or "") == "Medium" else "good" if str(view_model.get("confidence") or "") == "High" else "neutral"),
+            _score_detail_row("Expected Value", str(view_model.get("expected_value") or "N/A")),
+            _score_detail_row("Market Stance", str(view_model.get("market_stance") or "N/A"), str(view_model.get("market_stance_tone") or "neutral")),
         ]
     )
+    highlights = "".join(_financial_highlight_html(item) for item in view_model.get("financial_highlights", []))
+    snapshot = _quick_snapshot_html(view_model)
+    bear = _scenario_decision_card(view_model.get("bear_case", {}), {"probability": "25%", "impact": "Low", "score_range": "10 - 35"}, "bear")
+    base = _scenario_decision_card(view_model.get("base_case", {}), {"probability": "50%", "impact": "Medium", "score_range": "40 - 65"}, "base")
+    bull = _scenario_decision_card(view_model.get("bull_case", {}), {"probability": "25%", "impact": "High", "score_range": "65 - 100"}, "bull")
+    source_status = str(view_model.get("source_status") or "N/A")
+    source = str(view_model.get("source") or "N/A")
+    updated = fmt_date(view_model.get("last_updated"))
+
     st.markdown(
         f"""
-        <div class="pt-hero-card" style="background:linear-gradient(135deg,{BRAND_COLORS["card"]},#0B141A);border:1px solid {BRAND_COLORS["border"]};border-radius:16px;padding:1.1rem 1.15rem;box-shadow:0 18px 34px rgba(0,0,0,0.24);">
-          <div class="pt-hero-grid" style="display:grid;grid-template-columns:84px minmax(0,1.45fr) minmax(280px,0.82fr);gap:1.25rem;align-items:start;">
-            <div class="pt-logo-column" style="display:flex;align-items:flex-start;justify-content:center;padding-top:0.15rem;">
-              {logo_html}
-            </div>
-            <div class="pt-company-left" style="min-width:0;">
-              <div style="display:flex;align-items:baseline;gap:0.85rem;flex-wrap:wrap;">
-                <div class="pt-ticker" style="color:{BRAND_COLORS["text"]};font-size:clamp(2.8rem,5vw,4.9rem);line-height:0.92;font-weight:980;letter-spacing:0.02em;">{escape(str(ticker))}</div>
-                <span style="border:1px solid {move_style["border"]};background:{move_style["bg"]};color:{move_style["color"]};border-radius:999px;padding:0.22rem 0.6rem;font-size:0.86rem;font-weight:940;">{escape(move_text)}</span>
+        <div class="pt-company-dashboard">
+          <div class="pt-dashboard-top-grid">
+            <div class="pt-company-identity-card">
+              <div class="pt-identity-row">
+                {_company_logo_html(view_model, 68)}
+                <div class="pt-identity-main">
+                  <div class="pt-ticker-line">
+                    <span class="pt-dashboard-ticker">{escape(ticker)}</span>
+                    <span class="pt-change-badge {escape(move_class)}">{escape(move_text)}</span>
+                  </div>
+                  <div class="pt-dashboard-company">{escape(str(view_model.get("company_name") or ticker))}</div>
+                </div>
               </div>
-              <div class="pt-company-name" style="color:{BRAND_COLORS["text"]};font-size:1.2rem;font-weight:860;margin-top:0.42rem;overflow-wrap:anywhere;">{escape(str(view_model.get("company_name") or ticker))}</div>
-              <div class="pt-chip-row" style="display:flex;flex-wrap:wrap;gap:0.48rem;margin-top:0.85rem;">{classification}</div>
-              <div style="color:{BRAND_COLORS["text_secondary"]};font-size:0.94rem;font-weight:780;margin-top:0.68rem;">{escape(str(view_model.get("sector") or "N/A"))} - {escape(str(view_model.get("industry") or "N/A"))}</div>
-              <div style="color:{BRAND_COLORS["text"]};font-size:1.05rem;font-weight:850;margin-top:0.55rem;">{escape(fmt_price(view_model.get("price")))} <span style="color:{BRAND_COLORS["muted"]};margin-left:0.35rem;">{escape(change_abs)}</span></div>
-              <div style="color:{BRAND_COLORS["text_secondary"]};font-size:0.92rem;font-weight:800;margin-top:0.65rem;">Entry Signal: {_pt_chip({"label": view_model.get("entry_signal") or "N/A", "value": "", "tone": view_model.get("entry_tone") or "neutral"}, "pt-entry-signal")}</div>
-            </div>
-            <div class="pt-score-right" style="border:1px solid {score_tone["border"]};background:radial-gradient(circle at top right,{score_tone["bg"]},transparent 46%),{BRAND_COLORS["card_alt"]};border-radius:15px;padding:1rem;display:flex;flex-direction:column;justify-content:center;min-width:0;">
-              <div class="pt-big-score" style="color:{BRAND_COLORS["text"]};font-size:clamp(3.2rem,6vw,5.4rem);line-height:0.9;font-weight:980;letter-spacing:-0.02em;">{escape(score_text)}</div>
-              <div class="pt-signal-badge" style="color:{score_tone["color"]};font-size:1.18rem;font-weight:950;margin-top:0.48rem;">{escape(str(view_model.get("overall_research_signal") or "N/A"))}</div>
-              <div style="color:{BRAND_COLORS["text_secondary"]};font-size:0.84rem;font-weight:850;margin-top:0.25rem;">{escape(score_caption)}</div>
-              <div class="pt-score-meta-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.48rem;margin-top:0.9rem;">
-                {score_meta}
+              <div class="pt-dashboard-chip-row">{classification}</div>
+              <div class="pt-dashboard-info-row">
+                <div><span>Sector</span><strong>{escape(str(view_model.get("sector") or "N/A"))} - {escape(str(view_model.get("industry") or "N/A"))}</strong></div>
+                <div><span>Price</span><strong>{escape(fmt_price(view_model.get("price")))} <em>{escape(change_abs)}</em></strong></div>
+                <div><span>Entry Signal</span><strong>{_pt_chip({"label": view_model.get("entry_signal") or "N/A", "value": "", "tone": view_model.get("entry_tone") or "neutral"}, "pt-entry-signal")}</strong></div>
               </div>
+              <div class="pt-dashboard-stat-grid">{quick_stats}</div>
+            </div>
+            <div class="pt-score-summary-card">
+              <div class="pt-score-left">
+                <div class="pt-score-arc"></div>
+                <div class="pt-score-number">{escape(score_text)}</div>
+                <div class="pt-score-rating {escape(score_tone)}">{escape(str(view_model.get("overall_research_signal") or "N/A"))}</div>
+              </div>
+              <div class="pt-score-details">{score_detail}</div>
+              {_stance_gauge_html(view_model)}
             </div>
           </div>
-          <div class="pt-quick-stat-row" style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0.58rem;margin-top:1rem;">{quick_stats}</div>
-        </div>
-        <div class="pt-scenario-card" style="background:linear-gradient(135deg,{BRAND_COLORS["card"]},#0B141A);border:1px solid {BRAND_COLORS["border"]};border-radius:16px;padding:1rem 1.1rem;margin-top:0.9rem;box-shadow:0 18px 34px rgba(0,0,0,0.2);">
-          <div class="pt-exec-summary" style="border-bottom:1px solid {BRAND_COLORS["border"]};padding-bottom:0.82rem;margin-bottom:0.86rem;">
-            <div style="color:{BRAND_COLORS["muted"]};font-size:0.72rem;font-weight:900;letter-spacing:0.05em;text-transform:uppercase;">Executive Summary</div>
-            <div style="color:{BRAND_COLORS["text"]};font-size:1.04rem;font-weight:830;line-height:1.34;margin-top:0.28rem;overflow-wrap:anywhere;">{escape(str(view_model.get("executive_summary") or "Insufficient data to generate a reliable summary."))}</div>
+          <div class="pt-executive-banner">
+            <span>Executive Summary</span>
+            <strong>{escape(str(view_model.get("executive_summary") or "Insufficient data to generate a reliable summary."))}</strong>
           </div>
-          <div style="color:{BRAND_COLORS["text"]};font-size:0.96rem;font-weight:950;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:0.6rem;">Research Scenario Snapshot</div>
-          <div class="pt-scenario-grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.72rem;">{scenarios}</div>
+          <div class="pt-lower-dashboard-grid">
+            <div>
+              <div class="pt-financial-highlights-card">
+                <div class="pt-panel-title">Financial Highlights <small>Latest period where available</small></div>
+                <div class="pt-financial-highlights-grid">{highlights}</div>
+              </div>
+              <div class="pt-scenario-decision-card">
+                <div class="pt-panel-title">Research Scenario Snapshot</div>
+                <div class="pt-scenario-decision-grid">{bear}{base}{bull}</div>
+              </div>
+            </div>
+            {snapshot}
+          </div>
+          <div class="pt-dashboard-source-line">Source: {escape(source)} | Status: {escape(source_status)} | Updated: {escape(updated)}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1698,10 +1861,17 @@ def home_page(ticker: str) -> None:
 def company_page(ticker: str) -> None:
     st.title("Company Analysis")
     st.markdown('<div class="terminal-subtitle">Latest quote, financials, valuation, balance sheet risk, filings, options, and 3-statement snapshot.</div>', unsafe_allow_html=True)
-    if st.button("Refresh Financial Data", type="primary"):
-        reset_data_caches()
-        st.rerun()
     financials = load_latest_company_financials(ticker)
+    refresh_col, asof_col = st.columns([0.18, 0.82], vertical_alignment="center")
+    with refresh_col:
+        if st.button("Refresh Financial Data", type="primary"):
+            reset_data_caches()
+            st.rerun()
+    with asof_col:
+        st.markdown(
+            f'<div class="pt-data-asof">Data as of {escape(fmt_date(financials.get("last_updated")))}</div>',
+            unsafe_allow_html=True,
+        )
     quote = financials.get("latest_quote") or fetch_quote(ticker)
     latest = latest_row(financials, "Quarterly")
     signal = compute_signal(ticker)
@@ -1710,11 +1880,6 @@ def company_page(ticker: str) -> None:
     header_view_model = build_company_header_view_model(ticker, quote, identity, financials, signal, {"valuation_label": valuation_label(signal)}, signal.get("technicals", {}))
     render_company_hero(header_view_model)
     packet = financials.get("financial_data_packet") or {}
-    source_line(
-        packet.get("source_used") or financials.get("source_metadata", {}).get("financials", "Yahoo Finance/yfinance"),
-        financials.get("last_updated"),
-        packet.get("source_status") or financials.get("status"),
-    )
     section("Signal Center", "Transparent research score with factor breakdown, confidence, and missing-data warnings.")
     render_signal_summary(ticker, signal)
     section("Technical Entry Setup")

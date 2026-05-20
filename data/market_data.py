@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
@@ -40,6 +40,24 @@ def _history(symbol: str, period: str = "1y", interval: str = "1d") -> pd.DataFr
         return frame if isinstance(frame, pd.DataFrame) else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
+
+
+def _epoch_date(value) -> date | None:
+    number = to_float(value)
+    if number is None:
+        return None
+    try:
+        return datetime.fromtimestamp(number).date()
+    except Exception:
+        return None
+
+
+def _headquarters(info: dict) -> str | None:
+    city = str(info.get("city") or "").strip()
+    state = str(info.get("state") or "").strip()
+    country = str(info.get("country") or "").strip()
+    parts = [part for part in (city, state, country) if part]
+    return ", ".join(parts) if parts else None
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -116,6 +134,12 @@ def fetch_quote(symbol: str) -> dict:
             "target_mean_price": to_float(info.get("targetMeanPrice")),
             "recommendation": info.get("recommendationKey"),
             "website": identity.get("website") or info.get("website"),
+            "employees": to_float(info.get("fullTimeEmployees")),
+            "headquarters": _headquarters(info),
+            "ipo_date": info.get("ipoDate") or _epoch_date(info.get("firstTradeDateEpochUtc")),
+            "next_earnings_date": _epoch_date(info.get("earningsTimestamp") or info.get("earningsTimestampStart")),
+            "fiscal_year_end": _epoch_date(info.get("lastFiscalYearEnd")),
+            "profile_url": identity.get("website") or info.get("website"),
             "domain": identity.get("domain"),
             "logo_url": identity.get("logo_url"),
             "logo_data_uri": identity.get("logo_data_uri"),
