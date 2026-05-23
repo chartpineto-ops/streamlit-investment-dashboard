@@ -15,7 +15,7 @@ from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_fili
 from data.financials import build_three_statement_visual_data, get_latest_quarterly_release, load_latest_company_financials, view_history
 from data.macro import fetch_macro_catalysts
 from data.market_data import DEFAULT_TICKERS, fetch_history, fetch_market_snapshot, fetch_quote
-from data.market_movers import clean_mover_tickers, scan_market_movers
+from data.market_movers import clean_mover_tickers, get_biggest_movers, scan_market_movers
 from data.news import fetch_news
 from data.options import fetch_options_summary
 from data.social import fetch_social_momentum_names
@@ -30,7 +30,7 @@ from storage.watchlist import (
     refresh_watchlist,
     remove_ticker,
 )
-from ui.components import clean_dataframe, empty_state, quote_header, render_metric_grid, section, source_line
+from ui.components import clean_dataframe, empty_state, render_metric_grid, section, source_line
 from ui.styles import BRAND_COLORS, apply_brand_theme
 from utils.formatting import (
     clean_ticker,
@@ -1342,6 +1342,68 @@ def _watchlist_symbols() -> list[str]:
     return [clean_ticker(value) for value in watch.get("ticker", pd.Series(dtype=str)).tolist() if clean_ticker(value)]
 
 
+def _mover_logo_html(row: pd.Series, size: int = 30) -> str:
+    ticker = clean_ticker(row.get("Ticker") or "")
+    initials = escape(str(row.get("Fallback Initials") or ticker[:2] or "PT"))
+    logo_url = str(row.get("Logo URL") or "").strip()
+    logo_data_uri = str(row.get("Logo Data URI") or "").strip()
+    logo_src = logo_url if logo_url.startswith("http") else logo_data_uri
+    if logo_src.startswith(("http", "data:image")):
+        return (
+            f'<div class="pt-mover-logo" style="width:{size}px;height:{size}px;min-width:{size}px;">'
+            f'<img src="{escape(logo_src, quote=True)}" alt="{escape(ticker)} logo" '
+            f'onerror="this.remove(); this.parentNode.classList.add(\'pt-mover-logo-fallback\');">'
+            f'<span>{initials}</span></div>'
+        )
+    return f'<div class="pt-mover-logo pt-mover-logo-fallback" style="width:{size}px;height:{size}px;min-width:{size}px;"><span>{initials}</span></div>'
+
+
+def render_mover_row(row: pd.Series, rank: int, tone: str) -> str:
+    ticker = clean_ticker(row.get("Ticker") or "")
+    company = str(row.get("Company") or ticker or "N/A")
+    move = to_float(row.get("Daily Move %"))
+    tone_class = "good" if tone == "good" else "bad"
+    return (
+        '<div class="pt-mover-row">'
+        f'<div class="pt-mover-rank">{rank}</div>'
+        f'{_mover_logo_html(row)}'
+        '<div class="pt-mover-name">'
+        f'<strong>{escape(ticker or "N/A")}</strong>'
+        f'<span>{escape(company)}</span>'
+        '</div>'
+        f'<div class="pt-mover-change {tone_class}">{escape(fmt_percent(move, decimals=2, signed=True))}</div>'
+        '</div>'
+    )
+
+
+def render_biggest_movers_section() -> None:
+    section("Biggest Gainers / Losers", "Current-session leaders from the app universe and watchlist.")
+    try:
+        gainers, losers, status = get_biggest_movers(limit=10, include_etfs=True, extra_tickers=clean_mover_tickers(tuple(_watchlist_symbols())))
+    except Exception as exc:
+        gainers, losers = pd.DataFrame(), pd.DataFrame()
+        status = {"Source": "Yahoo Finance/yfinance", "Status": "Source error", "Last Updated": now_et(), "Error": str(exc)}
+    source_line(status.get("Source", "Yahoo Finance/yfinance"), status.get("Last Updated"), status.get("Status", "Unknown"))
+    if gainers.empty and losers.empty:
+        empty_state("Market mover data unavailable from current free sources.")
+        if status.get("Error"):
+            st.caption(status.get("Error"))
+        return
+    col_gain, col_loss = st.columns(2)
+    with col_gain:
+        if gainers.empty:
+            body = '<div class="pt-mover-empty">No positive movers found in the current universe.</div>'
+        else:
+            body = "".join(render_mover_row(row, idx + 1, "good") for idx, (_, row) in enumerate(gainers.iterrows()))
+        st.markdown(f'<div class="pt-mover-card"><div class="pt-mover-title">Top 10 Gainers</div>{body}</div>', unsafe_allow_html=True)
+    with col_loss:
+        if losers.empty:
+            body = '<div class="pt-mover-empty">No negative movers found in the current universe.</div>'
+        else:
+            body = "".join(render_mover_row(row, idx + 1, "bad") for idx, (_, row) in enumerate(losers.iterrows()))
+        st.markdown(f'<div class="pt-mover-card"><div class="pt-mover-title">Top 10 Losers</div>{body}</div>', unsafe_allow_html=True)
+
+
 def render_52w_position(quote: dict) -> None:
     price = to_float(quote.get("price"))
     low = to_float(quote.get("fifty_two_week_low"))
@@ -2091,23 +2153,16 @@ def home_page(ticker: str) -> None:
         cards.append((row["Ticker"], value, caption, tone_for_number(row["Daily Move %"])))
     render_metric_grid(cards[:7], columns=7, small=True)
     source_line("Yahoo Finance/yfinance market snapshot", now_et(), "Delayed / cached")
-    col1, col2 = st.columns([1.15, 1])
-    with col1:
-        section("Company Snapshot", "Global ticker drives research pages.")
-        quote = fetch_quote(ticker)
-        quote_header(quote)
-        source_line(quote.get("source"), quote.get("last_updated"), quote.get("status"))
-        render_price_chart(ticker)
-    with col2:
-        section("Macro / Market News Headlines", "Broad market headlines and catalysts from current free sources.")
-        macro_news_raw, macro_statuses = fetch_news("", 24)
-        macro_news = macro_headlines(macro_news_raw)
-        source_name, news_state = source_status_summary(macro_statuses)
-        source_line(source_name, now_et(), news_state)
-        if macro_news.empty:
-            empty_state("Macro headlines unavailable from current free sources.")
-        else:
-            df_display(clean_news_table(macro_news), height=360)
+    render_biggest_movers_section()
+    section("Macro / Market News Headlines", "Broad market headlines and catalysts from current free sources.")
+    macro_news_raw, macro_statuses = fetch_news("", 24)
+    macro_news = macro_headlines(macro_news_raw)
+    source_name, news_state = source_status_summary(macro_statuses)
+    source_line(source_name, now_et(), news_state)
+    if macro_news.empty:
+        empty_state("Macro headlines unavailable from current free sources.")
+    else:
+        df_display(clean_news_table(macro_news), height=360)
     section("Market Snapshot Table")
     display = snapshot.copy()
     display["Last"] = display.apply(lambda r: fmt_percent(r["Last"], decimals=2) if r["Ticker"] == "^TNX" else fmt_price(r["Last"]), axis=1)

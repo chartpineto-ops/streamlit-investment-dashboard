@@ -173,6 +173,99 @@ h3 {
   letter-spacing: 0.06em;
   margin-bottom: 1rem;
 }
+.pt-mover-card {
+  background: linear-gradient(180deg, rgba(16, 27, 34, 0.98), rgba(7, 16, 20, 0.98));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.76rem 0.78rem;
+  box-shadow: 0 12px 26px rgba(0,0,0,0.18);
+}
+.pt-mover-title {
+  color: var(--text);
+  font-size: 0.98rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  margin: 0 0 0.55rem;
+}
+.pt-mover-row {
+  display: grid;
+  grid-template-columns: 2rem 2.2rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.56rem;
+  min-height: 46px;
+  padding: 0.42rem 0.2rem;
+  border-top: 1px solid rgba(30,52,64,0.62);
+}
+.pt-mover-row:first-of-type {
+  border-top: 0;
+}
+.pt-mover-rank {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-align: center;
+}
+.pt-mover-logo {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(169,182,188,0.28);
+  border-radius: 9px;
+  background: rgba(234,240,242,0.06);
+  overflow: hidden;
+}
+.pt-mover-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: rgba(234,240,242,0.9);
+}
+.pt-mover-logo span {
+  display: none;
+  color: var(--text);
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.02em;
+}
+.pt-mover-logo-fallback span {
+  display: inline;
+}
+.pt-mover-name {
+  min-width: 0;
+}
+.pt-mover-name strong,
+.pt-mover-name span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pt-mover-name strong {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 920;
+}
+.pt-mover-name span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  margin-top: 0.05rem;
+}
+.pt-mover-change {
+  font-size: 0.92rem;
+  font-weight: 940;
+  text-align: right;
+  white-space: nowrap;
+}
+.pt-mover-change.good { color: var(--green); }
+.pt-mover-change.bad { color: var(--red); }
+.pt-mover-empty {
+  color: var(--muted);
+  border-top: 1px solid rgba(30,52,64,0.62);
+  padding: 0.8rem 0.2rem 0.35rem;
+  font-size: 0.86rem;
+}
 .rt-card {
   background: linear-gradient(180deg, rgba(16, 27, 34, 0.98), rgba(7, 16, 20, 0.98));
   border: 1px solid var(--border);
