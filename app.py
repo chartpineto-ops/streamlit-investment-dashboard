@@ -3,13 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from html import escape
 from math import isnan
+import os
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ai.dd_generator import build_research_packet, generate_due_diligence_memo
+from ai.dd_generator import build_research_packet, detect_ai_provider, generate_due_diligence_memo
 from data.company_identity import get_company_identity
 from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_filing, fetch_sec_filings, ticker_to_cik
 from data.financials import build_three_statement_visual_data, get_latest_quarterly_release, load_latest_company_financials, view_history
@@ -118,6 +119,9 @@ def normalize_global_ticker_input() -> None:
 
 
 def streamlit_secret_value(key: str, default=None):
+    env_value = os.environ.get(key)
+    if env_value not in (None, ""):
+        return env_value
     secret_paths = [Path.home() / ".streamlit" / "secrets.toml", Path.cwd() / ".streamlit" / "secrets.toml"]
     if not any(path.exists() for path in secret_paths):
         return default
@@ -2548,15 +2552,7 @@ def ai_due_diligence_page(ticker: str) -> None:
         packet_status = "Generation failed"
         packet_error = str(exc)[:240]
 
-    st.session_state["ai_dd_health"] = {
-        "ticker": symbol,
-        "packet_status": packet_status,
-        "packet_error": packet_error,
-        "packet_updated": now_et(),
-        "last_generation_status": st.session_state.get("ai_dd_health", {}).get("last_generation_status", "Not run"),
-        "last_generation_error": st.session_state.get("ai_dd_health", {}).get("last_generation_error", ""),
-        "last_generation_updated": st.session_state.get("ai_dd_health", {}).get("last_generation_updated"),
-    }
+    prior_ai_health = st.session_state.get("ai_dd_health", {})
     completeness = (packet.get("data_quality") or {}).get("completeness_score") or signal.get("data_completeness")
     render_metric_grid(
         [
@@ -2570,9 +2566,53 @@ def ai_due_diligence_page(ticker: str) -> None:
     )
     with st.expander("Research Packet", expanded=False):
         st.json(packet)
-    key = streamlit_secret_value("OPENAI_API_KEY")
-    model = "gpt-4o-mini"
-    model = streamlit_secret_value("OPENAI_MODEL", model)
+
+    configured_provider = str(streamlit_secret_value("AI_PROVIDER", "auto") or "auto").lower()
+    provider_options = ["Auto", "Ollama / Local Llama", "OpenAI", "Disabled"]
+    provider_index = {"auto": 0, "ollama": 1, "openai": 2, "disabled": 3}.get(configured_provider, 0)
+    default_ollama_model = streamlit_secret_value("OLLAMA_MODEL", "llama3.1:8b")
+    default_ollama_base_url = streamlit_secret_value("OLLAMA_BASE_URL", "http://localhost:11434")
+    openai_key = streamlit_secret_value("OPENAI_API_KEY")
+
+    st.markdown("#### AI Provider")
+    provider_cols = st.columns([1.1, 1.2, 1.5])
+    with provider_cols[0]:
+        provider_choice = st.selectbox("Provider", provider_options, index=provider_index)
+    with provider_cols[1]:
+        ollama_model = st.text_input("Ollama model", value=default_ollama_model)
+    with provider_cols[2]:
+        ollama_base_url = st.text_input("Ollama base URL", value=default_ollama_base_url)
+
+    selected_model = ollama_model if provider_choice in {"Auto", "Ollama / Local Llama"} else streamlit_secret_value("OPENAI_MODEL", "gpt-4o-mini")
+    provider_info = detect_ai_provider(provider=provider_choice, model=selected_model, base_url=ollama_base_url, api_key=openai_key)
+    provider_tone = "good" if provider_info.get("status") == "OK" else "warn" if provider_info.get("status") == "Unavailable" else "neutral"
+    render_metric_grid(
+        [
+            ("Provider", provider_info.get("provider_label", "Disabled"), provider_info.get("message", ""), provider_tone),
+            ("Model", provider_info.get("model", "N/A"), provider_info.get("base_url") or "Configured provider", "neutral"),
+            ("Status", provider_info.get("status", "Disabled"), "Generation uses this provider when available", provider_tone),
+        ],
+        columns=3,
+        small=True,
+    )
+    st.session_state["ai_dd_health"] = {
+        "ticker": symbol,
+        "packet_status": packet_status,
+        "packet_error": packet_error,
+        "packet_updated": now_et(),
+        "provider": provider_info.get("provider_label"),
+        "provider_status": provider_info.get("status"),
+        "provider_message": provider_info.get("message"),
+        "provider_model": provider_info.get("model"),
+        "provider_base_url": provider_info.get("base_url", ""),
+        "ollama_status": "OK" if provider_info.get("ollama_available") else "Unavailable",
+        "ollama_message": provider_info.get("ollama_message") or (provider_info.get("message") if provider_info.get("provider") == "ollama" else ""),
+        "openai_status": "Enabled" if provider_info.get("openai_available") else "Disabled: missing API key",
+        "last_generation_status": prior_ai_health.get("last_generation_status", "Not run"),
+        "last_generation_error": prior_ai_health.get("last_generation_error", ""),
+        "last_generation_updated": prior_ai_health.get("last_generation_updated"),
+    }
+
     st.markdown("#### Memo Options")
     option_cols = st.columns(4)
     with option_cols[0]:
@@ -2583,31 +2623,49 @@ def ai_due_diligence_page(ticker: str) -> None:
         include_risks = st.checkbox("Include risks", value=True)
     with option_cols[3]:
         include_quality = st.checkbox("Include data quality notes", value=True)
-    if not key:
-        st.info("AI Due Diligence is disabled until OPENAI_API_KEY is added to Streamlit secrets.")
-        st.caption("To enable AI Due Diligence, add OPENAI_API_KEY to your Streamlit secrets.")
-        st.button("Generate AI Due Diligence Memo", type="primary", disabled=True)
-        return
+
+    if provider_info.get("status") != "OK":
+        if provider_choice in {"Auto", "Ollama / Local Llama"} or provider_info.get("provider") == "ollama":
+            st.warning("Local Llama is unavailable. Make sure Ollama is installed, running, and the selected model is pulled.")
+            st.markdown(
+                """
+                **Local setup**
+                1. Install Ollama.
+                2. Run: `ollama pull llama3.1:8b`
+                3. Start Ollama.
+                4. Refresh this page.
+                """
+            )
+            st.caption("Local Ollama works best when running PineTerminal locally. For cloud deployment, use a hosted Llama provider or an OpenAI-compatible endpoint.")
+        elif provider_choice == "OpenAI":
+            st.info("OpenAI generation is disabled until OPENAI_API_KEY is added to Streamlit secrets.")
+            st.caption("OpenAI is optional. PineTerminal can use local Ollama instead when it is available.")
+        else:
+            st.info("AI memo generation is disabled. The research packet preview remains available for manual review.")
+        st.caption("Future hosted Llama support can use OPENAI_COMPATIBLE_BASE_URL, OPENAI_COMPATIBLE_API_KEY, and OPENAI_COMPATIBLE_MODEL.")
+
     if not has_basic_data:
         st.warning("Insufficient structured data to generate a reliable DD memo.")
-    generate_disabled = not has_basic_data
+    generate_disabled = not has_basic_data or provider_info.get("status") != "OK"
     if st.button("Generate AI Due Diligence Memo", type="primary", disabled=generate_disabled):
         with st.spinner("Generating memo from structured terminal data..."):
             try:
                 memo = generate_due_diligence_memo(
                     packet,
-                    key,
-                    model=model,
+                    api_key=openai_key,
+                    model=provider_info.get("model"),
                     memo_length=memo_length,
                     tone=memo_tone,
                     include_risks=include_risks,
                     include_data_quality_notes=include_quality,
+                    provider_info=provider_info,
+                    base_url=provider_info.get("base_url"),
                 )
                 st.session_state["ai_dd_memo"] = memo
                 st.session_state["ai_dd_health"].update({"last_generation_status": "OK", "last_generation_error": "", "last_generation_updated": now_et()})
             except Exception as exc:
                 st.session_state["ai_dd_health"].update({"last_generation_status": "Generation failed", "last_generation_error": str(exc)[:240], "last_generation_updated": now_et()})
-                st.error("AI memo generation failed. Check API key, quota, or network status.")
+                st.error("AI memo generation failed. Check the selected provider, model, API key, quota, or network status.")
     memo = st.session_state.get("ai_dd_memo")
     if memo:
         st.markdown("#### AI Due Diligence Memo")
@@ -2641,8 +2699,9 @@ def data_health_page(ticker: str) -> None:
         _, social_status = fetch_social_momentum_names()
     except Exception as exc:
         social_status = {"Source": "Social momentum", "Status": "Source error", "Last Updated": now_et(), "Error": str(exc)}
-    openai_status = "Enabled" if streamlit_secret_value("OPENAI_API_KEY") else "Disabled: missing API key"
     ai_health = st.session_state.get("ai_dd_health", {})
+    current_ai_provider = detect_ai_provider()
+    openai_status = "Enabled" if current_ai_provider.get("openai_available") else "Disabled: missing API key"
     date_status = get_date_normalization_status()
     health = pd.DataFrame(
         [
@@ -2689,10 +2748,13 @@ def data_health_page(ticker: str) -> None:
             {"Source": "Date/time normalization", "Status": date_status.get("Status"), "Last Refresh": date_status.get("Last Updated"), "Cache TTL": "Runtime", "Filing Period": "", "Structured Period": "", "Missing Fields": date_status.get("Affected Field", ""), "Error": date_status.get("Error", "")},
             {"Source": filing_status.get("Source"), "Status": filing_status.get("Status"), "Last Refresh": filing_status.get("Last Updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": filing_status.get("Error", "")},
             {"Source": "SQLite watchlist", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "Persistent local DB", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
-            {"Source": "AI Due Diligence", "Status": "Enabled" if openai_status == "Enabled" else "Disabled: missing API key", "Last Refresh": ai_health.get("packet_updated", now_et()), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "OPENAI_API_KEY not configured" if openai_status != "Enabled" else ""},
-            {"Source": "OpenAI key availability", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "Streamlit secrets", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "OPENAI_API_KEY not configured" if openai_status != "Enabled" else ""},
+            {"Source": "AI Provider", "Status": ai_health.get("provider_status", current_ai_provider.get("status")), "Last Refresh": ai_health.get("packet_updated", now_et()), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": ai_health.get("provider_model", current_ai_provider.get("model", "")), "Error": ai_health.get("provider_message", current_ai_provider.get("message", ""))},
+            {"Source": "Ollama availability", "Status": ai_health.get("ollama_status", "OK" if current_ai_provider.get("ollama_available") else "Unavailable"), "Last Refresh": now_et(), "Cache TTL": "Runtime health check", "Filing Period": "", "Structured Period": "", "Missing Fields": ai_health.get("provider_base_url", current_ai_provider.get("base_url", "")), "Error": ai_health.get("ollama_message", current_ai_provider.get("ollama_message", ""))},
+            {"Source": "Ollama model", "Status": ai_health.get("provider_model", current_ai_provider.get("model", "N/A")), "Last Refresh": now_et(), "Cache TTL": "Streamlit secrets/env", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "Default local model is llama3.1:8b unless OLLAMA_MODEL is configured."},
+            {"Source": "OpenAI availability", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "Streamlit secrets/env", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "OPENAI_API_KEY not configured" if openai_status != "Enabled" else ""},
             {"Source": "Research packet build status", "Status": ai_health.get("packet_status", "Not run"), "Last Refresh": ai_health.get("packet_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("packet_error", "")},
             {"Source": "Last AI generation status", "Status": ai_health.get("last_generation_status", "Not run"), "Last Refresh": ai_health.get("last_generation_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("last_generation_error", "")},
+            {"Source": "Last AI error", "Status": "OK" if not ai_health.get("last_generation_error") else "Generation failed", "Last Refresh": ai_health.get("last_generation_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("last_generation_error", "")},
         ]
     )
     df_display(health, height=260)
