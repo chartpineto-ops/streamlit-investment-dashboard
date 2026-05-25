@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ai.dd_generator import build_research_packet, generate_dd_memo
+from ai.dd_generator import build_research_packet, generate_due_diligence_memo
 from data.company_identity import get_company_identity
 from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_filing, fetch_sec_filings, ticker_to_cik
 from data.financials import build_three_statement_visual_data, get_latest_quarterly_release, load_latest_company_financials, view_history
@@ -2513,23 +2513,106 @@ def macro_page(ticker: str) -> None:
 
 def ai_due_diligence_page(ticker: str) -> None:
     st.title("AI Due Diligence")
-    st.markdown('<div class="terminal-subtitle">Generates a starter DD memo from the terminal research packet. Disabled unless OPENAI_API_KEY exists in Streamlit secrets.</div>', unsafe_allow_html=True)
-    packet = build_research_packet(ticker)
-    with st.expander("Research packet", expanded=False):
+    st.markdown('<div class="terminal-subtitle">Generate a grounded starter DD memo from the structured PineTerminal research packet.</div>', unsafe_allow_html=True)
+    symbol = clean_ticker(ticker)
+    packet_status = "Packet partial"
+    packet_error = ""
+    try:
+        quote = fetch_quote(symbol)
+        financials = load_latest_company_financials(symbol)
+        identity = get_company_identity(symbol)
+        signal = compute_signal(symbol)
+        options = fetch_options_summary(symbol, quote.get("price"))
+        filings, filing_status = fetch_sec_filings(symbol)
+        news, news_status = fetch_news(symbol, 10)
+        packet = build_research_packet(
+            symbol,
+            company_identity=identity,
+            quote_data=quote,
+            financial_packet=financials,
+            signal_output=signal,
+            technical_output=signal.get("technicals", {}),
+            valuation_output={"valuation_view": valuation_label(signal)},
+            options_data=options,
+            filings_data=(filings, filing_status),
+            news_data=(news, news_status),
+            data_health=None,
+        )
+        has_basic_data = bool(symbol and (quote.get("price") is not None or quote.get("company_name")) and signal.get("signal_label"))
+        packet_status = "Packet ready" if has_basic_data else "Packet partial"
+    except Exception as exc:
+        packet = {"ticker": symbol, "error": "Research packet build failed."}
+        quote, financials, signal, filings, news = {}, {}, {}, pd.DataFrame(), pd.DataFrame()
+        filing_status, news_status = {}, []
+        has_basic_data = False
+        packet_status = "Generation failed"
+        packet_error = str(exc)[:240]
+
+    st.session_state["ai_dd_health"] = {
+        "ticker": symbol,
+        "packet_status": packet_status,
+        "packet_error": packet_error,
+        "packet_updated": now_et(),
+        "last_generation_status": st.session_state.get("ai_dd_health", {}).get("last_generation_status", "Not run"),
+        "last_generation_error": st.session_state.get("ai_dd_health", {}).get("last_generation_error", ""),
+        "last_generation_updated": st.session_state.get("ai_dd_health", {}).get("last_generation_updated"),
+    }
+    completeness = (packet.get("data_quality") or {}).get("completeness_score") or signal.get("data_completeness")
+    render_metric_grid(
+        [
+            ("Selected Ticker", symbol or "N/A", (packet.get("company_identity") or {}).get("company_name", "N/A"), "neutral"),
+            ("Research Signal", signal.get("signal_label", "No Rating / Insufficient Data"), "PineTerminal calculated signal", "good" if signal.get("signal_label") in {"Buy", "Speculative Buy"} else "warn" if signal.get("signal_label") == "Hold / Watchlist" else "neutral"),
+            ("Composite Score", fmt_number(signal.get("composite_score"), 1), f"Confidence: {signal.get('confidence', 'N/A')}", "neutral"),
+            ("Data Completeness", _fmt_completeness(completeness), packet_status, "good" if to_float(completeness) and to_float(completeness) >= 85 else "warn"),
+        ],
+        columns=4,
+        small=True,
+    )
+    with st.expander("Research Packet", expanded=False):
         st.json(packet)
     key = streamlit_secret_value("OPENAI_API_KEY")
     model = "gpt-4o-mini"
     model = streamlit_secret_value("OPENAI_MODEL", model)
+    st.markdown("#### Memo Options")
+    option_cols = st.columns(4)
+    with option_cols[0]:
+        memo_length = st.selectbox("Memo length", ["Short", "Standard", "Detailed"], index=1)
+    with option_cols[1]:
+        memo_tone = st.selectbox("Tone", ["Analyst style", "Executive brief", "Blog draft"], index=0)
+    with option_cols[2]:
+        include_risks = st.checkbox("Include risks", value=True)
+    with option_cols[3]:
+        include_quality = st.checkbox("Include data quality notes", value=True)
     if not key:
-        st.info("AI DD is disabled until OPENAI_API_KEY is added to Streamlit secrets.")
+        st.info("AI Due Diligence is disabled until OPENAI_API_KEY is added to Streamlit secrets.")
+        st.caption("To enable AI Due Diligence, add OPENAI_API_KEY to your Streamlit secrets.")
+        st.button("Generate AI Due Diligence Memo", type="primary", disabled=True)
         return
-    if st.button("Generate DD Memo", type="primary"):
+    if not has_basic_data:
+        st.warning("Insufficient structured data to generate a reliable DD memo.")
+    generate_disabled = not has_basic_data
+    if st.button("Generate AI Due Diligence Memo", type="primary", disabled=generate_disabled):
         with st.spinner("Generating memo from structured terminal data..."):
-            memo, error = generate_dd_memo(packet, key, model=model)
-        if error:
-            st.error(error)
-        else:
-            st.markdown(memo)
+            try:
+                memo = generate_due_diligence_memo(
+                    packet,
+                    key,
+                    model=model,
+                    memo_length=memo_length,
+                    tone=memo_tone,
+                    include_risks=include_risks,
+                    include_data_quality_notes=include_quality,
+                )
+                st.session_state["ai_dd_memo"] = memo
+                st.session_state["ai_dd_health"].update({"last_generation_status": "OK", "last_generation_error": "", "last_generation_updated": now_et()})
+            except Exception as exc:
+                st.session_state["ai_dd_health"].update({"last_generation_status": "Generation failed", "last_generation_error": str(exc)[:240], "last_generation_updated": now_et()})
+                st.error("AI memo generation failed. Check API key, quota, or network status.")
+    memo = st.session_state.get("ai_dd_memo")
+    if memo:
+        st.markdown("#### AI Due Diligence Memo")
+        st.markdown(memo)
+        st.download_button("Download memo as .md", memo, file_name=f"{symbol or 'PineTerminal'}_due_diligence_memo.md", mime="text/markdown")
 
 
 def data_health_page(ticker: str) -> None:
@@ -2558,7 +2641,8 @@ def data_health_page(ticker: str) -> None:
         _, social_status = fetch_social_momentum_names()
     except Exception as exc:
         social_status = {"Source": "Social momentum", "Status": "Source error", "Last Updated": now_et(), "Error": str(exc)}
-    openai_status = "OK" if streamlit_secret_value("OPENAI_API_KEY") else "Missing"
+    openai_status = "Enabled" if streamlit_secret_value("OPENAI_API_KEY") else "Disabled: missing API key"
+    ai_health = st.session_state.get("ai_dd_health", {})
     date_status = get_date_normalization_status()
     health = pd.DataFrame(
         [
@@ -2605,7 +2689,10 @@ def data_health_page(ticker: str) -> None:
             {"Source": "Date/time normalization", "Status": date_status.get("Status"), "Last Refresh": date_status.get("Last Updated"), "Cache TTL": "Runtime", "Filing Period": "", "Structured Period": "", "Missing Fields": date_status.get("Affected Field", ""), "Error": date_status.get("Error", "")},
             {"Source": filing_status.get("Source"), "Status": filing_status.get("Status"), "Last Refresh": filing_status.get("Last Updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": filing_status.get("Error", "")},
             {"Source": "SQLite watchlist", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "Persistent local DB", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
-            {"Source": "OpenAI API", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "OPENAI_API_KEY not configured" if openai_status == "Missing" else ""},
+            {"Source": "AI Due Diligence", "Status": "Enabled" if openai_status == "Enabled" else "Disabled: missing API key", "Last Refresh": ai_health.get("packet_updated", now_et()), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "OPENAI_API_KEY not configured" if openai_status != "Enabled" else ""},
+            {"Source": "OpenAI key availability", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "Streamlit secrets", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "OPENAI_API_KEY not configured" if openai_status != "Enabled" else ""},
+            {"Source": "Research packet build status", "Status": ai_health.get("packet_status", "Not run"), "Last Refresh": ai_health.get("packet_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("packet_error", "")},
+            {"Source": "Last AI generation status", "Status": ai_health.get("last_generation_status", "Not run"), "Last Refresh": ai_health.get("last_generation_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("last_generation_error", "")},
         ]
     )
     df_display(health, height=260)
