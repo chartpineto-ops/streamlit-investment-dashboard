@@ -27,8 +27,6 @@ SYSTEM_PROMPT = (
 
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-DEFAULT_COMPATIBLE_MODEL = "llama3.1:8b"
 
 
 def _records(frame, limit: int = 8) -> list[dict[str, Any]]:
@@ -316,13 +314,6 @@ def build_research_packet(
     }
 
 
-def openai_key_from_secrets(st_secrets) -> str | None:
-    try:
-        return st_secrets.get("OPENAI_API_KEY")
-    except Exception:
-        return None
-
-
 def _config_value(key: str, default=None, secrets=None):
     env_value = os.environ.get(key)
     if env_value not in (None, ""):
@@ -349,17 +340,9 @@ def _config_value(key: str, default=None, secrets=None):
 
 def _normalize_provider(provider: str | None) -> str:
     text = str(provider or "").strip().lower()
-    if text in {"", "auto"}:
-        return "auto"
-    if "compatible" in text or "hosted" in text:
-        return "openai_compatible"
-    if "ollama" in text or "llama" in text:
-        return "ollama"
-    if "openai" in text:
-        return "openai"
     if "disabled" in text or text == "none":
         return "disabled"
-    return text
+    return "ollama"
 
 
 def _ollama_health(base_url: str, model: str | None = None) -> dict:
@@ -394,19 +377,13 @@ def detect_ai_provider(
     provider: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
-    api_key: str | None = None,
     secrets=None,
 ) -> dict:
     """Detect the active AI memo provider without exposing secrets."""
-    configured_provider = provider or _config_value("AI_PROVIDER", "auto", secrets)
+    configured_provider = provider or _config_value("AI_PROVIDER", "ollama", secrets)
     selected_provider = _normalize_provider(configured_provider)
     ollama_base_url = base_url or _config_value("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL, secrets)
     ollama_model = model or _config_value("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL, secrets)
-    openai_key = api_key or _config_value("OPENAI_API_KEY", None, secrets)
-    openai_model = _config_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL, secrets)
-    compatible_base_url = _config_value("OPENAI_COMPATIBLE_BASE_URL", None, secrets)
-    compatible_key = _config_value("OPENAI_COMPATIBLE_API_KEY", None, secrets)
-    compatible_model = model or _config_value("OPENAI_COMPATIBLE_MODEL", DEFAULT_COMPATIBLE_MODEL, secrets)
 
     if selected_provider == "disabled":
         return {
@@ -416,114 +393,19 @@ def detect_ai_provider(
             "status": "Disabled",
             "message": "AI memo generation is disabled. The research packet preview is still available.",
             "base_url": "",
-            "openai_available": bool(openai_key),
             "ollama_available": False,
-        }
-
-    if selected_provider == "openai":
-        if not openai_key:
-            return {
-                "provider": "openai",
-                "provider_label": "OpenAI",
-                "model": openai_model,
-                "status": "Disabled",
-                "message": "OPENAI_API_KEY is not configured. OpenAI generation is unavailable.",
-                "base_url": "",
-                "openai_available": False,
-                "ollama_available": False,
-            }
-        return {
-            "provider": "openai",
-            "provider_label": "OpenAI",
-            "model": openai_model,
-            "status": "OK",
-            "message": "OpenAI is configured.",
-            "base_url": "",
-            "openai_available": True,
-            "ollama_available": False,
-        }
-
-    if selected_provider == "openai_compatible":
-        missing = []
-        if not compatible_base_url:
-            missing.append("OPENAI_COMPATIBLE_BASE_URL")
-        if not compatible_key:
-            missing.append("OPENAI_COMPATIBLE_API_KEY")
-        if not compatible_model:
-            missing.append("OPENAI_COMPATIBLE_MODEL")
-        if missing:
-            return {
-                "provider": "openai_compatible",
-                "provider_label": "OpenAI-Compatible / Hosted Llama",
-                "model": compatible_model or "N/A",
-                "status": "Disabled",
-                "message": f"Hosted Llama is unavailable until {', '.join(missing)} is configured.",
-                "base_url": compatible_base_url or "",
-                "openai_available": bool(openai_key),
-                "ollama_available": False,
-                "compatible_available": False,
-            }
-        return {
-            "provider": "openai_compatible",
-            "provider_label": "OpenAI-Compatible / Hosted Llama",
-            "model": compatible_model,
-            "status": "OK",
-            "message": "OpenAI-compatible hosted Llama endpoint is configured.",
-            "base_url": compatible_base_url,
-            "openai_available": bool(openai_key),
-            "ollama_available": False,
-            "compatible_available": True,
-        }
-
-    if selected_provider == "ollama":
-        health = _ollama_health(ollama_base_url, ollama_model)
-        return {
-            "provider": "ollama",
-            "provider_label": "Ollama / Local Llama",
-            "model": ollama_model,
-            "status": health.get("status"),
-            "message": health.get("message"),
-            "base_url": ollama_base_url,
-            "openai_available": bool(openai_key),
-            "ollama_available": health.get("status") == "OK",
-            "available_models": health.get("models", []),
         }
 
     health = _ollama_health(ollama_base_url, ollama_model)
-    if health.get("status") == "OK":
-        return {
-            "provider": "ollama",
-            "provider_label": "Ollama / Local Llama",
-            "model": ollama_model,
-            "status": "OK",
-            "message": health.get("message"),
-            "base_url": ollama_base_url,
-            "openai_available": bool(openai_key),
-            "ollama_available": True,
-            "available_models": health.get("models", []),
-        }
-    if openai_key:
-        return {
-            "provider": "openai",
-            "provider_label": "OpenAI",
-            "model": openai_model,
-            "status": "OK",
-            "message": "Ollama was unavailable, so PineTerminal will use optional OpenAI.",
-            "base_url": "",
-            "openai_available": True,
-            "ollama_available": False,
-            "ollama_message": health.get("message"),
-        }
     return {
-        "provider": "disabled",
-        "provider_label": "Disabled",
-        "model": "N/A",
-        "status": "Disabled",
-        "message": "No AI provider is available. Ollama is unavailable and OPENAI_API_KEY is not configured.",
+        "provider": "ollama",
+        "provider_label": "Ollama / Local Llama",
+        "model": ollama_model,
+        "status": health.get("status"),
+        "message": health.get("message"),
         "base_url": ollama_base_url,
-        "openai_available": False,
-        "ollama_available": False,
-        "ollama_message": health.get("message"),
+        "ollama_available": health.get("status") == "OK",
+        "available_models": health.get("models", []),
     }
 
 
@@ -573,80 +455,6 @@ Research packet:
 """
 
 
-def generate_due_diligence_memo_openai(
-    research_packet: dict,
-    api_key: str,
-    model: str = DEFAULT_OPENAI_MODEL,
-    memo_length: str = "Standard",
-    tone: str = "Analyst style",
-    include_risks: bool = True,
-    include_data_quality_notes: bool = True,
-) -> str:
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY is missing.")
-    prompt = _memo_prompt(research_packet, memo_length, tone, include_risks, include_data_quality_notes)
-    response = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.2,
-        },
-        timeout=60,
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(f"OpenAI request failed with status {response.status_code}: {response.text[:240]}")
-    payload = response.json()
-    return payload["choices"][0]["message"]["content"]
-
-
-def _openai_compatible_chat_url(base_url: str) -> str:
-    clean_base = (base_url or "").rstrip("/")
-    if clean_base.endswith("/chat/completions"):
-        return clean_base
-    if clean_base.endswith("/v1"):
-        return f"{clean_base}/chat/completions"
-    return f"{clean_base}/v1/chat/completions"
-
-
-def generate_due_diligence_memo_openai_compatible(
-    research_packet: dict,
-    api_key: str,
-    base_url: str,
-    model: str = DEFAULT_COMPATIBLE_MODEL,
-    memo_length: str = "Standard",
-    tone: str = "Analyst style",
-    include_risks: bool = True,
-    include_data_quality_notes: bool = True,
-) -> str:
-    if not api_key:
-        raise ValueError("OPENAI_COMPATIBLE_API_KEY is missing.")
-    if not base_url:
-        raise ValueError("OPENAI_COMPATIBLE_BASE_URL is missing.")
-    prompt = _memo_prompt(research_packet, memo_length, tone, include_risks, include_data_quality_notes)
-    response = requests.post(
-        _openai_compatible_chat_url(base_url),
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model or DEFAULT_COMPATIBLE_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.2,
-        },
-        timeout=90,
-    )
-    if response.status_code >= 400:
-        raise RuntimeError(f"OpenAI-compatible request failed with status {response.status_code}: {response.text[:240]}")
-    payload = response.json()
-    return payload["choices"][0]["message"]["content"]
-
-
 def generate_due_diligence_memo_ollama(
     research_packet: dict,
     model: str = DEFAULT_OLLAMA_MODEL,
@@ -684,7 +492,6 @@ def generate_due_diligence_memo_ollama(
 
 def generate_due_diligence_memo(
     research_packet: dict,
-    api_key: str | None = None,
     model: str | None = None,
     memo_length: str = "Standard",
     tone: str = "Analyst style",
@@ -693,47 +500,22 @@ def generate_due_diligence_memo(
     provider_info: dict | None = None,
     base_url: str | None = None,
 ) -> str:
-    provider = provider_info or detect_ai_provider(model=model, base_url=base_url, api_key=api_key)
+    provider = provider_info or detect_ai_provider(model=model, base_url=base_url)
     if provider.get("status") != "OK":
         raise RuntimeError(provider.get("message") or "AI provider is unavailable.")
-    if provider.get("provider") == "ollama":
-        return generate_due_diligence_memo_ollama(
-            research_packet,
-            model=provider.get("model") or model or DEFAULT_OLLAMA_MODEL,
-            base_url=provider.get("base_url") or base_url or DEFAULT_OLLAMA_BASE_URL,
-            memo_length=memo_length,
-            tone=tone,
-            include_risks=include_risks,
-            include_data_quality_notes=include_data_quality_notes,
-        )
-    if provider.get("provider") == "openai":
-        key = api_key or _config_value("OPENAI_API_KEY")
-        return generate_due_diligence_memo_openai(
-            research_packet,
-            key,
-            model=provider.get("model") or model or DEFAULT_OPENAI_MODEL,
-            memo_length=memo_length,
-            tone=tone,
-            include_risks=include_risks,
-            include_data_quality_notes=include_data_quality_notes,
-        )
-    if provider.get("provider") == "openai_compatible":
-        key = _config_value("OPENAI_COMPATIBLE_API_KEY")
-        return generate_due_diligence_memo_openai_compatible(
-            research_packet,
-            key,
-            base_url=provider.get("base_url") or _config_value("OPENAI_COMPATIBLE_BASE_URL"),
-            model=provider.get("model") or model or DEFAULT_COMPATIBLE_MODEL,
-            memo_length=memo_length,
-            tone=tone,
-            include_risks=include_risks,
-            include_data_quality_notes=include_data_quality_notes,
-        )
-    raise RuntimeError(provider.get("message") or "AI memo generation is disabled.")
+    return generate_due_diligence_memo_ollama(
+        research_packet,
+        model=provider.get("model") or model or DEFAULT_OLLAMA_MODEL,
+        base_url=provider.get("base_url") or base_url or DEFAULT_OLLAMA_BASE_URL,
+        memo_length=memo_length,
+        tone=tone,
+        include_risks=include_risks,
+        include_data_quality_notes=include_data_quality_notes,
+    )
 
 
-def generate_dd_memo(packet: dict, api_key: str, model: str = "gpt-4o-mini") -> tuple[str, str]:
+def generate_dd_memo(packet: dict, model: str = DEFAULT_OLLAMA_MODEL) -> tuple[str, str]:
     try:
-        return generate_due_diligence_memo(packet, api_key, model=model), ""
+        return generate_due_diligence_memo(packet, model=model), ""
     except Exception as exc:
         return "", str(exc)

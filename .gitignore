@@ -8,3 +8,7 @@ streamlit.log
 .DS_Store
 *.db
 *.db-journal
+tools/ollama/
+.ollama-models/
+ollama_serve.pid
+streamlit_*.pid
