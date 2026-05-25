@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from html import escape
+import json
 from math import isnan
 import os
 from pathlib import Path
@@ -2564,26 +2565,38 @@ def ai_due_diligence_page(ticker: str) -> None:
         columns=4,
         small=True,
     )
+    packet_json = json.dumps(packet, default=str, indent=2)
     with st.expander("Research Packet", expanded=False):
         st.json(packet)
+        st.download_button(
+            "Download research packet JSON",
+            packet_json,
+            file_name=f"{symbol or 'PineTerminal'}_research_packet.json",
+            mime="application/json",
+            key="ai_research_packet_download_button",
+        )
 
     configured_provider = str(streamlit_secret_value("AI_PROVIDER", "auto") or "auto").lower()
-    provider_options = ["Auto", "Ollama / Local Llama", "OpenAI", "Disabled"]
-    provider_index = {"auto": 0, "ollama": 1, "openai": 2, "disabled": 3}.get(configured_provider, 0)
+    provider_options = ["Auto", "Ollama / Local Llama", "OpenAI", "OpenAI-Compatible / Hosted Llama", "Disabled"]
+    provider_index = {"auto": 0, "ollama": 1, "openai": 2, "openai_compatible": 3, "openai-compatible": 3, "compatible": 3, "hosted": 3, "disabled": 4}.get(configured_provider, 0)
     default_ollama_model = streamlit_secret_value("OLLAMA_MODEL", "llama3.1:8b")
     default_ollama_base_url = streamlit_secret_value("OLLAMA_BASE_URL", "http://localhost:11434")
     openai_key = streamlit_secret_value("OPENAI_API_KEY")
 
     st.markdown("#### AI Provider")
-    provider_cols = st.columns([1.1, 1.2, 1.5])
+    provider_choice = st.radio("Provider", provider_options, index=provider_index, horizontal=True, key="ai_provider_radio")
+    provider_cols = st.columns([1.2, 1.5])
     with provider_cols[0]:
-        provider_choice = st.selectbox("Provider", provider_options, index=provider_index)
+        ollama_model = st.text_input("Ollama model", value=default_ollama_model, key="ollama_model_input")
     with provider_cols[1]:
-        ollama_model = st.text_input("Ollama model", value=default_ollama_model)
-    with provider_cols[2]:
-        ollama_base_url = st.text_input("Ollama base URL", value=default_ollama_base_url)
+        ollama_base_url = st.text_input("Ollama base URL", value=default_ollama_base_url, key="ollama_base_url_input")
 
-    selected_model = ollama_model if provider_choice in {"Auto", "Ollama / Local Llama"} else streamlit_secret_value("OPENAI_MODEL", "gpt-4o-mini")
+    if provider_choice in {"Auto", "Ollama / Local Llama"}:
+        selected_model = ollama_model
+    elif provider_choice == "OpenAI-Compatible / Hosted Llama":
+        selected_model = streamlit_secret_value("OPENAI_COMPATIBLE_MODEL", "llama3.1:8b")
+    else:
+        selected_model = streamlit_secret_value("OPENAI_MODEL", "gpt-4o-mini")
     provider_info = detect_ai_provider(provider=provider_choice, model=selected_model, base_url=ollama_base_url, api_key=openai_key)
     provider_tone = "good" if provider_info.get("status") == "OK" else "warn" if provider_info.get("status") == "Unavailable" else "neutral"
     render_metric_grid(
@@ -2608,6 +2621,7 @@ def ai_due_diligence_page(ticker: str) -> None:
         "ollama_status": "OK" if provider_info.get("ollama_available") else "Unavailable",
         "ollama_message": provider_info.get("ollama_message") or (provider_info.get("message") if provider_info.get("provider") == "ollama" else ""),
         "openai_status": "Enabled" if provider_info.get("openai_available") else "Disabled: missing API key",
+        "compatible_status": "OK" if provider_info.get("compatible_available") else "Disabled: missing hosted endpoint config",
         "last_generation_status": prior_ai_health.get("last_generation_status", "Not run"),
         "last_generation_error": prior_ai_health.get("last_generation_error", ""),
         "last_generation_updated": prior_ai_health.get("last_generation_updated"),
@@ -2616,13 +2630,13 @@ def ai_due_diligence_page(ticker: str) -> None:
     st.markdown("#### Memo Options")
     option_cols = st.columns(4)
     with option_cols[0]:
-        memo_length = st.selectbox("Memo length", ["Short", "Standard", "Detailed"], index=1)
+        memo_length = st.radio("Memo length", ["Short", "Standard", "Detailed"], index=1, horizontal=True, key="ai_memo_length_radio")
     with option_cols[1]:
-        memo_tone = st.selectbox("Tone", ["Analyst style", "Executive brief", "Blog draft"], index=0)
+        memo_tone = st.radio("Tone", ["Analyst style", "Executive brief", "Blog draft"], index=0, horizontal=True, key="ai_tone_radio")
     with option_cols[2]:
-        include_risks = st.checkbox("Include risks", value=True)
+        include_risks = st.radio("Include risks", ["Yes", "No"], index=0, horizontal=True, key="ai_include_risks_radio") == "Yes"
     with option_cols[3]:
-        include_quality = st.checkbox("Include data quality notes", value=True)
+        include_quality = st.radio("Include data quality notes", ["Yes", "No"], index=0, horizontal=True, key="ai_include_data_quality_radio") == "Yes"
 
     if provider_info.get("status") != "OK":
         if provider_choice in {"Auto", "Ollama / Local Llama"} or provider_info.get("provider") == "ollama":
@@ -2636,18 +2650,22 @@ def ai_due_diligence_page(ticker: str) -> None:
                 4. Refresh this page.
                 """
             )
-            st.caption("Local Ollama works best when running PineTerminal locally. For cloud deployment, use a hosted Llama provider or an OpenAI-compatible endpoint.")
+            st.caption("Local Ollama works only when PineTerminal is running on the same machine as Ollama. For cloud deployment, configure a hosted Llama/OpenAI-compatible endpoint or use research-packet preview mode.")
         elif provider_choice == "OpenAI":
             st.info("OpenAI generation is disabled until OPENAI_API_KEY is added to Streamlit secrets.")
             st.caption("OpenAI is optional. PineTerminal can use local Ollama instead when it is available.")
+        elif provider_choice == "OpenAI-Compatible / Hosted Llama":
+            st.info("Hosted Llama generation is disabled until OPENAI_COMPATIBLE_BASE_URL, OPENAI_COMPATIBLE_API_KEY, and OPENAI_COMPATIBLE_MODEL are configured.")
+            st.caption("Use an OpenAI-compatible endpoint for hosted Llama or other local-network model gateways.")
         else:
-            st.info("AI memo generation is disabled. The research packet preview remains available for manual review.")
-        st.caption("Future hosted Llama support can use OPENAI_COMPATIBLE_BASE_URL, OPENAI_COMPATIBLE_API_KEY, and OPENAI_COMPATIBLE_MODEL.")
+            st.info("AI memo generation is disabled/manual mode. The research packet preview remains available for manual review.")
+        st.caption("Hosted Llama endpoints use OPENAI_COMPATIBLE_BASE_URL, OPENAI_COMPATIBLE_API_KEY, and OPENAI_COMPATIBLE_MODEL.")
+    st.caption("If controls fail to load after a code update, restart Streamlit and hard refresh the browser.")
 
     if not has_basic_data:
         st.warning("Insufficient structured data to generate a reliable DD memo.")
     generate_disabled = not has_basic_data or provider_info.get("status") != "OK"
-    if st.button("Generate AI Due Diligence Memo", type="primary", disabled=generate_disabled):
+    if st.button("Generate AI Due Diligence Memo", type="primary", disabled=generate_disabled, key="ai_generate_button"):
         with st.spinner("Generating memo from structured terminal data..."):
             try:
                 memo = generate_due_diligence_memo(
@@ -2670,7 +2688,7 @@ def ai_due_diligence_page(ticker: str) -> None:
     if memo:
         st.markdown("#### AI Due Diligence Memo")
         st.markdown(memo)
-        st.download_button("Download memo as .md", memo, file_name=f"{symbol or 'PineTerminal'}_due_diligence_memo.md", mime="text/markdown")
+        st.download_button("Download memo as .md", memo, file_name=f"{symbol or 'PineTerminal'}_due_diligence_memo.md", mime="text/markdown", key="ai_memo_download_button")
 
 
 def data_health_page(ticker: str) -> None:
@@ -2701,6 +2719,7 @@ def data_health_page(ticker: str) -> None:
         social_status = {"Source": "Social momentum", "Status": "Source error", "Last Updated": now_et(), "Error": str(exc)}
     ai_health = st.session_state.get("ai_dd_health", {})
     current_ai_provider = detect_ai_provider()
+    compatible_ai_provider = detect_ai_provider(provider="OpenAI-Compatible / Hosted Llama")
     openai_status = "Enabled" if current_ai_provider.get("openai_available") else "Disabled: missing API key"
     date_status = get_date_normalization_status()
     health = pd.DataFrame(
@@ -2752,6 +2771,7 @@ def data_health_page(ticker: str) -> None:
             {"Source": "Ollama availability", "Status": ai_health.get("ollama_status", "OK" if current_ai_provider.get("ollama_available") else "Unavailable"), "Last Refresh": now_et(), "Cache TTL": "Runtime health check", "Filing Period": "", "Structured Period": "", "Missing Fields": ai_health.get("provider_base_url", current_ai_provider.get("base_url", "")), "Error": ai_health.get("ollama_message", current_ai_provider.get("ollama_message", ""))},
             {"Source": "Ollama model", "Status": ai_health.get("provider_model", current_ai_provider.get("model", "N/A")), "Last Refresh": now_et(), "Cache TTL": "Streamlit secrets/env", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "Default local model is llama3.1:8b unless OLLAMA_MODEL is configured."},
             {"Source": "OpenAI availability", "Status": openai_status, "Last Refresh": now_et(), "Cache TTL": "Streamlit secrets/env", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "OPENAI_API_KEY not configured" if openai_status != "Enabled" else ""},
+            {"Source": "Hosted Llama / OpenAI-compatible", "Status": ai_health.get("compatible_status", compatible_ai_provider.get("status")), "Last Refresh": now_et(), "Cache TTL": "Streamlit secrets/env", "Filing Period": "", "Structured Period": "", "Missing Fields": compatible_ai_provider.get("model", ""), "Error": compatible_ai_provider.get("message", "")},
             {"Source": "Research packet build status", "Status": ai_health.get("packet_status", "Not run"), "Last Refresh": ai_health.get("packet_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("packet_error", "")},
             {"Source": "Last AI generation status", "Status": ai_health.get("last_generation_status", "Not run"), "Last Refresh": ai_health.get("last_generation_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("last_generation_error", "")},
             {"Source": "Last AI error", "Status": "OK" if not ai_health.get("last_generation_error") else "Generation failed", "Last Refresh": ai_health.get("last_generation_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("last_generation_error", "")},

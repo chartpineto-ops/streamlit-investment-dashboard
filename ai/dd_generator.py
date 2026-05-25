@@ -28,6 +28,7 @@ SYSTEM_PROMPT = (
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_COMPATIBLE_MODEL = "llama3.1:8b"
 
 
 def _records(frame, limit: int = 8) -> list[dict[str, Any]]:
@@ -350,6 +351,8 @@ def _normalize_provider(provider: str | None) -> str:
     text = str(provider or "").strip().lower()
     if text in {"", "auto"}:
         return "auto"
+    if "compatible" in text or "hosted" in text:
+        return "openai_compatible"
     if "ollama" in text or "llama" in text:
         return "ollama"
     if "openai" in text:
@@ -373,8 +376,8 @@ def _ollama_health(base_url: str, model: str | None = None) -> dict:
         models = [item.get("name") for item in payload.get("models", []) if item.get("name")]
         if model and models and model not in models:
             return {
-                "status": "OK",
-                "message": f"Ollama is reachable, but {model} was not listed by /api/tags. Generation may fail until the model is pulled.",
+                "status": "Unavailable",
+                "message": f"Ollama is reachable, but {model} was not listed by /api/tags. Run: ollama pull {model}",
                 "models": models,
             }
         return {"status": "OK", "message": "Ollama is reachable.", "models": models}
@@ -401,6 +404,9 @@ def detect_ai_provider(
     ollama_model = model or _config_value("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL, secrets)
     openai_key = api_key or _config_value("OPENAI_API_KEY", None, secrets)
     openai_model = _config_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL, secrets)
+    compatible_base_url = _config_value("OPENAI_COMPATIBLE_BASE_URL", None, secrets)
+    compatible_key = _config_value("OPENAI_COMPATIBLE_API_KEY", None, secrets)
+    compatible_model = model or _config_value("OPENAI_COMPATIBLE_MODEL", DEFAULT_COMPATIBLE_MODEL, secrets)
 
     if selected_provider == "disabled":
         return {
@@ -435,6 +441,38 @@ def detect_ai_provider(
             "base_url": "",
             "openai_available": True,
             "ollama_available": False,
+        }
+
+    if selected_provider == "openai_compatible":
+        missing = []
+        if not compatible_base_url:
+            missing.append("OPENAI_COMPATIBLE_BASE_URL")
+        if not compatible_key:
+            missing.append("OPENAI_COMPATIBLE_API_KEY")
+        if not compatible_model:
+            missing.append("OPENAI_COMPATIBLE_MODEL")
+        if missing:
+            return {
+                "provider": "openai_compatible",
+                "provider_label": "OpenAI-Compatible / Hosted Llama",
+                "model": compatible_model or "N/A",
+                "status": "Disabled",
+                "message": f"Hosted Llama is unavailable until {', '.join(missing)} is configured.",
+                "base_url": compatible_base_url or "",
+                "openai_available": bool(openai_key),
+                "ollama_available": False,
+                "compatible_available": False,
+            }
+        return {
+            "provider": "openai_compatible",
+            "provider_label": "OpenAI-Compatible / Hosted Llama",
+            "model": compatible_model,
+            "status": "OK",
+            "message": "OpenAI-compatible hosted Llama endpoint is configured.",
+            "base_url": compatible_base_url,
+            "openai_available": bool(openai_key),
+            "ollama_available": False,
+            "compatible_available": True,
         }
 
     if selected_provider == "ollama":
@@ -566,6 +604,49 @@ def generate_due_diligence_memo_openai(
     return payload["choices"][0]["message"]["content"]
 
 
+def _openai_compatible_chat_url(base_url: str) -> str:
+    clean_base = (base_url or "").rstrip("/")
+    if clean_base.endswith("/chat/completions"):
+        return clean_base
+    if clean_base.endswith("/v1"):
+        return f"{clean_base}/chat/completions"
+    return f"{clean_base}/v1/chat/completions"
+
+
+def generate_due_diligence_memo_openai_compatible(
+    research_packet: dict,
+    api_key: str,
+    base_url: str,
+    model: str = DEFAULT_COMPATIBLE_MODEL,
+    memo_length: str = "Standard",
+    tone: str = "Analyst style",
+    include_risks: bool = True,
+    include_data_quality_notes: bool = True,
+) -> str:
+    if not api_key:
+        raise ValueError("OPENAI_COMPATIBLE_API_KEY is missing.")
+    if not base_url:
+        raise ValueError("OPENAI_COMPATIBLE_BASE_URL is missing.")
+    prompt = _memo_prompt(research_packet, memo_length, tone, include_risks, include_data_quality_notes)
+    response = requests.post(
+        _openai_compatible_chat_url(base_url),
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": model or DEFAULT_COMPATIBLE_MODEL,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+        },
+        timeout=90,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"OpenAI-compatible request failed with status {response.status_code}: {response.text[:240]}")
+    payload = response.json()
+    return payload["choices"][0]["message"]["content"]
+
+
 def generate_due_diligence_memo_ollama(
     research_packet: dict,
     model: str = DEFAULT_OLLAMA_MODEL,
@@ -631,6 +712,18 @@ def generate_due_diligence_memo(
             research_packet,
             key,
             model=provider.get("model") or model or DEFAULT_OPENAI_MODEL,
+            memo_length=memo_length,
+            tone=tone,
+            include_risks=include_risks,
+            include_data_quality_notes=include_data_quality_notes,
+        )
+    if provider.get("provider") == "openai_compatible":
+        key = _config_value("OPENAI_COMPATIBLE_API_KEY")
+        return generate_due_diligence_memo_openai_compatible(
+            research_packet,
+            key,
+            base_url=provider.get("base_url") or _config_value("OPENAI_COMPATIBLE_BASE_URL"),
+            model=provider.get("model") or model or DEFAULT_COMPATIBLE_MODEL,
             memo_length=memo_length,
             tone=tone,
             include_risks=include_risks,
