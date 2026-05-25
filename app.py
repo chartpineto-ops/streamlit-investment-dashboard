@@ -2593,10 +2593,12 @@ def ai_due_diligence_page(ticker: str) -> None:
     selected_model = ollama_model
     provider_info = detect_ai_provider(provider=provider_choice, model=selected_model, base_url=ollama_base_url)
     provider_tone = "good" if provider_info.get("status") == "OK" else "warn" if provider_info.get("status") == "Unavailable" else "neutral"
+    available_models = provider_info.get("available_models") or []
+    available_model_note = ", ".join(available_models[:5]) if available_models else "No pulled Ollama models detected"
     render_metric_grid(
         [
             ("Provider", provider_info.get("provider_label", "Disabled"), provider_info.get("message", ""), provider_tone),
-            ("Model", provider_info.get("model", "N/A"), provider_info.get("base_url") or "Configured provider", "neutral"),
+            ("Model", provider_info.get("model", "N/A"), available_model_note, "neutral"),
             ("Status", provider_info.get("status", "Disabled"), "Generation uses this provider when available", provider_tone),
         ],
         columns=3,
@@ -2614,6 +2616,7 @@ def ai_due_diligence_page(ticker: str) -> None:
         "provider_base_url": provider_info.get("base_url", ""),
         "ollama_status": "OK" if provider_info.get("ollama_available") else "Unavailable",
         "ollama_message": provider_info.get("ollama_message") or (provider_info.get("message") if provider_info.get("provider") == "ollama" else ""),
+        "ollama_models": available_model_note,
         "last_generation_status": prior_ai_health.get("last_generation_status", "Not run"),
         "last_generation_error": prior_ai_health.get("last_generation_error", ""),
         "last_generation_updated": prior_ai_health.get("last_generation_updated"),
@@ -2646,6 +2649,22 @@ def ai_due_diligence_page(ticker: str) -> None:
         else:
             st.info("AI memo generation is disabled/manual mode. The research packet preview remains available for manual review.")
     st.caption("If controls fail to load after a code update, restart Streamlit and hard refresh the browser.")
+    with st.expander("Local Llama setup notes", expanded=False):
+        st.markdown(
+            """
+            PineTerminal's V1 AI Due Diligence tool expects an Ollama-served model at the Ollama base URL above.
+
+            Recommended local setup:
+            ```powershell
+            ollama pull llama3.1:8b
+            ollama serve
+            ```
+
+            Meta `llama-model download` raw weights are not automatically usable by this dashboard. To use Meta raw weights, first load or convert them into a runtime that exposes an Ollama-compatible `/api/chat` endpoint.
+            """
+        )
+        if available_models:
+            st.write({"available_ollama_models": available_models})
 
     if not has_basic_data:
         st.warning("Insufficient structured data to generate a reliable DD memo.")
@@ -2667,7 +2686,7 @@ def ai_due_diligence_page(ticker: str) -> None:
                 st.session_state["ai_dd_health"].update({"last_generation_status": "OK", "last_generation_error": "", "last_generation_updated": now_et()})
             except Exception as exc:
                 st.session_state["ai_dd_health"].update({"last_generation_status": "Generation failed", "last_generation_error": str(exc)[:240], "last_generation_updated": now_et()})
-                st.error("AI memo generation failed. Check the selected provider, model, API key, quota, or network status.")
+                st.error("AI memo generation failed. Check that Ollama is running, the selected model is pulled, and the base URL is reachable.")
     memo = st.session_state.get("ai_dd_memo")
     if memo:
         st.markdown("#### AI Due Diligence Memo")
@@ -2752,6 +2771,7 @@ def data_health_page(ticker: str) -> None:
             {"Source": "AI Provider", "Status": ai_health.get("provider_status", current_ai_provider.get("status")), "Last Refresh": ai_health.get("packet_updated", now_et()), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": ai_health.get("provider_model", current_ai_provider.get("model", "")), "Error": ai_health.get("provider_message", current_ai_provider.get("message", ""))},
             {"Source": "Ollama availability", "Status": ai_health.get("ollama_status", "OK" if current_ai_provider.get("ollama_available") else "Unavailable"), "Last Refresh": now_et(), "Cache TTL": "Runtime health check", "Filing Period": "", "Structured Period": "", "Missing Fields": ai_health.get("provider_base_url", current_ai_provider.get("base_url", "")), "Error": ai_health.get("ollama_message", current_ai_provider.get("ollama_message", ""))},
             {"Source": "Ollama model", "Status": ai_health.get("provider_model", current_ai_provider.get("model", "N/A")), "Last Refresh": now_et(), "Cache TTL": "Streamlit secrets/env", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "Default local model is llama3.1:8b unless OLLAMA_MODEL is configured."},
+            {"Source": "Ollama pulled models", "Status": ai_health.get("ollama_models", ", ".join(current_ai_provider.get("available_models", [])[:5]) or "None detected"), "Last Refresh": now_et(), "Cache TTL": "Runtime health check", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "Run ollama pull llama3.1:8b if no models are detected."},
             {"Source": "Research packet build status", "Status": ai_health.get("packet_status", "Not run"), "Last Refresh": ai_health.get("packet_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("packet_error", "")},
             {"Source": "Last AI generation status", "Status": ai_health.get("last_generation_status", "Not run"), "Last Refresh": ai_health.get("last_generation_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("last_generation_error", "")},
             {"Source": "Last AI error", "Status": "OK" if not ai_health.get("last_generation_error") else "Generation failed", "Last Refresh": ai_health.get("last_generation_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("last_generation_error", "")},

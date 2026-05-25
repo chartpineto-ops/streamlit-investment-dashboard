@@ -357,6 +357,12 @@ def _ollama_health(base_url: str, model: str | None = None) -> dict:
             }
         payload = response.json()
         models = [item.get("name") for item in payload.get("models", []) if item.get("name")]
+        if not models:
+            return {
+                "status": "Unavailable",
+                "message": "Ollama is reachable, but no local models are pulled. Run: ollama pull llama3.1:8b",
+                "models": [],
+            }
         if model and models and model not in models:
             return {
                 "status": "Unavailable",
@@ -404,6 +410,7 @@ def detect_ai_provider(
         "status": health.get("status"),
         "message": health.get("message"),
         "base_url": ollama_base_url,
+        "error": health.get("error", ""),
         "ollama_available": health.get("status") == "OK",
         "available_models": health.get("models", []),
     }
