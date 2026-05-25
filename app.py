@@ -11,7 +11,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ai.dd_generator import build_research_packet, detect_ai_provider, generate_due_diligence_memo
 from data.company_identity import get_company_identity
 from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_filing, fetch_sec_filings, ticker_to_cik
 from data.financials import build_three_statement_visual_data, get_latest_quarterly_release, load_latest_company_financials, view_history
@@ -78,7 +77,6 @@ PAGES = [
     "Home / Market Monitor",
     "Company Analysis",
     "Watchlist",
-    "AI Due Diligence",
     "Data Health / Settings",
 ]
 
@@ -2516,184 +2514,6 @@ def macro_page(ticker: str) -> None:
         st.json(statuses)
 
 
-def ai_due_diligence_page(ticker: str) -> None:
-    st.title("AI Due Diligence")
-    st.markdown('<div class="terminal-subtitle">Generate a grounded starter DD memo from the structured PineTerminal research packet.</div>', unsafe_allow_html=True)
-    symbol = clean_ticker(ticker)
-    packet_status = "Packet partial"
-    packet_error = ""
-    try:
-        quote = fetch_quote(symbol)
-        financials = load_latest_company_financials(symbol)
-        identity = get_company_identity(symbol)
-        signal = compute_signal(symbol)
-        options = fetch_options_summary(symbol, quote.get("price"))
-        filings, filing_status = fetch_sec_filings(symbol)
-        news, news_status = fetch_news(symbol, 10)
-        packet = build_research_packet(
-            symbol,
-            company_identity=identity,
-            quote_data=quote,
-            financial_packet=financials,
-            signal_output=signal,
-            technical_output=signal.get("technicals", {}),
-            valuation_output={"valuation_view": valuation_label(signal)},
-            options_data=options,
-            filings_data=(filings, filing_status),
-            news_data=(news, news_status),
-            data_health=None,
-        )
-        has_basic_data = bool(symbol and (quote.get("price") is not None or quote.get("company_name")) and signal.get("signal_label"))
-        packet_status = "Packet ready" if has_basic_data else "Packet partial"
-    except Exception as exc:
-        packet = {"ticker": symbol, "error": "Research packet build failed."}
-        quote, financials, signal, filings, news = {}, {}, {}, pd.DataFrame(), pd.DataFrame()
-        filing_status, news_status = {}, []
-        has_basic_data = False
-        packet_status = "Generation failed"
-        packet_error = str(exc)[:240]
-
-    prior_ai_health = st.session_state.get("ai_dd_health", {})
-    completeness = (packet.get("data_quality") or {}).get("completeness_score") or signal.get("data_completeness")
-    render_metric_grid(
-        [
-            ("Selected Ticker", symbol or "N/A", (packet.get("company_identity") or {}).get("company_name", "N/A"), "neutral"),
-            ("Research Signal", signal.get("signal_label", "No Rating / Insufficient Data"), "PineTerminal calculated signal", "good" if signal.get("signal_label") in {"Buy", "Speculative Buy"} else "warn" if signal.get("signal_label") == "Hold / Watchlist" else "neutral"),
-            ("Composite Score", fmt_number(signal.get("composite_score"), 1), f"Confidence: {signal.get('confidence', 'N/A')}", "neutral"),
-            ("Data Completeness", _fmt_completeness(completeness), packet_status, "good" if to_float(completeness) and to_float(completeness) >= 85 else "warn"),
-        ],
-        columns=4,
-        small=True,
-    )
-    packet_json = json.dumps(packet, default=str, indent=2)
-    with st.expander("Research Packet", expanded=False):
-        st.json(packet)
-        st.download_button(
-            "Download research packet JSON",
-            packet_json,
-            file_name=f"{symbol or 'PineTerminal'}_research_packet.json",
-            mime="application/json",
-            key="ai_research_packet_download_button",
-        )
-
-    configured_provider = str(streamlit_secret_value("AI_PROVIDER", "ollama") or "ollama").lower()
-    provider_options = ["Ollama / Local Llama", "Disabled"]
-    provider_index = {"disabled": 1}.get(configured_provider, 0)
-    default_ollama_model = streamlit_secret_value("OLLAMA_MODEL", "llama3.1:8b")
-    default_ollama_base_url = streamlit_secret_value("OLLAMA_BASE_URL", "http://localhost:11434")
-
-    st.markdown("#### AI Provider")
-    provider_choice = st.radio("Provider", provider_options, index=provider_index, horizontal=True, key="ai_provider_radio")
-    provider_cols = st.columns([1.2, 1.5])
-    with provider_cols[0]:
-        ollama_model = st.text_input("Ollama model", value=default_ollama_model, key="ollama_model_input")
-    with provider_cols[1]:
-        ollama_base_url = st.text_input("Ollama base URL", value=default_ollama_base_url, key="ollama_base_url_input")
-
-    selected_model = ollama_model
-    provider_info = detect_ai_provider(provider=provider_choice, model=selected_model, base_url=ollama_base_url)
-    provider_tone = "good" if provider_info.get("status") == "OK" else "warn" if provider_info.get("status") == "Unavailable" else "neutral"
-    available_models = provider_info.get("available_models") or []
-    available_model_note = ", ".join(available_models[:5]) if available_models else "No pulled Ollama models detected"
-    render_metric_grid(
-        [
-            ("Provider", provider_info.get("provider_label", "Disabled"), provider_info.get("message", ""), provider_tone),
-            ("Model", provider_info.get("model", "N/A"), available_model_note, "neutral"),
-            ("Status", provider_info.get("status", "Disabled"), "Generation uses this provider when available", provider_tone),
-        ],
-        columns=3,
-        small=True,
-    )
-    st.session_state["ai_dd_health"] = {
-        "ticker": symbol,
-        "packet_status": packet_status,
-        "packet_error": packet_error,
-        "packet_updated": now_et(),
-        "provider": provider_info.get("provider_label"),
-        "provider_status": provider_info.get("status"),
-        "provider_message": provider_info.get("message"),
-        "provider_model": provider_info.get("model"),
-        "provider_base_url": provider_info.get("base_url", ""),
-        "ollama_status": "OK" if provider_info.get("ollama_available") else "Unavailable",
-        "ollama_message": provider_info.get("ollama_message") or (provider_info.get("message") if provider_info.get("provider") == "ollama" else ""),
-        "ollama_models": available_model_note,
-        "last_generation_status": prior_ai_health.get("last_generation_status", "Not run"),
-        "last_generation_error": prior_ai_health.get("last_generation_error", ""),
-        "last_generation_updated": prior_ai_health.get("last_generation_updated"),
-    }
-
-    st.markdown("#### Memo Options")
-    option_cols = st.columns(4)
-    with option_cols[0]:
-        memo_length = st.radio("Memo length", ["Short", "Standard", "Detailed"], index=1, horizontal=True, key="ai_memo_length_radio")
-    with option_cols[1]:
-        memo_tone = st.radio("Tone", ["Analyst style", "Executive brief", "Blog draft"], index=0, horizontal=True, key="ai_tone_radio")
-    with option_cols[2]:
-        include_risks = st.radio("Include risks", ["Yes", "No"], index=0, horizontal=True, key="ai_include_risks_radio") == "Yes"
-    with option_cols[3]:
-        include_quality = st.radio("Include data quality notes", ["Yes", "No"], index=0, horizontal=True, key="ai_include_data_quality_radio") == "Yes"
-
-    if provider_info.get("status") != "OK":
-        if provider_choice == "Ollama / Local Llama" or provider_info.get("provider") == "ollama":
-            st.warning("Local Llama is unavailable. Make sure Ollama is installed, running, and the selected model is pulled.")
-            st.markdown(
-                """
-                **Local setup**
-                1. Install Ollama.
-                2. Run: `ollama pull llama3.1:8b`
-                3. Start Ollama.
-                4. Refresh this page.
-                """
-            )
-            st.caption("Local Ollama works only when PineTerminal is running on the same machine as Ollama. In cloud deployment, use research-packet preview mode unless you add a local model service in that same environment.")
-        else:
-            st.info("AI memo generation is disabled/manual mode. The research packet preview remains available for manual review.")
-    st.caption("If controls fail to load after a code update, restart Streamlit and hard refresh the browser.")
-    with st.expander("Local Llama setup notes", expanded=False):
-        st.markdown(
-            """
-            PineTerminal's V1 AI Due Diligence tool expects an Ollama-served model at the Ollama base URL above.
-
-            Recommended local setup:
-            ```powershell
-            ollama pull llama3.1:8b
-            ollama serve
-            ```
-
-            Meta `llama-model download` raw weights are not automatically usable by this dashboard. To use Meta raw weights, first load or convert them into a runtime that exposes an Ollama-compatible `/api/chat` endpoint.
-            """
-        )
-        if available_models:
-            st.write({"available_ollama_models": available_models})
-
-    if not has_basic_data:
-        st.warning("Insufficient structured data to generate a reliable DD memo.")
-    generate_disabled = not has_basic_data or provider_info.get("status") != "OK"
-    if st.button("Generate AI Due Diligence Memo", type="primary", disabled=generate_disabled, key="ai_generate_button"):
-        with st.spinner("Generating memo from structured terminal data..."):
-            try:
-                memo = generate_due_diligence_memo(
-                    packet,
-                    model=provider_info.get("model"),
-                    memo_length=memo_length,
-                    tone=memo_tone,
-                    include_risks=include_risks,
-                    include_data_quality_notes=include_quality,
-                    provider_info=provider_info,
-                    base_url=provider_info.get("base_url"),
-                )
-                st.session_state["ai_dd_memo"] = memo
-                st.session_state["ai_dd_health"].update({"last_generation_status": "OK", "last_generation_error": "", "last_generation_updated": now_et()})
-            except Exception as exc:
-                st.session_state["ai_dd_health"].update({"last_generation_status": "Generation failed", "last_generation_error": str(exc)[:240], "last_generation_updated": now_et()})
-                st.error("AI memo generation failed. Check that Ollama is running, the selected model is pulled, and the base URL is reachable.")
-    memo = st.session_state.get("ai_dd_memo")
-    if memo:
-        st.markdown("#### AI Due Diligence Memo")
-        st.markdown(memo)
-        st.download_button("Download memo as .md", memo, file_name=f"{symbol or 'PineTerminal'}_due_diligence_memo.md", mime="text/markdown", key="ai_memo_download_button")
-
-
 def data_health_page(ticker: str) -> None:
     st.title("Data Health / Settings")
     st.markdown('<div class="terminal-subtitle">Source status, cache notes, database location, and V1 limitations.</div>', unsafe_allow_html=True)
@@ -2720,8 +2540,6 @@ def data_health_page(ticker: str) -> None:
         _, social_status = fetch_social_momentum_names()
     except Exception as exc:
         social_status = {"Source": "Social momentum", "Status": "Source error", "Last Updated": now_et(), "Error": str(exc)}
-    ai_health = st.session_state.get("ai_dd_health", {})
-    current_ai_provider = detect_ai_provider()
     date_status = get_date_normalization_status()
     health = pd.DataFrame(
         [
@@ -2768,13 +2586,6 @@ def data_health_page(ticker: str) -> None:
             {"Source": "Date/time normalization", "Status": date_status.get("Status"), "Last Refresh": date_status.get("Last Updated"), "Cache TTL": "Runtime", "Filing Period": "", "Structured Period": "", "Missing Fields": date_status.get("Affected Field", ""), "Error": date_status.get("Error", "")},
             {"Source": filing_status.get("Source"), "Status": filing_status.get("Status"), "Last Refresh": filing_status.get("Last Updated"), "Cache TTL": "24 hours", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": filing_status.get("Error", "")},
             {"Source": "SQLite watchlist", "Status": "OK", "Last Refresh": now_et(), "Cache TTL": "Persistent local DB", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ""},
-            {"Source": "AI Provider", "Status": ai_health.get("provider_status", current_ai_provider.get("status")), "Last Refresh": ai_health.get("packet_updated", now_et()), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": ai_health.get("provider_model", current_ai_provider.get("model", "")), "Error": ai_health.get("provider_message", current_ai_provider.get("message", ""))},
-            {"Source": "Ollama availability", "Status": ai_health.get("ollama_status", "OK" if current_ai_provider.get("ollama_available") else "Unavailable"), "Last Refresh": now_et(), "Cache TTL": "Runtime health check", "Filing Period": "", "Structured Period": "", "Missing Fields": ai_health.get("provider_base_url", current_ai_provider.get("base_url", "")), "Error": ai_health.get("ollama_message", current_ai_provider.get("ollama_message", ""))},
-            {"Source": "Ollama model", "Status": ai_health.get("provider_model", current_ai_provider.get("model", "N/A")), "Last Refresh": now_et(), "Cache TTL": "Streamlit secrets/env", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "Default local model is llama3.1:8b unless OLLAMA_MODEL is configured."},
-            {"Source": "Ollama pulled models", "Status": ai_health.get("ollama_models", ", ".join(current_ai_provider.get("available_models", [])[:5]) or "None detected"), "Last Refresh": now_et(), "Cache TTL": "Runtime health check", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": "Run ollama pull llama3.1:8b if no models are detected."},
-            {"Source": "Research packet build status", "Status": ai_health.get("packet_status", "Not run"), "Last Refresh": ai_health.get("packet_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("packet_error", "")},
-            {"Source": "Last AI generation status", "Status": ai_health.get("last_generation_status", "Not run"), "Last Refresh": ai_health.get("last_generation_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("last_generation_error", "")},
-            {"Source": "Last AI error", "Status": "OK" if not ai_health.get("last_generation_error") else "Generation failed", "Last Refresh": ai_health.get("last_generation_updated", ""), "Cache TTL": "On demand", "Filing Period": "", "Structured Period": "", "Missing Fields": "", "Error": ai_health.get("last_generation_error", "")},
         ]
     )
     df_display(health, height=260)
@@ -2826,8 +2637,6 @@ def render_page(page: str, ticker: str) -> None:
             company_page(ticker)
         elif page == "Watchlist":
             watchlist_page(ticker)
-        elif page == "AI Due Diligence":
-            ai_due_diligence_page(ticker)
         elif page == "Data Health / Settings":
             data_health_page(ticker)
     except Exception as exc:

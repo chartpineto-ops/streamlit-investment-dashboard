@@ -2,7 +2,7 @@
 
 PineTerminal is a branded, Bloomberg-style personal investment research terminal built with Streamlit.
 
-V1 focuses on clean architecture, reliable fail-soft data flows, transparent scoring, SQLite-backed watchlists, in-app signal alerts, and optional OpenAI-powered due diligence summaries. It is a research workflow tool, not investment advice.
+V1 focuses on clean architecture, reliable fail-soft data flows, transparent scoring, SQLite-backed watchlists, and in-app signal alerts. It is a research workflow tool, not investment advice.
 
 ## Brand
 
@@ -18,13 +18,12 @@ If the logo file is unavailable, the app falls back to the PineTerminal wordmark
 
 ## Current Tab Structure
 
-The cleanup pass consolidates the app into five primary tabs:
+The cleanup pass consolidates the app into four primary tabs:
 
 1. Home / Market Monitor
 2. Company Analysis
 3. Watchlist
-4. AI Due Diligence
-5. Data Health / Settings
+4. Data Health / Settings
 
 Signal Center and Macro & Catalysts are now part of Company Analysis so a user can understand a company, its score, and recent catalysts in one workflow.
 
@@ -40,7 +39,6 @@ Volatility Radar is now part of Watchlist so options/implied-move monitoring liv
 - SQLite Watchlist with signal history and exact `Alert (D/D Change)` column
 - In-app alert center for signal/score/confidence changes
 - Watchlist options monitor with 7D and 30D implied move where options data exists
-- AI Due Diligence memo generation when `OPENAI_API_KEY` is configured
 - Data Health / Settings panel
 
 ## Run Locally
@@ -60,26 +58,12 @@ research_terminal.db
 
 This file is intentionally ignored by git.
 
-## Streamlit Secrets
-
-Create `.streamlit/secrets.toml` locally or add secrets in Streamlit Community Cloud.
-
-Optional AI due diligence:
-
-```toml
-OPENAI_API_KEY = "sk-..."
-OPENAI_MODEL = "gpt-4o-mini"
-```
-
-If `OPENAI_API_KEY` is missing, the AI Due Diligence tab shows a clean disabled state and the rest of the app still works.
-
 ## V1 Data Sources
 
 - Market quotes, history, financials, options, analyst metadata: Yahoo Finance via `yfinance`
 - Headlines: Yahoo Finance plus public RSS feeds where available
 - Filings: SEC EDGAR company submissions API
 - Storage: local SQLite
-- AI memo: OpenAI API only when configured through Streamlit secrets
 
 ## Signal Center Methodology
 
