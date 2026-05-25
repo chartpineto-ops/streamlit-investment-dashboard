@@ -1750,12 +1750,16 @@ h3 {
   flex-direction: column;
   gap: 0.72rem;
   margin-top: 0.8rem;
+  background: linear-gradient(180deg, rgba(2,7,11,0.76), rgba(2,7,11,0.42));
+  border: 1px solid rgba(30,52,64,0.42);
+  border-radius: 12px;
+  padding: 0.58rem;
 }
 .pt-as-commandbar,
 .pt-as-hero-card,
 .pt-as-panel,
 .pt-as-workbench {
-  background: linear-gradient(135deg, rgba(10,22,30,0.98), rgba(7,18,28,0.92));
+  background: linear-gradient(135deg, rgba(4,10,15,0.99), rgba(8,18,28,0.94));
   border: 1px solid rgba(30,52,64,0.92);
   border-radius: 10px;
   box-shadow: 0 18px 34px rgba(0,0,0,0.2);
@@ -1766,6 +1770,8 @@ h3 {
   justify-content: space-between;
   gap: 1rem;
   padding: 0.38rem 0.58rem;
+  background: #020609;
+  border-color: rgba(30,52,64,0.72);
 }
 .pt-as-brand {
   display: flex;
@@ -1833,6 +1839,8 @@ h3 {
   gap: 1rem;
   align-items: center;
   padding: 1.02rem 1.12rem;
+  background: radial-gradient(circle at top left, rgba(7,26,61,0.38), transparent 34rem), #020609;
+  border-color: rgba(30,52,64,0.78);
 }
 .pt-as-identity {
   display: flex;
@@ -1841,10 +1849,25 @@ h3 {
   min-width: 0;
 }
 .pt-as-identity .pt-dashboard-logo {
-  width: 78px !important;
-  height: 78px !important;
-  min-width: 78px !important;
-  border-radius: 10px !important;
+  width: 86px !important;
+  height: 86px !important;
+  min-width: 86px !important;
+  border-radius: 12px !important;
+  background: #020609 !important;
+  border: 1px solid rgba(169,182,188,0.38) !important;
+  box-shadow: inset 0 0 0 1px rgba(234,240,242,0.05), 0 14px 30px rgba(0,0,0,0.42) !important;
+  padding: 0.48rem;
+  overflow: hidden;
+}
+.pt-as-identity .pt-dashboard-logo img {
+  background: transparent !important;
+  object-fit: contain;
+  border-radius: 8px;
+  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.32));
+}
+.pt-as-identity .pt-dashboard-logo .pt-logo-fallback {
+  color: var(--text);
+  background: radial-gradient(circle at 50% 42%, rgba(123,199,232,0.18), transparent 60%);
 }
 .pt-as-ticker {
   color: var(--text);
@@ -1943,6 +1966,8 @@ h3 {
 .pt-as-panel,
 .pt-as-workbench {
   padding: 0.78rem 0.9rem;
+  background: linear-gradient(135deg, rgba(5,12,17,0.98), rgba(9,20,30,0.92));
+  border-color: rgba(30,52,64,0.7);
 }
 .pt-as-panel-title {
   margin-bottom: 0.55rem;
@@ -2101,6 +2126,12 @@ h3 {
 .pt-as-two-grid.decision {
   grid-template-columns: minmax(360px, 0.72fr) minmax(520px, 1fr);
 }
+.pt-as-two-grid .pt-as-panel,
+.pt-as-two-grid .pt-as-workbench,
+.pt-as-panel.scenario,
+.pt-as-panel.bridge {
+  background: linear-gradient(145deg, rgba(4,10,15,0.99), rgba(9,18,27,0.96));
+}
 .pt-as-change-table {
   width: 100%;
   border-collapse: collapse;
@@ -2126,9 +2157,12 @@ h3 {
 .pt-as-quality-card {
   border: 1px solid rgba(30,52,64,0.72);
   border-radius: 9px;
-  background: rgba(11,23,29,0.58);
+  background: linear-gradient(180deg, rgba(12,25,33,0.88), rgba(5,12,17,0.92));
   padding: 0.55rem;
 }
+.pt-as-quality-card.good { border-color: rgba(109,187,90,0.26); }
+.pt-as-quality-card.warn { border-color: rgba(229,167,42,0.32); }
+.pt-as-quality-card.bad { border-color: rgba(229,115,104,0.32); }
 .pt-as-card-title {
   font-size: 0.72rem;
   margin-bottom: 0.28rem;
@@ -2195,7 +2229,7 @@ h3 {
   border: 1px solid rgba(30,52,64,0.72);
   border-radius: 10px;
   padding: 0.66rem;
-  background: rgba(11,23,29,0.64);
+  background: linear-gradient(180deg, rgba(12,25,33,0.86), rgba(5,12,17,0.92));
 }
 .pt-as-workbench-grid .current {
   border-color: rgba(229,167,42,0.5);
@@ -2240,6 +2274,22 @@ h3 {
   gap: 0.48rem;
   align-items: center;
 }
+.pt-as-panel.scenario {
+  border-color: rgba(30,52,64,0.82);
+}
+.pt-as-panel.scenario .pt-decision-card {
+  min-height: 166px;
+  background: linear-gradient(180deg, rgba(9,19,25,0.96), rgba(5,12,17,0.98));
+}
+.pt-as-panel.scenario .pt-decision-card.bear {
+  background: linear-gradient(135deg, rgba(229,115,104,0.10), rgba(5,12,17,0.98) 55%);
+}
+.pt-as-panel.scenario .pt-decision-card.base {
+  background: linear-gradient(135deg, rgba(229,167,42,0.12), rgba(5,12,17,0.98) 55%);
+}
+.pt-as-panel.scenario .pt-decision-card.bull {
+  background: linear-gradient(135deg, rgba(109,187,90,0.11), rgba(5,12,17,0.98) 55%);
+}
 .pt-as-arrow {
   color: var(--red);
   text-align: center;
@@ -2261,7 +2311,7 @@ h3 {
   border: 1px solid rgba(30,52,64,0.8);
   border-radius: 9px;
   padding: 0.62rem;
-  background: rgba(11,23,29,0.62);
+  background: linear-gradient(180deg, rgba(12,25,33,0.86), rgba(5,12,17,0.95));
 }
 .pt-as-bridge-grid > i {
   align-self: center;
@@ -2275,6 +2325,18 @@ h3 {
 .pt-as-bridge-grid .balance { border-color: rgba(123,199,232,0.38); }
 .pt-as-bridge-grid .cashflow { border-color: rgba(184,121,255,0.38); }
 .pt-as-bridge-grid .takeaway { border-color: rgba(169,182,188,0.32); }
+.pt-as-bridge-grid .income {
+  background: linear-gradient(135deg, rgba(109,187,90,0.14), rgba(5,12,17,0.96) 58%);
+}
+.pt-as-bridge-grid .balance {
+  background: linear-gradient(135deg, rgba(123,199,232,0.14), rgba(5,12,17,0.96) 58%);
+}
+.pt-as-bridge-grid .cashflow {
+  background: linear-gradient(135deg, rgba(184,121,255,0.13), rgba(5,12,17,0.96) 58%);
+}
+.pt-as-bridge-grid .takeaway {
+  background: linear-gradient(135deg, rgba(234,240,242,0.06), rgba(5,12,17,0.96) 58%);
+}
 .pt-as-bridge-grid span {
   display: block;
   color: var(--text);
