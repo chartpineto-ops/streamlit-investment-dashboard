@@ -924,7 +924,7 @@ def _company_logo_html(view_model: dict, size: int = 68) -> str:
             f'title="{escape(str(view_model.get("logo_source") or "Company logo"))}">'
             f'<img src="{escape(logo_src, quote=True)}" alt="{escape(ticker)} logo" '
             f'loading="eager" decoding="async" referrerpolicy="no-referrer" '
-            f'onerror="this.remove(); this.parentNode.classList.add(\'pt-logo-placeholder\');">'
+            f'onerror="this.parentNode.classList.add(\'pt-logo-placeholder\'); this.remove();">'
             f'<span class="pt-logo-fallback">{initials}</span>'
             "</div>"
         )
@@ -1325,6 +1325,18 @@ def _as_value_row(label: str, value: str, tone: str = "neutral") -> str:
     return f'<div class="pt-as-value-row"><span>{escape(label)}</span><strong class="{tone_class}">{escape(value)}</strong></div>'
 
 
+def _as_footer_row(title: str, left: str, middle: str, right: str, tone: str = "neutral") -> str:
+    tone_class = {"good": "rt-good", "bad": "rt-bad", "warn": "rt-warn"}.get(tone, "")
+    return (
+        '<div class="pt-as-footer-row">'
+        f'<span>{escape(title)}</span>'
+        f'<strong>{escape(left)}</strong>'
+        f'<em>{escape(middle)}</em>'
+        f'<b class="{tone_class}">{escape(right)}</b>'
+        '</div>'
+    )
+
+
 def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, signal: dict, options: dict) -> str:
     ticker = str(view_model.get("ticker") or "N/A")
     latest = financials.get("latest_financials") or {}
@@ -1453,6 +1465,22 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
         ]
     )
     highlights = "".join(_financial_highlight_html(item) for item in view_model.get("financial_highlights", []))
+    release = financials.get("latest_quarterly_release") or {}
+    packet = financials.get("financial_data_packet") or {}
+    completeness_text = _fmt_completeness(view_model.get("data_completeness"))
+    tracked_field_count = len(packet.get("fields", {}) or {})
+    source_status = str(view_model.get("source_status") or "N/A")
+    source_tone = "good" if source_status in {"Complete", "Mostly Complete"} else "warn"
+    health_tone = "good" if (to_float(view_model.get("data_completeness")) or 0) >= 85 else "warn"
+    footer_rows = "".join(
+        [
+            _as_footer_row("Latest Quarterly Release", str(release.get("reported_period_label") or latest.get("period") or "N/A"), f"Released {fmt_date(release.get('filing_or_release_date') or release.get('filing_date'))}", source_status, source_tone),
+            _as_footer_row("SEC Filings", str(packet.get("form_type") or release.get("form_type") or "Latest filing"), fmt_date(packet.get("filing_date") or release.get("filing_date")), "Open details"),
+            _as_footer_row("Company Headlines", "Ticker-specific headlines", "Open details", "Catalysts"),
+            _as_footer_row("Data Health / Reconciliation", f"Data Completeness {completeness_text}", f"{tracked_field_count} tracked fields", "Review", health_tone),
+            _as_footer_row("Detailed 3-Statement Table", str(latest.get("period") or "Latest"), "View detailed table", "Open details"),
+        ]
+    )
     return f"""
     <div class="pt-as-dashboard">
       <div class="pt-as-commandbar">
@@ -1468,7 +1496,7 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
         </div>
       </div>
       <div class="pt-as-hero-card">
-        <div class="pt-as-identity">{logo}<div><div class="pt-as-ticker">{escape(ticker)}</div><div class="pt-as-name">{escape(str(view_model.get("company_name") or ticker))}</div><div class="pt-as-sector">{escape(str(view_model.get("sector") or ""))} <span>{escape(str(view_model.get("industry") or ""))}</span></div></div></div>
+        <div class="pt-as-identity"><div class="pt-as-logo-plate">{logo}</div><div><div class="pt-as-ticker">{escape(ticker)}</div><div class="pt-as-name">{escape(str(view_model.get("company_name") or ticker))}</div><div class="pt-as-sector">{escape(str(view_model.get("sector") or ""))} <span>{escape(str(view_model.get("industry") or ""))}</span></div></div></div>
         <div class="pt-as-next"><span>Next Earnings</span><strong>{escape(str(next_earnings))}</strong></div>
         <div class="pt-as-stance"><span>Investment Stance</span><strong>{escape(str(view_model.get("overall_research_signal") or "N/A"))}</strong><b>{escape(score_caption)}</b><p>{escape(str(view_model.get("executive_summary") or ""))}</p></div>
         <div class="pt-as-why"><span>Why this score?</span>{why_rows or '<div class="pt-as-why-row warn"><span>!</span>Insufficient score drivers.</div>'}</div>
@@ -1495,6 +1523,7 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
         <div class="pt-as-panel"><div class="pt-as-panel-title">Valuation + Technical Setup</div><div class="pt-as-fundamental-grid"><div>{_as_value_row("Market Cap", fmt_currency(quote.get("market_cap"), 1))}{_as_value_row("Enterprise Value", fmt_currency(quote.get("enterprise_value"), 1))}{_as_value_row("P / Sales", fmt_multiple(quote.get("price_to_sales")))}{_as_value_row("P / E", fmt_multiple(quote.get("trailing_pe")))}{_as_value_row("Verdict", str(view_model.get("quick_stats", [{}])[3].get("value") if view_model.get("quick_stats") else "N/A"), "bad" if "expensive" in str(view_model.get("quick_stats", [{}])[3].get("value") if view_model.get("quick_stats") else "").lower() else "warn")}</div><div>{_as_value_row("Price vs 50D MA", "Above" if vs_50 and vs_50 > 0 else "Below", "good" if vs_50 and vs_50 > 0 else "bad")}{_as_value_row("Price vs 200D MA", "Above" if vs_200 and vs_200 > 0 else "Below", "good" if vs_200 and vs_200 > 0 else "bad")}{_as_value_row("52W Position", f"{range_pct:.1f}%" if range_pct is not None else "N/A", "good" if range_pct and range_pct > 60 else "warn")}{_as_value_row("Entry Quality", str(view_model.get("entry_signal") or "N/A"), "warn")}</div></div></div>
       </div>
       <div class="pt-as-panel bridge"><div class="pt-as-panel-title">3-Statement Bridge (Latest Period)</div><div class="pt-as-bridge-grid"><div class="income"><span>Income Statement</span>{_as_value_row("Revenue", revenue)}{_as_value_row("Gross Profit", gross_profit)}{_as_value_row("Net Income", net_income)}</div><i>-></i><div class="balance"><span>Balance Sheet</span>{_as_value_row("Cash & Equivalents", cash)}{_as_value_row("Total Debt", debt)}{_as_value_row("Net Debt", net_debt)}</div><i>-></i><div class="cashflow"><span>Cash Flow Statement</span>{_as_value_row("Operating Cash Flow", ocf)}{_as_value_row("Capex", capex)}{_as_value_row("Free Cash Flow", fcf)}</div><div class="takeaway"><span>Bridge Takeaway</span><p>{escape((financials.get("financial_data_packet") or {}).get("data_quality_note") or "Financial statements tie together with available latest-period data.")}</p></div></div></div>
+      <div class="pt-as-footer-rows">{footer_rows}</div>
     </div>
     """
 
