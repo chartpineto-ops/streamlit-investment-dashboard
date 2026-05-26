@@ -2086,6 +2086,38 @@ h3 {
   font-weight: 900;
   letter-spacing: 0.01em;
 }
+.pt-as-period-axis {
+  display: grid;
+  gap: 0.34rem;
+  margin-top: 0.3rem;
+  padding: 0.34rem 0.04rem 0;
+  border-top: 1px solid rgba(30,52,64,0.64);
+}
+.pt-as-period-axis span {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  min-height: 28px;
+  line-height: 1.02;
+  font-weight: 950;
+  text-align: center;
+  white-space: nowrap;
+  text-shadow: 0 1px 5px rgba(0,0,0,0.34);
+}
+.pt-as-period-axis b {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 980;
+  letter-spacing: 0.02em;
+}
+.pt-as-period-axis small {
+  color: var(--text-secondary);
+  font-size: 0.64rem;
+  font-weight: 850;
+  margin-top: 0.08rem;
+}
 .pt-as-date-axis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2098,6 +2130,8 @@ h3 {
   font-size: 0.78rem;
   font-weight: 900;
   text-align: center;
+  white-space: nowrap;
+  text-shadow: 0 1px 5px rgba(0,0,0,0.34);
 }
 .pt-as-legend {
   display: flex;

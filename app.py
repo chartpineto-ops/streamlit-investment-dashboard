@@ -1174,6 +1174,25 @@ def _short_period_label(value) -> str:
     return text[-8:] if len(text) > 8 else text
 
 
+def _period_axis_html(labels: list[str]) -> str:
+    cleaned = [str(label or "").strip() or "N/A" for label in labels]
+    if not cleaned:
+        return ""
+    columns = len(cleaned)
+    cells = []
+    for label in cleaned:
+        match = re.match(r"Q([1-4])\s+'?(\d{2})$", label)
+        if match:
+            cells.append(f"<span><b>Q{escape(match.group(1))}</b><small>20{escape(match.group(2))}</small></span>")
+        else:
+            cells.append(f"<span><b>{escape(label)}</b></span>")
+    return (
+        f'<div class="pt-as-period-axis" style="grid-template-columns:repeat({columns},minmax(0,1fr));">'
+        + "".join(cells)
+        + "</div>"
+    )
+
+
 def _date_axis_html(index: pd.Index) -> str:
     if index is None or len(index) == 0:
         return ""
@@ -1290,28 +1309,51 @@ def _bar_chart_svg(values: list[float], labels: list[str], color: str, width: in
         return '<div class="pt-as-chart-empty compact">N/A</div>'
     nums = [value or 0 for value in cleaned]
     max_abs = max(abs(value) for value in nums) or 1
-    base_y = height * 0.78
+    has_positive = any(value > 0 for value in nums)
+    has_negative = any(value < 0 for value in nums)
+    if has_positive and has_negative:
+        base_y = height * 0.52
+        max_pos = max((value for value in nums if value > 0), default=1) or 1
+        max_neg = abs(min((value for value in nums if value < 0), default=-1)) or 1
+        up_scale = height * 0.42
+        down_scale = height * 0.34
+    elif has_negative:
+        base_y = height * 0.24
+        max_pos = 1
+        max_neg = max_abs
+        up_scale = height * 0.42
+        down_scale = height * 0.58
+    else:
+        base_y = height * 0.82
+        max_pos = max_abs
+        max_neg = 1
+        up_scale = height * 0.62
+        down_scale = height * 0.34
     bar_w = width / max(len(nums), 1) * 0.58
     gap = width / max(len(nums), 1)
     parts = []
     for idx, value in enumerate(nums):
         x = idx * gap + (gap - bar_w) / 2
-        bar_h = abs(value) / max_abs * (height * 0.58)
-        y = base_y - bar_h if value >= 0 else base_y
+        if value >= 0:
+            bar_h = value / max_pos * up_scale if max_pos else 0
+            y = base_y - bar_h
+        else:
+            bar_h = abs(value) / max_neg * down_scale if max_neg else 0
+            y = base_y
         tone_color = color if value >= 0 else BRAND_COLORS["red"]
         parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{bar_h:.1f}" rx="2" fill="{escape(tone_color)}" />')
-        if idx < len(labels):
-            parts.append(f'<text x="{x + bar_w / 2:.1f}" y="{height - 7}" text-anchor="middle">{escape(str(labels[idx]))}</text>')
     parts.append(f'<line x1="0" x2="{width}" y1="{base_y:.1f}" y2="{base_y:.1f}" />')
-    return f'<svg class="pt-as-bar-svg" viewBox="0 0 {width} {height}" preserveAspectRatio="none">{"".join(parts)}</svg>'
+    label_axis = _period_axis_html(labels[: len(nums)])
+    return f'<svg class="pt-as-bar-svg" viewBox="0 0 {width} {height}" preserveAspectRatio="none">{"".join(parts)}</svg>{label_axis}'
 
 
-def _spark_line_svg(values: list[float], width: int = 290, height: int = 150) -> str:
+def _spark_line_svg(values: list[float], labels: list[str] | None = None, width: int = 290, height: int = 150) -> str:
     cleaned = [value for value in (to_float(item) for item in values) if value is not None]
     if not cleaned:
         return '<div class="pt-as-chart-empty compact">N/A</div>'
     chart = _svg_line_chart({"Trend": (cleaned, BRAND_COLORS["pine_bright"])}, width, height)
-    return chart
+    label_axis = _period_axis_html((labels or [])[: len(cleaned)])
+    return f"{chart}{label_axis}"
 
 
 def _quality_chart_card(title: str, html: str, note: str, tone: str = "good") -> str:
@@ -1438,7 +1480,7 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
     qtail = qhist.tail(5) if isinstance(qhist, pd.DataFrame) and not qhist.empty else pd.DataFrame()
     qlabels = [_short_period_label(item) for item in qtail.get("period", pd.Series(dtype=str)).tolist()]
     revenue_chart = _bar_chart_svg((qtail.get("revenue", pd.Series(dtype=float)) / 1e9).tolist() if not qtail.empty else [], qlabels, BRAND_COLORS["pine_bright"])
-    margin_chart = _spark_line_svg(qtail.get("gross_margin", pd.Series(dtype=float)).tolist() if not qtail.empty else [])
+    margin_chart = _spark_line_svg(qtail.get("gross_margin", pd.Series(dtype=float)).tolist() if not qtail.empty else [], qlabels)
     fcf_chart = _bar_chart_svg((qtail.get("free_cash_flow", pd.Series(dtype=float)) / 1e6).tolist() if not qtail.empty else [], qlabels, BRAND_COLORS["pine_bright"])
     debt_chart = _bar_chart_svg((qtail.get("total_debt", pd.Series(dtype=float)) / 1e9).tolist() if not qtail.empty else [], qlabels, BRAND_COLORS["red"])
     quality_cards = "".join(
