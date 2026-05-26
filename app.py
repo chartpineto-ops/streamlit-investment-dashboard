@@ -1418,6 +1418,90 @@ def _as_footer_row(title: str, left: str, middle: str, right: str, tone: str = "
     )
 
 
+MRVL_ECOSYSTEM_READ_THROUGH = [
+    {"ticker": "ANET", "category": "Adjacent winner", "impact": "High", "why": "AI networking demand"},
+    {"ticker": "TSM", "category": "Supplier / Foundry", "impact": "High", "why": "Advanced-node manufacturing"},
+    {"ticker": "VRT", "category": "Infrastructure", "impact": "Medium-High", "why": "Power & cooling demand"},
+    {"ticker": "AMZN", "category": "Cloud customer", "impact": "High", "why": "AI capex driver"},
+    {"ticker": "SMH", "category": "ETF", "impact": "Medium", "why": "Broad semiconductor read-through"},
+]
+
+
+MRVL_ECOSYSTEM_FLOW = [
+    ("Demand Driver", ["AI infrastructure buildout", "Cloud capex expansion", "Data-center networking demand"]),
+    ("MRVL Exposure", ["Custom silicon solutions", "Switching & networking", "Optical connectivity"]),
+    ("Beneficiary Groups", ["Suppliers / Foundries", "Cloud Customers", "Infrastructure Providers", "Semiconductor ETFs"]),
+    ("Top Related Names", ["TSM", "ANET", "VRT", "ETN", "AMZN", "MSFT", "SMH", "SOXX"]),
+]
+
+
+def _impact_tone_class(value: str) -> str:
+    text = str(value or "").casefold()
+    if "high" in text and "medium" not in text:
+        return "high"
+    if "medium" in text:
+        return "medium"
+    return "neutral"
+
+
+def _ecosystem_table_html(rows: list[dict]) -> str:
+    body = "".join(
+        "<tr>"
+        f"<td><strong>{escape(str(row.get('ticker') or 'N/A'))}</strong></td>"
+        f"<td>{escape(str(row.get('category') or 'N/A'))}</td>"
+        f"<td><span class=\"pt-as-impact {escape(_impact_tone_class(str(row.get('impact') or '')))}\">{escape(str(row.get('impact') or 'N/A'))}</span></td>"
+        f"<td>{escape(str(row.get('why') or 'N/A'))}</td>"
+        "</tr>"
+        for row in rows
+    )
+    return (
+        '<table class="pt-as-ecosystem-table">'
+        "<thead><tr><th>Ticker</th><th>Category</th><th>Impact</th><th>Why It Matters</th></tr></thead>"
+        f"<tbody>{body}</tbody></table>"
+    )
+
+
+def _ecosystem_flow_card(step_number: int, title: str, items: list[str]) -> str:
+    points = "".join(f"<li>{escape(str(item))}</li>" for item in items)
+    return (
+        '<div class="pt-as-ecosystem-step">'
+        f'<div class="pt-as-step-number">Step {step_number}</div>'
+        f'<div class="pt-as-step-title">{escape(title)}</div>'
+        f"<ul>{points}</ul>"
+        "</div>"
+    )
+
+
+def _ecosystem_extension_html(ticker: str) -> str:
+    if clean_ticker(ticker) != "MRVL":
+        return (
+            '<div class="pt-as-ecosystem-extension">'
+            '<div class="pt-as-transition-header"><span>Ecosystem Extension</span>'
+            "<p>Second-order read-through from MRVL's business momentum.</p></div>"
+            '<div class="pt-as-panel pt-as-ecosystem-placeholder">'
+            "Ecosystem read-through not yet available for this ticker."
+            "</div></div>"
+        )
+    flow_parts: list[str] = []
+    for idx, (title, items) in enumerate(MRVL_ECOSYSTEM_FLOW, start=1):
+        if idx > 1:
+            flow_parts.append(_as_arrow_html("pt-as-ecosystem-arrow"))
+        flow_parts.append(_ecosystem_flow_card(idx, title, items))
+    return (
+        '<div class="pt-as-ecosystem-extension">'
+        '<div class="pt-as-transition-header"><span>Ecosystem Extension</span>'
+        "<p>Second-order read-through from MRVL's business momentum.</p></div>"
+        '<div class="pt-as-panel pt-as-ecosystem-readthrough">'
+        '<div class="pt-as-panel-title">Ecosystem Read-Through</div>'
+        f"{_ecosystem_table_html(MRVL_ECOSYSTEM_READ_THROUGH)}"
+        "</div>"
+        '<div class="pt-as-panel pt-as-ecosystem-benefits">'
+        '<div class="pt-as-panel-title">Who Benefits if MRVL Wins?</div>'
+        f'<div class="pt-as-ecosystem-flow">{"".join(flow_parts)}</div>'
+        "</div></div>"
+    )
+
+
 def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, signal: dict, options: dict) -> str:
     ticker = str(view_model.get("ticker") or "N/A")
     latest = financials.get("latest_financials") or {}
@@ -1546,6 +1630,7 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
         ]
     )
     highlights = "".join(_financial_highlight_html(item) for item in view_model.get("financial_highlights", []))
+    ecosystem_extension = _ecosystem_extension_html(ticker)
     release = financials.get("latest_quarterly_release") or {}
     packet = financials.get("financial_data_packet") or {}
     completeness_text = _fmt_completeness(view_model.get("data_completeness"))
@@ -1604,6 +1689,7 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
         <div class="pt-as-panel"><div class="pt-as-panel-title">Valuation + Technical Setup</div><div class="pt-as-fundamental-grid"><div>{_as_value_row("Market Cap", fmt_currency(quote.get("market_cap"), 1))}{_as_value_row("Enterprise Value", fmt_currency(quote.get("enterprise_value"), 1))}{_as_value_row("P / Sales", fmt_multiple(quote.get("price_to_sales")))}{_as_value_row("P / E", fmt_multiple(quote.get("trailing_pe")))}{_as_value_row("Verdict", str(view_model.get("quick_stats", [{}])[3].get("value") if view_model.get("quick_stats") else "N/A"), "bad" if "expensive" in str(view_model.get("quick_stats", [{}])[3].get("value") if view_model.get("quick_stats") else "").lower() else "warn")}</div><div>{_as_value_row("Price vs 50D MA", "Above" if vs_50 and vs_50 > 0 else "Below", "good" if vs_50 and vs_50 > 0 else "bad")}{_as_value_row("Price vs 200D MA", "Above" if vs_200 and vs_200 > 0 else "Below", "good" if vs_200 and vs_200 > 0 else "bad")}{_as_value_row("52W Position", f"{range_pct:.1f}%" if range_pct is not None else "N/A", "good" if range_pct and range_pct > 60 else "warn")}{_as_value_row("Entry Quality", str(view_model.get("entry_signal") or "N/A"), "warn")}</div></div></div>
       </div>
       <div class="pt-as-panel bridge"><div class="pt-as-panel-title">3-Statement Bridge (Latest Period)</div><div class="pt-as-bridge-grid"><div class="income"><span>Income Statement</span>{_as_value_row("Revenue", revenue)}{_as_value_row("Gross Profit", gross_profit)}{_as_value_row("Net Income", net_income)}</div>{_as_arrow_html("pt-as-bridge-arrow")}<div class="balance"><span>Balance Sheet</span>{_as_value_row("Cash & Equivalents", cash)}{_as_value_row("Total Debt", debt)}{_as_value_row("Net Debt", net_debt)}</div>{_as_arrow_html("pt-as-bridge-arrow")}<div class="cashflow"><span>Cash Flow Statement</span>{_as_value_row("Operating Cash Flow", ocf)}{_as_value_row("Capex", capex)}{_as_value_row("Free Cash Flow", fcf)}</div><div class="takeaway"><span>Bridge Takeaway</span><p>{escape((financials.get("financial_data_packet") or {}).get("data_quality_note") or "Financial statements tie together with available latest-period data.")}</p></div></div></div>
+      {ecosystem_extension}
       <div class="pt-as-footer-rows">{footer_rows}</div>
     </div>
     """

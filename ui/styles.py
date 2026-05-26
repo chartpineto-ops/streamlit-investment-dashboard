@@ -2377,14 +2377,16 @@ h3 {
   min-height: 42px;
 }
 .pt-as-arrow svg,
-.pt-as-bridge-arrow svg {
+.pt-as-bridge-arrow svg,
+.pt-as-ecosystem-arrow svg {
   width: 42px;
   height: 28px;
   display: block;
   filter: drop-shadow(0 2px 7px rgba(234,240,242,0.22));
 }
 .pt-as-arrow path,
-.pt-as-bridge-arrow path {
+.pt-as-bridge-arrow path,
+.pt-as-ecosystem-arrow path {
   fill: var(--text);
 }
 .pt-as-bridge-arrow {
@@ -2445,6 +2447,151 @@ h3 {
   font-size: 0.86rem;
   line-height: 1.3;
   margin: 0;
+}
+.pt-as-ecosystem-extension {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.72rem;
+}
+.pt-as-transition-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.72rem;
+  padding: 0 0.12rem;
+}
+.pt-as-transition-header span {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pt-as-transition-header p {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 780;
+  margin: 0;
+}
+.pt-as-ecosystem-readthrough,
+.pt-as-ecosystem-benefits {
+  background: linear-gradient(180deg, rgba(8,18,23,0.96), rgba(4,9,12,0.98));
+}
+.pt-as-ecosystem-placeholder {
+  color: var(--muted);
+  font-weight: 780;
+  background: linear-gradient(180deg, rgba(8,18,23,0.92), rgba(4,9,12,0.98));
+}
+.pt-as-ecosystem-table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: 11px;
+  border: 1px solid rgba(30,52,64,0.72);
+  background: rgba(6,16,20,0.42);
+}
+.pt-as-ecosystem-table th,
+.pt-as-ecosystem-table td {
+  text-align: left;
+  padding: 0.58rem 0.72rem;
+  border-bottom: 1px solid rgba(30,52,64,0.55);
+  font-size: 0.86rem;
+}
+.pt-as-ecosystem-table th {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 930;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(16,27,34,0.72);
+}
+.pt-as-ecosystem-table td {
+  color: var(--text-secondary);
+  font-weight: 760;
+}
+.pt-as-ecosystem-table tr:last-child td {
+  border-bottom: 0;
+}
+.pt-as-ecosystem-table strong {
+  color: var(--text);
+  font-weight: 950;
+  letter-spacing: 0.03em;
+}
+.pt-as-impact {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 92px;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 930;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border: 1px solid rgba(169,182,188,0.28);
+  background: rgba(169,182,188,0.08);
+  color: var(--text-secondary);
+}
+.pt-as-impact.high {
+  color: var(--green);
+  border-color: rgba(109,187,90,0.48);
+  background: rgba(109,187,90,0.12);
+}
+.pt-as-impact.medium {
+  color: var(--yellow);
+  border-color: rgba(229,167,42,0.46);
+  background: rgba(229,167,42,0.11);
+}
+.pt-as-ecosystem-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1fr) 36px minmax(0, 1fr) 36px minmax(0, 1fr);
+  gap: 0.62rem;
+  align-items: stretch;
+}
+.pt-as-ecosystem-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+}
+.pt-as-ecosystem-arrow svg {
+  width: 34px;
+  height: 24px;
+}
+.pt-as-ecosystem-step {
+  border: 1px solid rgba(30,52,64,0.76);
+  border-radius: 11px;
+  padding: 0.72rem;
+  min-height: 142px;
+  background: linear-gradient(145deg, rgba(12,25,33,0.84), rgba(5,12,17,0.96) 62%);
+}
+.pt-as-step-number {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.14rem 0.46rem;
+  border-radius: 999px;
+  color: var(--yellow);
+  border: 1px solid rgba(229,167,42,0.34);
+  background: rgba(229,167,42,0.09);
+  font-size: 0.68rem;
+  font-weight: 920;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pt-as-step-title {
+  color: var(--text);
+  margin-top: 0.42rem;
+  font-size: 0.9rem;
+  font-weight: 950;
+}
+.pt-as-ecosystem-step ul {
+  margin: 0.5rem 0 0 1rem;
+  padding: 0;
+}
+.pt-as-ecosystem-step li {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.34;
+  margin-bottom: 0.22rem;
 }
 .pt-as-footer-rows {
   margin-top: 0.68rem;
@@ -2555,6 +2702,7 @@ h3 {
   .pt-as-two-grid,
   .pt-as-two-grid.decision,
   .pt-as-workbench-grid,
+  .pt-as-ecosystem-flow,
   .pt-as-panel.bridge .pt-as-bridge-grid {
     grid-template-columns: 1fr;
     display: grid;
@@ -2572,7 +2720,8 @@ h3 {
   .pt-as-footer-row b {
     justify-self: start;
   }
-  .pt-as-arrow {
+  .pt-as-arrow,
+  .pt-as-ecosystem-arrow {
     display: none;
   }
   .pt-financial-highlights-grid {
