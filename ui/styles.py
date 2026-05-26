@@ -2081,8 +2081,23 @@ h3 {
   vector-effect: non-scaling-stroke;
 }
 .pt-as-bar-svg text {
-  fill: var(--muted);
-  font-size: 0.68rem;
+  fill: var(--text);
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+}
+.pt-as-date-axis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: -0.12rem;
+  padding: 0 0.32rem;
+}
+.pt-as-date-axis span {
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
 }
 .pt-as-legend {
   display: flex;
@@ -2300,8 +2315,8 @@ h3 {
 }
 .pt-as-panel.scenario .pt-as-scenario-flow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr);
-  gap: 0.48rem;
+  grid-template-columns: minmax(0, 1fr) 46px minmax(0, 1fr) 46px minmax(0, 1fr);
+  gap: 0.72rem;
   align-items: center;
 }
 .pt-as-panel.scenario {
@@ -2321,35 +2336,50 @@ h3 {
   background: linear-gradient(135deg, rgba(109,187,90,0.11), rgba(5,12,17,0.98) 55%);
 }
 .pt-as-arrow {
-  color: var(--red);
-  text-align: center;
-  font-size: 1.35rem;
-  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  min-height: 42px;
+}
+.pt-as-arrow svg,
+.pt-as-bridge-arrow svg {
+  width: 42px;
+  height: 28px;
+  display: block;
+  filter: drop-shadow(0 2px 7px rgba(234,240,242,0.22));
+}
+.pt-as-arrow path,
+.pt-as-bridge-arrow path {
+  fill: var(--text);
+}
+.pt-as-bridge-arrow {
+  align-self: center;
+  justify-self: center;
+  min-width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .pt-as-info-table {
   display: grid;
   grid-template-columns: 1fr;
   gap: 0.2rem;
 }
+.pt-as-panel.bridge {
+  background: linear-gradient(180deg, rgba(8,18,23,0.96), rgba(4,9,12,0.98));
+}
 .pt-as-panel.bridge .pt-as-bridge-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px minmax(0, 1fr) 34px minmax(0, 1fr) minmax(230px, 0.9fr);
-  gap: 0.7rem;
+  grid-template-columns: minmax(0, 1.08fr) 48px minmax(0, 1.08fr) 48px minmax(0, 1.08fr) minmax(260px, 0.92fr);
+  gap: 0.86rem;
   align-items: stretch;
 }
 .pt-as-bridge-grid > div {
   border: 1px solid rgba(30,52,64,0.8);
-  border-radius: 9px;
-  padding: 0.62rem;
+  border-radius: 11px;
+  padding: 0.82rem;
   background: linear-gradient(180deg, rgba(12,25,33,0.86), rgba(5,12,17,0.95));
-}
-.pt-as-bridge-grid > i {
-  align-self: center;
-  justify-self: center;
-  color: var(--text);
-  font-size: 1.45rem;
-  font-style: normal;
-  font-weight: 900;
 }
 .pt-as-bridge-grid .income { border-color: rgba(109,187,90,0.38); }
 .pt-as-bridge-grid .balance { border-color: rgba(123,199,232,0.38); }
@@ -2383,45 +2413,51 @@ h3 {
   margin: 0;
 }
 .pt-as-footer-rows {
-  margin-top: 0.46rem;
+  margin-top: 0.68rem;
   border: 1px solid rgba(30,52,64,0.72);
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   background: linear-gradient(180deg, rgba(9,19,25,0.92), rgba(3,8,11,0.98));
+  box-shadow: inset 0 1px 0 rgba(234,240,242,0.03);
 }
 .pt-as-footer-row {
-  min-height: 30px;
+  min-height: 38px;
   display: grid;
-  grid-template-columns: minmax(210px, 1.25fr) minmax(130px, 0.9fr) minmax(150px, 0.95fr) minmax(110px, 0.65fr);
-  gap: 0.8rem;
+  grid-template-columns: 18px minmax(210px, 1.25fr) minmax(130px, 0.9fr) minmax(150px, 0.95fr) minmax(110px, 0.65fr);
+  gap: 0.68rem;
   align-items: center;
-  padding: 0.33rem 0.7rem;
+  padding: 0.46rem 0.82rem;
   border-bottom: 1px solid rgba(30,52,64,0.56);
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.86rem;
+}
+.pt-as-footer-row i {
+  color: var(--text);
+  font-weight: 950;
+  font-style: normal;
 }
 .pt-as-footer-row:last-child {
   border-bottom: 0;
 }
 .pt-as-footer-row span {
   color: var(--text);
-  font-weight: 850;
+  font-weight: 920;
 }
 .pt-as-footer-row strong {
   color: var(--text-secondary);
-  font-size: 0.8rem;
-  font-weight: 780;
+  font-size: 0.84rem;
+  font-weight: 850;
 }
 .pt-as-footer-row em {
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   font-style: normal;
 }
 .pt-as-footer-row b {
   justify-self: end;
   color: var(--blue);
-  font-size: 0.78rem;
-  font-weight: 880;
+  font-size: 0.82rem;
+  font-weight: 930;
 }
 .pt-as-footer-row b.rt-good { color: var(--green); }
 .pt-as-footer-row b.rt-warn { color: var(--yellow); }

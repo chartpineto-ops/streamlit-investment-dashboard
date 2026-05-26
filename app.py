@@ -6,6 +6,7 @@ import json
 from math import isnan
 import os
 from pathlib import Path
+import re
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -1148,6 +1149,42 @@ def _html_list(items: list[str], limit: int = 4) -> str:
     return "".join(f"<li>{escape(item)}</li>" for item in cleaned[:limit])
 
 
+def _as_arrow_html(css_class: str = "pt-as-arrow") -> str:
+    return (
+        f'<div class="{escape(css_class)}" aria-hidden="true">'
+        '<svg viewBox="0 0 64 32" role="img" focusable="false">'
+        '<path d="M4 14h36V6l20 10-20 10v-8H4z"></path>'
+        '</svg>'
+        '</div>'
+    )
+
+
+def _short_period_label(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "N/A"
+    match = re.search(r"(20\d{2}).*?Q([1-4])|Q([1-4]).*?(20\d{2})", text, re.IGNORECASE)
+    if match:
+        year = match.group(1) or match.group(4)
+        quarter = match.group(2) or match.group(3)
+        return f"Q{quarter} '{str(year)[-2:]}"
+    parsed = pd.to_datetime(text, errors="coerce")
+    if pd.notna(parsed):
+        return parsed.strftime("%b '%y")
+    return text[-8:] if len(text) > 8 else text
+
+
+def _date_axis_html(index: pd.Index) -> str:
+    if index is None or len(index) == 0:
+        return ""
+    positions = sorted({0, max(0, len(index) // 3), max(0, len(index) * 2 // 3), len(index) - 1})
+    labels = []
+    for pos in positions:
+        parsed = pd.to_datetime(index[pos], errors="coerce")
+        labels.append(parsed.strftime("%b '%y") if pd.notna(parsed) else str(index[pos])[:8])
+    return '<div class="pt-as-date-axis">' + "".join(f"<span>{escape(label)}</span>" for label in labels) + "</div>"
+
+
 def _return_pct_from_history(history: pd.DataFrame, periods: int) -> float | None:
     if history is None or history.empty or "Close" not in history:
         return None
@@ -1227,6 +1264,7 @@ def _price_trend_html(ticker: str, history: pd.DataFrame) -> str:
     if close.empty:
         return '<div class="pt-as-chart-empty">Insufficient price trend data.</div>'
     close = close.tail(130)
+    date_axis = _date_axis_html(close.index)
     ma50 = close.rolling(50, min_periods=5).mean()
     ma200 = close.rolling(200, min_periods=5).mean()
     chart = _svg_line_chart(
@@ -1243,7 +1281,7 @@ def _price_trend_html(ticker: str, history: pd.DataFrame) -> str:
         '<span><i style="background:#A76AE8"></i>200D MA</span>'
         "</div>"
     )
-    return f"{legend}{chart}"
+    return f"{legend}{chart}{date_axis}"
 
 
 def _bar_chart_svg(values: list[float], labels: list[str], color: str, width: int = 290, height: int = 150) -> str:
@@ -1329,6 +1367,7 @@ def _as_footer_row(title: str, left: str, middle: str, right: str, tone: str = "
     tone_class = {"good": "rt-good", "bad": "rt-bad", "warn": "rt-warn"}.get(tone, "")
     return (
         '<div class="pt-as-footer-row">'
+        '<i aria-hidden="true">▸</i>'
         f'<span>{escape(title)}</span>'
         f'<strong>{escape(left)}</strong>'
         f'<em>{escape(middle)}</em>'
@@ -1397,7 +1436,7 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
         ]
     )
     qtail = qhist.tail(5) if isinstance(qhist, pd.DataFrame) and not qhist.empty else pd.DataFrame()
-    qlabels = [str(item).replace("202", "Q")[-5:] for item in qtail.get("period", pd.Series(dtype=str)).tolist()]
+    qlabels = [_short_period_label(item) for item in qtail.get("period", pd.Series(dtype=str)).tolist()]
     revenue_chart = _bar_chart_svg((qtail.get("revenue", pd.Series(dtype=float)) / 1e9).tolist() if not qtail.empty else [], qlabels, BRAND_COLORS["pine_bright"])
     margin_chart = _spark_line_svg(qtail.get("gross_margin", pd.Series(dtype=float)).tolist() if not qtail.empty else [])
     fcf_chart = _bar_chart_svg((qtail.get("free_cash_flow", pd.Series(dtype=float)) / 1e6).tolist() if not qtail.empty else [], qlabels, BRAND_COLORS["pine_bright"])
@@ -1439,9 +1478,9 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
     scenario = "".join(
         [
             _scenario_decision_card(bear, {"probability": "25%", "impact": "Low", "score_range": "10 - 35"}, "bear"),
-            '<div class="pt-as-arrow">-></div>',
+            _as_arrow_html("pt-as-arrow"),
             _scenario_decision_card(base, {"probability": "50%", "impact": "Medium", "score_range": "40 - 65"}, "base"),
-            '<div class="pt-as-arrow">-></div>',
+            _as_arrow_html("pt-as-arrow"),
             _scenario_decision_card(bull, {"probability": "25%", "impact": "High", "score_range": "65 - 100"}, "bull"),
         ]
     )
@@ -1522,7 +1561,7 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
         <div class="pt-as-panel"><div class="pt-as-panel-title">Earnings Setup / Catalyst Watch</div><div class="pt-as-info-table">{_as_value_row("Next Earnings", str(next_earnings))}{_as_value_row("Setup", str(view_model.get("entry_signal") or "N/A"), "warn")}{_as_value_row("Key Bullish Reaction", "Better guidance, margin expansion, or strong demand commentary")}{_as_value_row("Key Risk", "Strong results may already be priced in")}</div></div>
         <div class="pt-as-panel"><div class="pt-as-panel-title">Valuation + Technical Setup</div><div class="pt-as-fundamental-grid"><div>{_as_value_row("Market Cap", fmt_currency(quote.get("market_cap"), 1))}{_as_value_row("Enterprise Value", fmt_currency(quote.get("enterprise_value"), 1))}{_as_value_row("P / Sales", fmt_multiple(quote.get("price_to_sales")))}{_as_value_row("P / E", fmt_multiple(quote.get("trailing_pe")))}{_as_value_row("Verdict", str(view_model.get("quick_stats", [{}])[3].get("value") if view_model.get("quick_stats") else "N/A"), "bad" if "expensive" in str(view_model.get("quick_stats", [{}])[3].get("value") if view_model.get("quick_stats") else "").lower() else "warn")}</div><div>{_as_value_row("Price vs 50D MA", "Above" if vs_50 and vs_50 > 0 else "Below", "good" if vs_50 and vs_50 > 0 else "bad")}{_as_value_row("Price vs 200D MA", "Above" if vs_200 and vs_200 > 0 else "Below", "good" if vs_200 and vs_200 > 0 else "bad")}{_as_value_row("52W Position", f"{range_pct:.1f}%" if range_pct is not None else "N/A", "good" if range_pct and range_pct > 60 else "warn")}{_as_value_row("Entry Quality", str(view_model.get("entry_signal") or "N/A"), "warn")}</div></div></div>
       </div>
-      <div class="pt-as-panel bridge"><div class="pt-as-panel-title">3-Statement Bridge (Latest Period)</div><div class="pt-as-bridge-grid"><div class="income"><span>Income Statement</span>{_as_value_row("Revenue", revenue)}{_as_value_row("Gross Profit", gross_profit)}{_as_value_row("Net Income", net_income)}</div><i>-></i><div class="balance"><span>Balance Sheet</span>{_as_value_row("Cash & Equivalents", cash)}{_as_value_row("Total Debt", debt)}{_as_value_row("Net Debt", net_debt)}</div><i>-></i><div class="cashflow"><span>Cash Flow Statement</span>{_as_value_row("Operating Cash Flow", ocf)}{_as_value_row("Capex", capex)}{_as_value_row("Free Cash Flow", fcf)}</div><div class="takeaway"><span>Bridge Takeaway</span><p>{escape((financials.get("financial_data_packet") or {}).get("data_quality_note") or "Financial statements tie together with available latest-period data.")}</p></div></div></div>
+      <div class="pt-as-panel bridge"><div class="pt-as-panel-title">3-Statement Bridge (Latest Period)</div><div class="pt-as-bridge-grid"><div class="income"><span>Income Statement</span>{_as_value_row("Revenue", revenue)}{_as_value_row("Gross Profit", gross_profit)}{_as_value_row("Net Income", net_income)}</div>{_as_arrow_html("pt-as-bridge-arrow")}<div class="balance"><span>Balance Sheet</span>{_as_value_row("Cash & Equivalents", cash)}{_as_value_row("Total Debt", debt)}{_as_value_row("Net Debt", net_debt)}</div>{_as_arrow_html("pt-as-bridge-arrow")}<div class="cashflow"><span>Cash Flow Statement</span>{_as_value_row("Operating Cash Flow", ocf)}{_as_value_row("Capex", capex)}{_as_value_row("Free Cash Flow", fcf)}</div><div class="takeaway"><span>Bridge Takeaway</span><p>{escape((financials.get("financial_data_packet") or {}).get("data_quality_note") or "Financial statements tie together with available latest-period data.")}</p></div></div></div>
       <div class="pt-as-footer-rows">{footer_rows}</div>
     </div>
     """
@@ -2585,76 +2624,6 @@ def company_page(ticker: str) -> None:
     identity = get_company_identity(ticker)
     header_view_model = build_company_header_view_model(ticker, quote, identity, financials, signal, {"valuation_label": valuation_label(signal)}, signal.get("technicals", {}))
     render_reference_company_dashboard(header_view_model, financials, quote, signal, options)
-    packet = financials.get("financial_data_packet") or {}
-    st.markdown('<div id="financial-summary"></div>', unsafe_allow_html=True)
-
-    with st.expander("Latest Quarterly Release", expanded=False):
-        render_latest_quarterly_release(financials)
-        render_financial_reconciliation(financials)
-
-    with st.expander("SEC Filings", expanded=False):
-        filings, status = fetch_sec_filings(ticker)
-        source_line(status.get("Source"), status.get("Last Updated"), status.get("Status"))
-        df_display(filings, height=220)
-
-    with st.expander("Company Headlines", expanded=False):
-        news, news_statuses = fetch_news(ticker, 24)
-        company_news = company_headlines(news, ticker)
-        source_name, news_state = source_status_summary(news_statuses)
-        source_line(source_name, now_et(), news_state)
-        if company_news.empty:
-            empty_state("No company-specific headlines found for this ticker.")
-        else:
-            df_display(clean_news_table(company_news), height=360)
-        st.json({"news_sources": news_statuses})
-
-    with st.expander("Data Health / Reconciliation", expanded=False):
-        st.json(
-            {
-                "selected_ticker": ticker,
-                "latest_reported_quarter": financials.get("latest_reported_earnings", {}),
-                "financial_packet": packet,
-                "statement_sources": financials.get("source_metadata", {}),
-                "last_updated": str(financials.get("last_updated")),
-                "status": financials.get("status"),
-                "validation_warnings": financials.get("validation_warnings", []),
-                "missing_fields": financials.get("missing_fields", []),
-            }
-        )
-
-    with st.expander("Detailed 3-Statement Table", expanded=False):
-        view = st.radio("Financial statement view", ["Quarterly", "Annual"], index=0, horizontal=True, key="company_financial_view")
-        history = view_history(financials, view)
-        latest = canonical_quarterly_latest(financials) if view == "Quarterly" else latest_row(financials, view)
-        period = latest.get("period", view)
-        risk_label, risk_tone = balance_sheet_risk_label(latest)
-        render_metric_grid(
-            [
-                ("Revenue", fmt_currency(latest.get("revenue"), 1), period, "neutral"),
-                ("Revenue Growth", fmt_growth(latest.get("revenue_yoy_growth") if view == "Quarterly" else latest.get("revenue_qoq_growth"), bool(latest.get("revenue_yoy_base_effect"))), "YoY where available; NM flags base effects", tone_for_number(latest.get("revenue_yoy_growth"))),
-                ("Gross Margin", fmt_meaningful_percent(latest.get("gross_margin")), period, tone_for_number(latest.get("gross_margin"))),
-                ("Operating Margin", fmt_meaningful_percent(latest.get("operating_margin")), period, tone_for_number(latest.get("operating_margin"))),
-                ("Net Margin", fmt_meaningful_percent(latest.get("net_margin")), period, tone_for_number(latest.get("net_margin"))),
-                ("Free Cash Flow", fmt_currency(latest.get("free_cash_flow"), 1), period, tone_for_number(latest.get("free_cash_flow"))),
-                ("Cash", fmt_currency(latest.get("cash"), 1), period, "neutral"),
-                ("Balance Sheet Risk", risk_label, cash_runway_caption(latest), risk_tone),
-            ],
-            columns=4,
-        )
-        render_three_statement_visual(ticker, financials)
-        render_financial_charts(
-            history,
-            view,
-            {
-                "label": financials.get("source_metadata", {}).get("chart_source"),
-                "status": financials.get("source_metadata", {}).get("chart_source_status"),
-                "note": financials.get("source_metadata", {}).get("chart_source_note"),
-            },
-        )
-
-    with st.expander("Signal Center / Factor Details", expanded=False):
-        render_signal_summary(ticker, signal)
-        render_entry_signal(ticker, quote, latest, options, signal)
 
 
 def signal_page(ticker: str) -> None:
