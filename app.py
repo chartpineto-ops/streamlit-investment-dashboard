@@ -1418,21 +1418,282 @@ def _as_footer_row(title: str, left: str, middle: str, right: str, tone: str = "
     )
 
 
-MRVL_ECOSYSTEM_READ_THROUGH = [
-    {"ticker": "ANET", "category": "Adjacent winner", "impact": "High", "why": "AI networking demand"},
-    {"ticker": "TSM", "category": "Supplier / Foundry", "impact": "High", "why": "Advanced-node manufacturing"},
-    {"ticker": "VRT", "category": "Infrastructure", "impact": "Medium-High", "why": "Power & cooling demand"},
-    {"ticker": "AMZN", "category": "Cloud customer", "impact": "High", "why": "AI capex driver"},
-    {"ticker": "SMH", "category": "ETF", "impact": "Medium", "why": "Broad semiconductor read-through"},
-]
+TICKER_NAME_ALIASES = {
+    "MARVELL TECHNOLOGY": "MRVL",
+    "NVIDIA": "NVDA",
+    "ADVANCED MICRO DEVICES": "AMD",
+    "MICROSOFT": "MSFT",
+    "AMAZON": "AMZN",
+    "META PLATFORMS": "META",
+}
 
 
-MRVL_ECOSYSTEM_FLOW = [
-    ("Demand Driver", ["AI infrastructure buildout", "Cloud capex expansion", "Data-center networking demand"]),
-    ("MRVL Exposure", ["Custom silicon solutions", "Switching & networking", "Optical connectivity"]),
-    ("Beneficiary Groups", ["Suppliers / Foundries", "Cloud Customers", "Infrastructure Providers", "Semiconductor ETFs"]),
-    ("Top Related Names", ["TSM", "ANET", "VRT", "ETN", "AMZN", "MSFT", "SMH", "SOXX"]),
-]
+TICKER_ECOSYSTEM_MAP = {
+    "MRVL": {
+        "title": "Ecosystem Extension",
+        "subtitle": "Second-order read-through from MRVL's business momentum.",
+        "demand_drivers": ["AI infrastructure buildout", "Cloud capex expansion", "Data-center networking demand"],
+        "company_exposure": ["Custom silicon solutions", "Switching & networking", "Optical connectivity"],
+        "beneficiary_groups": ["Suppliers / Foundries", "Cloud Customers", "Infrastructure Providers", "Semiconductor ETFs"],
+        "top_related_names": ["TSM", "ANET", "VRT", "ETN", "AMZN", "MSFT", "SMH", "SOXX"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "ANET", "category": "Adjacent winner", "impact": "High", "why": "AI networking demand"},
+            {"ticker": "TSM", "category": "Supplier / Foundry", "impact": "High", "why": "Advanced-node manufacturing"},
+            {"ticker": "VRT", "category": "Infrastructure", "impact": "Medium-High", "why": "Power & cooling demand"},
+            {"ticker": "AMZN", "category": "Cloud customer", "impact": "High", "why": "AI capex driver"},
+            {"ticker": "SMH", "category": "ETF", "impact": "Medium", "why": "Broad semiconductor read-through"},
+        ],
+    },
+    "NVDA": {
+        "title": "Ecosystem Extension",
+        "subtitle": "Second-order read-through from NVDA's AI compute leadership.",
+        "demand_drivers": ["AI model training demand", "Accelerated computing", "Cloud GPU capex"],
+        "company_exposure": ["AI GPUs", "Networking systems", "CUDA software ecosystem"],
+        "beneficiary_groups": ["Foundries", "Memory suppliers", "Server OEMs", "Semiconductor ETFs"],
+        "top_related_names": ["TSM", "SMCI", "MU", "AVGO", "MSFT", "AMZN", "SMH", "SOXX"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "TSM", "category": "Supplier / Foundry", "impact": "High", "why": "Advanced AI chip manufacturing"},
+            {"ticker": "MU", "category": "Memory supplier", "impact": "Medium-High", "why": "High-bandwidth memory demand"},
+            {"ticker": "SMCI", "category": "Infrastructure", "impact": "High", "why": "AI server demand"},
+            {"ticker": "MSFT", "category": "Cloud customer", "impact": "High", "why": "Azure AI capex"},
+            {"ticker": "SMH", "category": "ETF", "impact": "Medium", "why": "Broad semiconductor exposure"},
+        ],
+    },
+    "AMD": {
+        "title": "Ecosystem Extension",
+        "subtitle": "Second-order read-through from AMD's compute and data-center momentum.",
+        "demand_drivers": ["AI accelerator adoption", "Data-center CPU refresh", "PC cycle recovery"],
+        "company_exposure": ["AI accelerators", "Server CPUs", "Client compute"],
+        "beneficiary_groups": ["Foundries", "Memory suppliers", "Cloud customers", "Semiconductor ETFs"],
+        "top_related_names": ["TSM", "MU", "HPE", "DELL", "MSFT", "AMZN", "SMH", "SOXX"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "TSM", "category": "Supplier / Foundry", "impact": "High", "why": "Advanced-node manufacturing"},
+            {"ticker": "MU", "category": "Memory supplier", "impact": "Medium", "why": "AI and server memory attach"},
+            {"ticker": "DELL", "category": "Infrastructure", "impact": "Medium-High", "why": "Enterprise AI server deployments"},
+            {"ticker": "MSFT", "category": "Cloud customer", "impact": "Medium-High", "why": "Cloud accelerator demand"},
+            {"ticker": "SOXX", "category": "ETF", "impact": "Medium", "why": "Broad chip-cycle read-through"},
+        ],
+    },
+    "MSFT": {
+        "title": "Ecosystem Extension",
+        "subtitle": "Second-order read-through from MSFT's cloud and AI platform momentum.",
+        "demand_drivers": ["Cloud migration", "Enterprise AI adoption", "Productivity software monetization"],
+        "company_exposure": ["Azure infrastructure", "AI copilots", "Enterprise software distribution"],
+        "beneficiary_groups": ["AI infrastructure suppliers", "Software partners", "Cybersecurity vendors", "Cloud ETFs"],
+        "top_related_names": ["NVDA", "AVGO", "CRWD", "DDOG", "NOW", "AMZN", "QQQ", "IGV"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "NVDA", "category": "AI infrastructure", "impact": "High", "why": "GPU demand from cloud AI workloads"},
+            {"ticker": "AVGO", "category": "Networking / silicon", "impact": "Medium-High", "why": "Data-center networking demand"},
+            {"ticker": "CRWD", "category": "Software partner", "impact": "Medium", "why": "Enterprise cloud security spend"},
+            {"ticker": "DDOG", "category": "Cloud observability", "impact": "Medium", "why": "Cloud workload monitoring"},
+            {"ticker": "IGV", "category": "ETF", "impact": "Medium", "why": "Software sector read-through"},
+        ],
+    },
+    "AMZN": {
+        "title": "Ecosystem Extension",
+        "subtitle": "Second-order read-through from AMZN's cloud, commerce, and logistics scale.",
+        "demand_drivers": ["AWS demand", "AI cloud capex", "E-commerce volume", "Digital advertising"],
+        "company_exposure": ["Cloud infrastructure", "Retail marketplace", "Advertising platform"],
+        "beneficiary_groups": ["AI infrastructure suppliers", "Logistics partners", "Ad-tech ecosystem", "Cloud ETFs"],
+        "top_related_names": ["NVDA", "MRVL", "VRT", "SHOP", "UPS", "GOOGL", "QQQ", "FDN"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "NVDA", "category": "AI infrastructure", "impact": "High", "why": "AWS accelerator demand"},
+            {"ticker": "VRT", "category": "Infrastructure", "impact": "Medium-High", "why": "Data-center power and cooling"},
+            {"ticker": "SHOP", "category": "Commerce ecosystem", "impact": "Medium", "why": "E-commerce demand signal"},
+            {"ticker": "GOOGL", "category": "Digital ads", "impact": "Medium", "why": "Online ad market read-through"},
+            {"ticker": "FDN", "category": "ETF", "impact": "Medium", "why": "Internet platform exposure"},
+        ],
+    },
+    "META": {
+        "title": "Ecosystem Extension",
+        "subtitle": "Second-order read-through from META's advertising, AI, and platform momentum.",
+        "demand_drivers": ["Digital ad recovery", "AI recommendation systems", "Social platform engagement"],
+        "company_exposure": ["Ad platform", "AI infrastructure", "Consumer social networks"],
+        "beneficiary_groups": ["AI infrastructure suppliers", "Ad-tech platforms", "Cloud / data-center suppliers", "Internet ETFs"],
+        "top_related_names": ["NVDA", "AVGO", "GOOGL", "SNAP", "TTD", "VRT", "QQQ", "FDN"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "NVDA", "category": "AI infrastructure", "impact": "High", "why": "AI model training and inference demand"},
+            {"ticker": "AVGO", "category": "Networking / silicon", "impact": "Medium-High", "why": "Data-center networking needs"},
+            {"ticker": "GOOGL", "category": "Digital ads", "impact": "Medium-High", "why": "Ad market read-through"},
+            {"ticker": "TTD", "category": "Ad-tech", "impact": "Medium", "why": "Programmatic ad demand"},
+            {"ticker": "FDN", "category": "ETF", "impact": "Medium", "why": "Internet platform exposure"},
+        ],
+    },
+}
+
+
+INDUSTRY_ECOSYSTEM_MAP = {
+    "Semiconductors": {
+        "subtitle": "Industry-based read-through for semiconductor demand and supply chains.",
+        "demand_drivers": ["AI compute demand", "Cloud capex", "Semiconductor cycle", "Advanced-node manufacturing"],
+        "company_exposure": ["Chip design", "Compute / networking", "Semiconductor demand"],
+        "beneficiary_groups": ["Foundries", "Equipment makers", "Cloud customers", "Semiconductor ETFs"],
+        "top_related_names": ["TSM", "ASML", "AMAT", "LRCX", "SOXX", "SMH"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "TSM", "category": "Foundry", "impact": "High", "why": "Advanced-node manufacturing"},
+            {"ticker": "ASML", "category": "Equipment", "impact": "Medium-High", "why": "Lithography demand"},
+            {"ticker": "AMAT", "category": "Equipment", "impact": "Medium-High", "why": "Wafer fab equipment demand"},
+            {"ticker": "LRCX", "category": "Equipment", "impact": "Medium", "why": "Etch and deposition exposure"},
+            {"ticker": "SMH", "category": "ETF", "impact": "Medium", "why": "Broad semiconductor read-through"},
+        ],
+    },
+    "Software": {
+        "subtitle": "Industry-based read-through for enterprise software and cloud workloads.",
+        "demand_drivers": ["Enterprise software spend", "Cloud adoption", "AI workflow automation"],
+        "company_exposure": ["Recurring software revenue", "Platform expansion", "Enterprise seats"],
+        "beneficiary_groups": ["Cloud platforms", "Cybersecurity vendors", "Data platforms", "Software ETFs"],
+        "top_related_names": ["MSFT", "NOW", "CRM", "CRWD", "DDOG", "IGV"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "MSFT", "category": "Cloud platform", "impact": "High", "why": "Enterprise cloud spend"},
+            {"ticker": "NOW", "category": "Workflow software", "impact": "Medium-High", "why": "Enterprise automation demand"},
+            {"ticker": "CRWD", "category": "Cybersecurity", "impact": "Medium", "why": "Security budget read-through"},
+            {"ticker": "DDOG", "category": "Observability", "impact": "Medium", "why": "Cloud workload monitoring"},
+            {"ticker": "IGV", "category": "ETF", "impact": "Medium", "why": "Software sector exposure"},
+        ],
+    },
+    "Internet / Digital Platforms": {
+        "subtitle": "Industry-based read-through for internet platforms, ads, and digital engagement.",
+        "demand_drivers": ["Digital advertising", "Consumer engagement", "AI content ranking", "E-commerce activity"],
+        "company_exposure": ["Platform traffic", "Advertising yield", "Consumer marketplace demand"],
+        "beneficiary_groups": ["Ad-tech platforms", "Cloud providers", "Payment networks", "Internet ETFs"],
+        "top_related_names": ["GOOGL", "META", "AMZN", "TTD", "PYPL", "FDN"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "GOOGL", "category": "Digital ads", "impact": "High", "why": "Ad-market health"},
+            {"ticker": "TTD", "category": "Ad-tech", "impact": "Medium-High", "why": "Programmatic demand"},
+            {"ticker": "AMZN", "category": "Commerce / ads", "impact": "Medium-High", "why": "Marketplace and retail media"},
+            {"ticker": "PYPL", "category": "Payments", "impact": "Medium", "why": "Digital checkout activity"},
+            {"ticker": "FDN", "category": "ETF", "impact": "Medium", "why": "Internet platform exposure"},
+        ],
+    },
+    "Banks": {
+        "subtitle": "Industry-based read-through for lending, deposits, and credit conditions.",
+        "demand_drivers": ["Loan demand", "Deposit costs", "Credit quality", "Yield curve shifts"],
+        "company_exposure": ["Net interest income", "Credit cycle", "Capital markets activity"],
+        "beneficiary_groups": ["Regional banks", "Asset managers", "Payment networks", "Financial ETFs"],
+        "top_related_names": ["JPM", "BAC", "WFC", "GS", "V", "XLF", "KBE"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "JPM", "category": "Large bank", "impact": "High", "why": "Credit and deposit cycle read-through"},
+            {"ticker": "BAC", "category": "Large bank", "impact": "Medium-High", "why": "Rate sensitivity"},
+            {"ticker": "GS", "category": "Capital markets", "impact": "Medium", "why": "Issuance and deal activity"},
+            {"ticker": "V", "category": "Payments", "impact": "Medium", "why": "Consumer and business transaction volume"},
+            {"ticker": "XLF", "category": "ETF", "impact": "Medium", "why": "Financial sector exposure"},
+        ],
+    },
+    "Oil & Gas": {
+        "subtitle": "Industry-based read-through for commodity prices, production, and energy services.",
+        "demand_drivers": ["Oil and gas prices", "Production growth", "Energy security", "Capital discipline"],
+        "company_exposure": ["Upstream production", "Midstream demand", "Energy services activity"],
+        "beneficiary_groups": ["Oilfield services", "Midstream operators", "Integrated majors", "Energy ETFs"],
+        "top_related_names": ["XOM", "CVX", "SLB", "HAL", "KMI", "XLE", "OIH"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "SLB", "category": "Oilfield services", "impact": "High", "why": "Drilling and completion activity"},
+            {"ticker": "HAL", "category": "Oilfield services", "impact": "Medium-High", "why": "North American activity"},
+            {"ticker": "KMI", "category": "Midstream", "impact": "Medium", "why": "Pipeline volume demand"},
+            {"ticker": "XOM", "category": "Integrated major", "impact": "Medium", "why": "Commodity price read-through"},
+            {"ticker": "XLE", "category": "ETF", "impact": "Medium", "why": "Energy sector exposure"},
+        ],
+    },
+    "Utilities": {
+        "subtitle": "Industry-based read-through for power demand and grid investment.",
+        "demand_drivers": ["Electricity demand", "Grid modernization", "Data-center load growth", "Rate-base investment"],
+        "company_exposure": ["Regulated utility growth", "Power generation", "Transmission investment"],
+        "beneficiary_groups": ["Power equipment", "Grid suppliers", "Independent power producers", "Utility ETFs"],
+        "top_related_names": ["NEE", "SO", "DUK", "ETN", "GEV", "XLU"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "ETN", "category": "Power equipment", "impact": "High", "why": "Grid and electrical systems demand"},
+            {"ticker": "GEV", "category": "Power generation", "impact": "Medium-High", "why": "Generation and grid equipment"},
+            {"ticker": "NEE", "category": "Utility", "impact": "Medium", "why": "Power demand and renewables"},
+            {"ticker": "DUK", "category": "Utility", "impact": "Medium", "why": "Regulated load growth"},
+            {"ticker": "XLU", "category": "ETF", "impact": "Medium", "why": "Utility sector exposure"},
+        ],
+    },
+    "Industrials": {
+        "subtitle": "Industry-based read-through for industrial production, infrastructure, and automation.",
+        "demand_drivers": ["Capital spending", "Infrastructure investment", "Automation demand", "Manufacturing activity"],
+        "company_exposure": ["Industrial orders", "Operating leverage", "Supply chain execution"],
+        "beneficiary_groups": ["Automation suppliers", "Electrical equipment", "Transport / logistics", "Industrial ETFs"],
+        "top_related_names": ["ETN", "HON", "ROK", "CAT", "UPS", "XLI"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "ETN", "category": "Electrical equipment", "impact": "High", "why": "Electrification and infrastructure demand"},
+            {"ticker": "HON", "category": "Automation", "impact": "Medium-High", "why": "Industrial automation demand"},
+            {"ticker": "CAT", "category": "Equipment", "impact": "Medium", "why": "Construction and infrastructure activity"},
+            {"ticker": "UPS", "category": "Logistics", "impact": "Medium", "why": "Freight and shipment demand"},
+            {"ticker": "XLI", "category": "ETF", "impact": "Medium", "why": "Industrial sector exposure"},
+        ],
+    },
+}
+
+
+SECTOR_ECOSYSTEM_MAP = {
+    "Technology": INDUSTRY_ECOSYSTEM_MAP["Semiconductors"] | {
+        "subtitle": "Sector-based read-through for technology platforms, AI, and cloud infrastructure.",
+        "demand_drivers": ["AI adoption", "Cloud capex", "Enterprise technology spend", "Digital transformation"],
+        "company_exposure": ["Technology demand", "Platform adoption", "Infrastructure growth"],
+        "beneficiary_groups": ["Semiconductors", "Cloud platforms", "Software vendors", "Technology ETFs"],
+        "top_related_names": ["NVDA", "MSFT", "AVGO", "AMD", "TSM", "QQQ", "XLK"],
+    },
+    "Financials": INDUSTRY_ECOSYSTEM_MAP["Banks"] | {
+        "subtitle": "Sector-based read-through for financial conditions and capital markets.",
+        "top_related_names": ["JPM", "BAC", "GS", "MS", "V", "XLF"],
+    },
+    "Energy": INDUSTRY_ECOSYSTEM_MAP["Oil & Gas"] | {
+        "subtitle": "Sector-based read-through for energy prices and production activity.",
+        "top_related_names": ["XOM", "CVX", "SLB", "KMI", "XLE"],
+    },
+    "Healthcare": {
+        "subtitle": "Sector-based read-through for healthcare demand, innovation, and reimbursement.",
+        "demand_drivers": ["Procedure volume", "Drug innovation", "Healthcare utilization", "Reimbursement trends"],
+        "company_exposure": ["Healthcare products", "Clinical demand", "Payer / provider spending"],
+        "beneficiary_groups": ["Medical device makers", "Biopharma suppliers", "Managed care", "Healthcare ETFs"],
+        "top_related_names": ["UNH", "LLY", "TMO", "ISRG", "XLV", "IBB"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "TMO", "category": "Life-science tools", "impact": "Medium-High", "why": "Research and production demand"},
+            {"ticker": "ISRG", "category": "Medical devices", "impact": "Medium", "why": "Procedure volume read-through"},
+            {"ticker": "UNH", "category": "Managed care", "impact": "Medium", "why": "Healthcare utilization"},
+            {"ticker": "LLY", "category": "Biopharma", "impact": "Medium", "why": "Innovation and demand signal"},
+            {"ticker": "XLV", "category": "ETF", "impact": "Medium", "why": "Healthcare sector exposure"},
+        ],
+    },
+    "Industrials": INDUSTRY_ECOSYSTEM_MAP["Industrials"] | {
+        "subtitle": "Sector-based read-through for infrastructure, automation, and manufacturing activity.",
+        "top_related_names": ["ETN", "HON", "CAT", "GE", "UPS", "XLI"],
+    },
+    "Consumer": {
+        "subtitle": "Sector-based read-through for consumer demand, pricing, and discretionary spending.",
+        "demand_drivers": ["Consumer spending", "Wage growth", "Pricing power", "Channel demand"],
+        "company_exposure": ["Consumer demand", "Brand strength", "Retail / e-commerce channels"],
+        "beneficiary_groups": ["Retailers", "Payment networks", "Logistics providers", "Consumer ETFs"],
+        "top_related_names": ["AMZN", "WMT", "COST", "V", "UPS", "XLY", "XLP"],
+        "ecosystem_readthrough_rows": [
+            {"ticker": "AMZN", "category": "Retail / e-commerce", "impact": "High", "why": "Consumer online demand"},
+            {"ticker": "V", "category": "Payments", "impact": "Medium-High", "why": "Transaction volume"},
+            {"ticker": "WMT", "category": "Retail", "impact": "Medium", "why": "Consumer staples demand"},
+            {"ticker": "UPS", "category": "Logistics", "impact": "Medium", "why": "Shipment volumes"},
+            {"ticker": "XLY", "category": "ETF", "impact": "Medium", "why": "Consumer discretionary exposure"},
+        ],
+    },
+    "Utilities": INDUSTRY_ECOSYSTEM_MAP["Utilities"] | {
+        "subtitle": "Sector-based read-through for power demand, grid investment, and regulated growth.",
+        "top_related_names": ["NEE", "SO", "DUK", "ETN", "XLU"],
+    },
+}
+
+
+GENERIC_ECOSYSTEM_MODEL = {
+    "title": "Ecosystem Extension",
+    "subtitle": "General market ecosystem view based on available company metadata.",
+    "demand_drivers": ["End-market demand", "Capital spending", "Customer adoption", "Macro conditions"],
+    "company_exposure": ["Core products / services", "Customer demand", "Operating leverage"],
+    "beneficiary_groups": ["Suppliers", "Customers", "Adjacent competitors", "Sector ETFs"],
+    "top_related_names": ["SPY", "QQQ", "IWM", "DIA", "VTI"],
+    "ecosystem_readthrough_rows": [
+        {"ticker": "SPY", "category": "Market ETF", "impact": "Medium", "why": "Broad market read-through"},
+        {"ticker": "QQQ", "category": "Growth ETF", "impact": "Medium", "why": "Large-cap growth sensitivity"},
+        {"ticker": "IWM", "category": "Small-cap ETF", "impact": "Medium", "why": "Domestic growth and risk appetite"},
+        {"ticker": "VTI", "category": "Market ETF", "impact": "Medium", "why": "Total market exposure"},
+        {"ticker": "DIA", "category": "Blue-chip ETF", "impact": "Medium", "why": "Large industrial and financial exposure"},
+    ],
+}
 
 
 def _impact_tone_class(value: str) -> str:
@@ -1472,31 +1733,98 @@ def _ecosystem_flow_card(step_number: int, title: str, items: list[str]) -> str:
     )
 
 
-def _ecosystem_extension_html(ticker: str) -> str:
-    if clean_ticker(ticker) != "MRVL":
-        return (
-            '<div class="pt-as-ecosystem-extension">'
-            '<div class="pt-as-transition-header"><span>Ecosystem Extension</span>'
-            "<p>Second-order read-through from MRVL's business momentum.</p></div>"
-            '<div class="pt-as-panel pt-as-ecosystem-placeholder">'
-            "Ecosystem read-through not yet available for this ticker."
-            "</div></div>"
-        )
+def _normalize_ecosystem_ticker(ticker: str | None, company_name: str | None = None) -> str:
+    raw_ticker = str(ticker or "").strip().upper()
+    raw_name = str(company_name or "").strip().upper()
+    for alias, mapped_ticker in TICKER_NAME_ALIASES.items():
+        if alias in raw_ticker or alias in raw_name:
+            return mapped_ticker
+    symbol = clean_ticker(raw_ticker)
+    if symbol:
+        return symbol
+    return ""
+
+
+def _match_ecosystem_template(value: str | None, templates: dict) -> tuple[str | None, dict | None]:
+    text = str(value or "").strip().casefold()
+    if not text:
+        return None, None
+    for key, model in templates.items():
+        key_text = str(key).casefold()
+        if key_text == text or key_text in text or text in key_text:
+            return key, model
+    return None, None
+
+
+def resolve_ecosystem_model(ticker: str | None, company_name: str | None, sector: str | None, industry: str | None) -> dict:
+    symbol = _normalize_ecosystem_ticker(ticker, company_name)
+    if symbol in TICKER_ECOSYSTEM_MAP:
+        model = dict(TICKER_ECOSYSTEM_MAP[symbol])
+        model["source_type"] = "ticker"
+        model["source_label"] = "Ticker model"
+        model["source_note"] = "Ticker-specific ecosystem model."
+        return model
+
+    industry_key, industry_model = _match_ecosystem_template(industry, INDUSTRY_ECOSYSTEM_MAP)
+    if industry_model:
+        model = dict(industry_model)
+        model["title"] = model.get("title") or "Ecosystem Extension"
+        model["subtitle"] = model.get("subtitle") or f"Industry-based read-through for {industry_key}."
+        model["source_type"] = "industry"
+        model["source_label"] = "Industry model"
+        model["source_note"] = "Showing industry-based ecosystem model for this company."
+        return model
+
+    sector_key, sector_model = _match_ecosystem_template(sector, SECTOR_ECOSYSTEM_MAP)
+    if sector_model:
+        model = dict(sector_model)
+        model["title"] = model.get("title") or "Ecosystem Extension"
+        model["subtitle"] = model.get("subtitle") or f"Sector-based read-through for {sector_key}."
+        model["source_type"] = "sector"
+        model["source_label"] = "Sector model"
+        model["source_note"] = "Showing sector-based ecosystem model for this company."
+        return model
+
+    model = dict(GENERIC_ECOSYSTEM_MODEL)
+    model["source_type"] = "generic"
+    model["source_label"] = "Generic model"
+    model["source_note"] = "Showing a general market ecosystem view based on available company metadata."
+    return model
+
+
+def _ecosystem_extension_html(
+    ticker: str,
+    company_name: str | None = None,
+    sector: str | None = None,
+    industry: str | None = None,
+) -> str:
+    symbol = _normalize_ecosystem_ticker(ticker, company_name) or clean_ticker(ticker) or "Ticker"
+    model = resolve_ecosystem_model(symbol, company_name, sector, industry)
     flow_parts: list[str] = []
-    for idx, (title, items) in enumerate(MRVL_ECOSYSTEM_FLOW, start=1):
+    flow_steps = [
+        ("Demand Driver", model.get("demand_drivers") or []),
+        ("Company Exposure", model.get("company_exposure") or []),
+        ("Beneficiary Groups", model.get("beneficiary_groups") or []),
+        ("Top Related Names", model.get("top_related_names") or []),
+    ]
+    for idx, (title, items) in enumerate(flow_steps, start=1):
         if idx > 1:
             flow_parts.append(_as_arrow_html("pt-as-ecosystem-arrow"))
         flow_parts.append(_ecosystem_flow_card(idx, title, items))
+    source_note = str(model.get("source_note") or "")
+    source_badge = f'<span class="pt-as-model-badge">{escape(str(model.get("source_label") or "Generic model"))}</span>'
+    note_html = f'<div class="pt-as-model-note">{escape(source_note)}</div>' if source_note else ""
     return (
         '<div class="pt-as-ecosystem-extension">'
-        '<div class="pt-as-transition-header"><span>Ecosystem Extension</span>'
-        "<p>Second-order read-through from MRVL's business momentum.</p></div>"
+        f'<div class="pt-as-transition-header"><span>{escape(str(model.get("title") or "Ecosystem Extension"))}</span>{source_badge}'
+        f'<p>{escape(str(model.get("subtitle") or "Second-order ecosystem read-through."))}</p></div>'
+        f"{note_html}"
         '<div class="pt-as-panel pt-as-ecosystem-readthrough">'
         '<div class="pt-as-panel-title">Ecosystem Read-Through</div>'
-        f"{_ecosystem_table_html(MRVL_ECOSYSTEM_READ_THROUGH)}"
+        f"{_ecosystem_table_html(model.get('ecosystem_readthrough_rows') or [])}"
         "</div>"
         '<div class="pt-as-panel pt-as-ecosystem-benefits">'
-        '<div class="pt-as-panel-title">Who Benefits if MRVL Wins?</div>'
+        f'<div class="pt-as-panel-title">Who Benefits if {escape(symbol)} Wins?</div>'
         f'<div class="pt-as-ecosystem-flow">{"".join(flow_parts)}</div>'
         "</div></div>"
     )
@@ -1630,7 +1958,12 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
         ]
     )
     highlights = "".join(_financial_highlight_html(item) for item in view_model.get("financial_highlights", []))
-    ecosystem_extension = _ecosystem_extension_html(ticker)
+    ecosystem_extension = _ecosystem_extension_html(
+        ticker,
+        view_model.get("company_name"),
+        view_model.get("sector"),
+        view_model.get("industry"),
+    )
     release = financials.get("latest_quarterly_release") or {}
     packet = financials.get("financial_data_packet") or {}
     completeness_text = _fmt_completeness(view_model.get("data_completeness"))

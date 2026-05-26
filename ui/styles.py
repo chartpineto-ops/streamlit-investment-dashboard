@@ -2472,6 +2472,31 @@ h3 {
   font-weight: 780;
   margin: 0;
 }
+.pt-as-model-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.16rem 0.5rem;
+  border-radius: 999px;
+  color: var(--blue);
+  border: 1px solid rgba(123,199,232,0.34);
+  background: rgba(123,199,232,0.08);
+  font-size: 0.68rem !important;
+  font-weight: 930 !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pt-as-transition-header .pt-as-model-badge {
+  color: var(--blue);
+}
+.pt-as-model-note {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 780;
+  padding: 0.45rem 0.68rem;
+  border: 1px solid rgba(30,52,64,0.58);
+  border-radius: 10px;
+  background: rgba(16,27,34,0.42);
+}
 .pt-as-ecosystem-readthrough,
 .pt-as-ecosystem-benefits {
   background: linear-gradient(180deg, rgba(8,18,23,0.96), rgba(4,9,12,0.98));
