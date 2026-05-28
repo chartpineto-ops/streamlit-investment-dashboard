@@ -17,7 +17,7 @@ from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_fili
 from data.financials import build_three_statement_visual_data, get_latest_quarterly_release, load_latest_company_financials, view_history
 from data.macro import fetch_macro_catalysts
 from data.market_data import DEFAULT_TICKERS, fetch_history, fetch_market_snapshot, fetch_quote
-from data.market_movers import clean_mover_tickers, get_biggest_movers, scan_market_movers
+from data.market_movers import clean_mover_tickers, get_biggest_movers, get_market_movers, get_whole_market_movers, scan_market_movers
 from data.news import fetch_news
 from data.options import fetch_options_summary
 from data.social import fetch_social_momentum_names
@@ -103,6 +103,9 @@ def reset_data_caches() -> None:
         fetch_sec_filings,
         fetch_latest_sec_filing,
         fetch_latest_periodic_sec_filing,
+        get_whole_market_movers,
+        get_market_movers,
+        scan_market_movers,
         compute_signal,
     ):
         try:
@@ -364,23 +367,23 @@ def _range_position_pct(quote: dict) -> float | None:
 
 
 def _stance_from_signal(label: str) -> tuple[str, str]:
-    if label == "Buy":
+    if label in {"Strong Buy", "Buy", "Lean Bullish"}:
         return "Bullish", "good"
     if label == "Speculative Buy":
         return "Bullish / Speculative", "good"
-    if label == "Hold / Watchlist":
+    if label in {"Hold / Watchlist", "Neutral / Watchlist"}:
         return "Neutral", "warn"
-    if label in {"Sell / Trim", "Avoid"}:
+    if label in {"Lean Bearish", "Sell / Trim", "Avoid"}:
         return "Bearish", "bad"
     return "No Rating", "neutral"
 
 
 def _signal_tone(label: str) -> str:
-    if label in {"Buy", "Speculative Buy"}:
+    if label in {"Strong Buy", "Buy", "Speculative Buy", "Lean Bullish"}:
         return "good"
-    if label in {"Sell / Trim", "Avoid"}:
+    if label in {"Lean Bearish", "Sell / Trim", "Avoid"}:
         return "bad"
-    if label == "Hold / Watchlist":
+    if label in {"Hold / Watchlist", "Neutral / Watchlist"}:
         return "warn"
     return "neutral"
 
@@ -640,7 +643,12 @@ def build_company_header_view_model(
     valuation = valuation_output.get("valuation_label") or valuation_label(signal_output)
     completeness = _first_number(packet.get("completeness_score"), release.get("data_completeness_score"), signal_output.get("data_completeness"))
     signal_label = signal_output.get("signal_label") or "No Rating / Insufficient Data"
-    stance, stance_tone = _stance_from_signal(signal_label)
+    stance = signal_output.get("market_stance") or _stance_from_signal(signal_label)[0]
+    stance_tone = _stance_from_signal(signal_label)[1]
+    conviction_label = signal_output.get("conviction_label") or "Low"
+    conviction_score = to_float(signal_output.get("conviction_score"))
+    factor_agreement = signal_output.get("factor_agreement") or {}
+    factor_summary = factor_agreement.get("summary") or "Factor agreement unavailable"
     entry_signal, entry_tone = _entry_signal_from_inputs(quote_data, latest, signal_output)
     market_cap_label, market_cap_tone = _market_cap_size_label(quote_data.get("market_cap"))
     stage_label, stage_tone = _stage_label(latest, quote_data, revenue_growth, fcf, net_income)
@@ -740,8 +748,9 @@ def build_company_header_view_model(
 
     score = to_float(signal_output.get("composite_score"))
     profile = _profile_snapshot(quote_data, company_identity)
-    positives_for_score = positives[:3] or [str(item) for item in signal_output.get("strengths", [])[:3] if item]
-    watch_items = cautions[:3] or [str(item) for item in signal_output.get("weaknesses", [])[:3] if item]
+    positives_for_score = [str(item) for item in signal_output.get("bullish_drivers", [])[:4] if item] or positives[:3] or [str(item) for item in signal_output.get("strengths", [])[:3] if item]
+    bearish_for_score = [str(item) for item in signal_output.get("bearish_drivers", [])[:4] if item] or cautions[:3]
+    watch_items = [str(item) for item in signal_output.get("watch_items", [])[:4] if item] or [str(item) for item in signal_output.get("weaknesses", [])[:3] if item]
     upgrade_triggers = [str(item) for item in signal_output.get("upgrade_triggers", [])[:4] if item] or [
         "Sustained revenue growth",
         "FCF improvement",
@@ -795,6 +804,13 @@ def build_company_header_view_model(
         "market_stance_tone": stance_tone,
         "composite_score": score,
         "confidence": signal_output.get("confidence") or "N/A",
+        "conviction": conviction_label,
+        "conviction_score": conviction_score,
+        "conviction_tone": "good" if conviction_label == "High" else "warn" if conviction_label == "Medium" else "neutral",
+        "factor_agreement": factor_agreement,
+        "factor_agreement_summary": factor_summary,
+        "conviction_drivers": signal_output.get("conviction_drivers") or [],
+        "conviction_dampeners": signal_output.get("conviction_dampeners") or [],
         "data_completeness": completeness,
         "expected_value": "N/A",
         "executive_summary": executive_summary,
@@ -802,8 +818,15 @@ def build_company_header_view_model(
         "financial_highlights": _header_financial_highlights(financial_packet, release, latest),
         "quick_snapshot": profile,
         "data_health": data_health,
-        "score_drivers": {"positive": positives_for_score[:3], "watch": watch_items[:3]},
-        "investment_decision": {"current_view": signal_label, "upgrade_triggers": upgrade_triggers, "downgrade_triggers": downgrade_triggers},
+        "score_drivers": {"bullish": positives_for_score[:4], "bearish": bearish_for_score[:4], "watch": watch_items[:4]},
+        "investment_decision": {
+            "current_view": signal_label,
+            "market_stance": stance,
+            "conviction": conviction_label,
+            "factor_agreement": factor_summary,
+            "upgrade_triggers": upgrade_triggers,
+            "downgrade_triggers": downgrade_triggers,
+        },
         "classification_chips": classification_chips,
         "bear_case": _scenario_card("Bear Case", f"Risk skew: {risk_label}", bear_risks, "bad" if risk_label == "Elevated" else "warn" if risk_label == "Moderate" else "neutral"),
         "base_case": _scenario_card(
@@ -811,8 +834,9 @@ def build_company_header_view_model(
             f"Current view: {signal_label}",
             [
                 f"Score: {score:.1f}/100" if score is not None else "Score: N/A",
-                f"Confidence: {signal_output.get('confidence') or 'N/A'}",
-                "Momentum positive" if momentum_tone == "good" else "Momentum requires monitoring",
+                f"Market stance: {stance}",
+                f"Conviction: {conviction_label}",
+                f"Factor agreement: {factor_summary}",
                 f"Valuation: {valuation or 'N/A'}",
             ],
             stance_tone,
@@ -1097,11 +1121,15 @@ def _driver_chip_list(items: list[str], tone: str) -> str:
 
 def _score_why_html(view_model: dict) -> str:
     drivers = view_model.get("score_drivers") or {}
+    bullish = drivers.get("bullish") or drivers.get("positive") or []
+    bearish = drivers.get("bearish") or []
+    watch = drivers.get("watch") or []
     return (
         '<div class="pt-score-why">'
         '<div class="pt-mini-title">Why this score?</div>'
-        f'<div><span>Positive</span>{_driver_chip_list(drivers.get("positive") or [], "good")}</div>'
-        f'<div><span>Watch items</span>{_driver_chip_list(drivers.get("watch") or [], "warn")}</div>'
+        f'<div><span>Bullish</span>{_driver_chip_list(bullish, "good")}</div>'
+        f'<div><span>Bearish</span>{_driver_chip_list(bearish, "bad")}</div>'
+        f'<div><span>Watch items</span>{_driver_chip_list(watch, "warn")}</div>'
         '</div>'
     )
 
@@ -1147,6 +1175,17 @@ def _html_list(items: list[str], limit: int = 4) -> str:
     if not cleaned:
         cleaned = ["No material driver available."]
     return "".join(f"<li>{escape(item)}</li>" for item in cleaned[:limit])
+
+
+def _as_why_group(title: str, items: list[str], tone: str, icon: str, fallback: str, limit: int = 3) -> str:
+    rows = "".join(
+        f'<div class="pt-as-why-row {escape(tone)}"><span>{escape(icon)}</span>{escape(str(item))}</div>'
+        for item in (items or [])[:limit]
+        if item
+    )
+    if not rows:
+        rows = f'<div class="pt-as-why-row neutral"><span>-</span>{escape(fallback)}</div>'
+    return f'<div class="pt-as-why-group"><b>{escape(title)}</b>{rows}</div>'
 
 
 def _as_arrow_html(css_class: str = "pt-as-arrow") -> str:
@@ -1845,12 +1884,16 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
     logo = _company_logo_html(view_model, 78)
     next_earnings = (view_model.get("quick_snapshot") or {}).get("Next Earnings") or "N/A"
     classification = "".join(_pt_chip(chip) for chip in view_model.get("classification_chips", []))
-    positives = (view_model.get("score_drivers") or {}).get("positive") or []
-    watch = (view_model.get("score_drivers") or {}).get("watch") or []
+    drivers = view_model.get("score_drivers") or {}
+    bullish = drivers.get("bullish") or drivers.get("positive") or []
+    bearish = drivers.get("bearish") or []
+    watch = drivers.get("watch") or []
     why_rows = "".join(
-        f'<div class="pt-as-why-row {escape(tone)}"><span>{escape("OK" if tone == "good" else "!")}</span>{escape(str(item))}</div>'
-        for tone, items in (("good", positives[:2]), ("warn", watch[:3]))
-        for item in items
+        [
+            _as_why_group("Bullish Drivers", bullish, "good", "OK", "No clear bullish driver."),
+            _as_why_group("Bearish Drivers", bearish, "bad", "!", "No clear bearish driver."),
+            _as_why_group("Watch Items", watch, "warn", "?", "No major watch item.", 2),
+        ]
     )
     returns = [
         ("1M", _return_pct_from_history(history, 21)),
@@ -1923,6 +1966,19 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
             _as_value_row("Net Debt", fmt_currency(latest.get("net_debt"), 1), "bad" if to_float(latest.get("net_debt")) and to_float(latest.get("net_debt")) > 0 else "good"),
         ]
     )
+    business_values = [to_float(signal.get(key)) for key in ("growth_score", "profitability_score", "balance_sheet_score")]
+    business_values = [value for value in business_values if value is not None]
+    business_score = sum(business_values) / len(business_values) if business_values else None
+    market_score = to_float(signal.get("momentum_score"))
+    valuation_text = str(view_model.get("quick_stats", [{}])[3].get("value") if view_model.get("quick_stats") else "N/A")
+    valuation_risk = "High" if "very" in valuation_text.casefold() else "Elevated" if "expensive" in valuation_text.casefold() else "Low" if valuation_text in {"Cheap", "Reasonable"} else "Moderate"
+    directional_rows = "".join(
+        [
+            _as_value_row("Business Trend", "Bullish" if business_score and business_score >= 65 else "Bearish" if business_score and business_score < 45 else "Neutral", "good" if business_score and business_score >= 65 else "bad" if business_score and business_score < 45 else "warn"),
+            _as_value_row("Market Trend", "Bullish" if market_score and market_score >= 65 else "Bearish" if market_score and market_score < 45 else "Neutral", "good" if market_score and market_score >= 65 else "bad" if market_score and market_score < 45 else "warn"),
+            _as_value_row("Valuation Risk", valuation_risk, "bad" if valuation_risk == "High" else "warn" if valuation_risk in {"Elevated", "Moderate"} else "good"),
+        ]
+    )
     decision = view_model.get("investment_decision") or {}
     upgrade = _html_list(decision.get("upgrade_triggers") or [])
     downgrade = _html_list(decision.get("downgrade_triggers") or [])
@@ -1953,6 +2009,7 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
             _score_detail_row("Composite Score", score_caption),
             _score_detail_row("Data Confidence", _fmt_completeness(view_model.get("data_completeness")), "good"),
             _score_detail_row("Confidence", str(view_model.get("confidence") or "N/A"), "good" if view_model.get("confidence") == "High" else "warn"),
+            _score_detail_row("Conviction", str(view_model.get("conviction") or "N/A"), str(view_model.get("conviction_tone") or "neutral")),
             _score_detail_row("Expected Value", str(view_model.get("expected_value") or "N/A")),
             _score_detail_row("Market Stance", str(view_model.get("market_stance") or "N/A"), str(view_model.get("market_stance_tone") or "neutral")),
         ]
@@ -1989,7 +2046,8 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
           <div><strong>{escape(fmt_price(quote.get("price")))}</strong><span>Price</span></div>
           <div><strong class="{escape(change_class)}">{escape(fmt_percent(change_pct, signed=True))}</strong><span>Today</span></div>
           <div><strong>{escape(score_caption)}</strong><span>Score</span></div>
-          <div><strong class="warn">{escape(str(view_model.get("overall_research_signal") or "N/A"))}</strong><span>Signal</span></div>
+          <div><strong class="{escape(str(view_model.get("overall_tone") or "neutral"))}">{escape(str(view_model.get("overall_research_signal") or "N/A"))}</strong><span>Signal</span></div>
+          <div><strong class="{escape(str(view_model.get("conviction_tone") or "neutral"))}">{escape(str(view_model.get("conviction") or "N/A"))}</strong><span>Conviction</span></div>
           <div><strong class="good">{escape(str(view_model.get("confidence") or "N/A"))}</strong><span>Confidence</span></div>
           <div><strong class="good">{escape(_fmt_completeness(view_model.get("data_completeness")))}</strong><span>Data Completeness</span></div>
         </div>
@@ -1997,7 +2055,7 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
       <div class="pt-as-hero-card">
         <div class="pt-as-identity"><div class="pt-as-logo-plate">{logo}</div><div><div class="pt-as-ticker">{escape(ticker)}</div><div class="pt-as-name">{escape(str(view_model.get("company_name") or ticker))}</div><div class="pt-as-sector">{escape(str(view_model.get("sector") or ""))} <span>{escape(str(view_model.get("industry") or ""))}</span></div></div></div>
         <div class="pt-as-next"><span>Next Earnings</span><strong>{escape(str(next_earnings))}</strong></div>
-        <div class="pt-as-stance"><span>Investment Stance</span><strong>{escape(str(view_model.get("overall_research_signal") or "N/A"))}</strong><b>{escape(score_caption)}</b><p>{escape(str(view_model.get("executive_summary") or ""))}</p></div>
+        <div class="pt-as-stance"><span>Investment Stance</span><strong>{escape(str(view_model.get("overall_research_signal") or "N/A"))}</strong><b>{escape(score_caption)}</b><div class="pt-as-stance-meta"><i>{escape(str(view_model.get("market_stance") or "N/A"))}</i><i>{escape(str(view_model.get("confidence") or "N/A"))} confidence</i><i>{escape(str(view_model.get("conviction") or "N/A"))} conviction</i><i>{escape(_fmt_completeness(view_model.get("data_completeness")))} complete</i></div><p>{escape(str(view_model.get("executive_summary") or ""))}</p></div>
         <div class="pt-as-why"><span>Why this score?</span>{why_rows or '<div class="pt-as-why-row warn"><span>!</span>Insufficient score drivers.</div>'}</div>
       </div>
       <div class="pt-as-panel">
@@ -2013,8 +2071,8 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
         <div class="pt-as-panel"><div class="pt-as-panel-title">Financial Quality Trend <small>(Last 5 Quarters)</small></div><div class="pt-as-quality-grid">{quality_cards}</div></div>
       </div>
       <div class="pt-as-two-grid decision">
-        <div class="pt-as-panel"><div class="pt-as-panel-title">Stock vs Fundamentals</div><div class="pt-as-fundamental-grid"><div><div class="pt-as-subtitle">Market Performance</div>{stock_vs_rows}</div><div><div class="pt-as-subtitle">Business Performance</div>{fundamentals_rows}</div></div><div class="pt-as-note info">The stock setup is compared against business quality and valuation risk.</div></div>
-        <div class="pt-as-workbench"><div class="pt-as-panel-title">Decision Workbench</div><div class="pt-as-workbench-grid"><div class="current"><span>Current View</span><strong>{escape(score_caption)}</strong><b>{escape(str(view_model.get("overall_research_signal") or "N/A"))}</b><p>Improving fundamentals, but valuation can limit upside.</p></div><div class="upgrade"><span>Upgrade Triggers</span><ul>{upgrade}</ul></div><div class="downgrade"><span>Downgrade Triggers</span><ul>{downgrade}</ul></div></div></div>
+        <div class="pt-as-panel"><div class="pt-as-panel-title">Stock vs Fundamentals</div><div class="pt-as-fundamental-grid three"><div><div class="pt-as-subtitle">Market Performance</div>{stock_vs_rows}</div><div><div class="pt-as-subtitle">Business Performance</div>{fundamentals_rows}</div><div><div class="pt-as-subtitle">Directional Read</div>{directional_rows}</div></div><div class="pt-as-note info">The stock setup is compared against business quality and valuation risk.</div></div>
+        <div class="pt-as-workbench"><div class="pt-as-panel-title">Decision Workbench</div><div class="pt-as-workbench-grid"><div class="current"><span>Current View</span><strong>{escape(str(view_model.get("overall_research_signal") or "N/A"))}</strong><b>{escape(score_caption)}</b><p>Market stance: {escape(str(view_model.get("market_stance") or "N/A"))}<br>Conviction: {escape(str(view_model.get("conviction") or "N/A"))}<br>Factor agreement: {escape(str(view_model.get("factor_agreement_summary") or "N/A"))}</p></div><div class="upgrade"><span>Upgrade Triggers</span><ul>{upgrade}</ul></div><div class="downgrade"><span>Downgrade Triggers</span><ul>{downgrade}</ul></div></div></div>
       </div>
       <div class="pt-as-panel scenario"><div class="pt-as-panel-title">Scenario Snapshot</div><div class="pt-as-scenario-flow">{scenario}</div></div>
       <div class="pt-as-two-grid">
@@ -2134,15 +2192,17 @@ def render_signal_summary(ticker: str, signal: dict) -> None:
     label = signal.get("signal_label", "N/A")
     score = signal.get("composite_score", 0)
     confidence = signal.get("confidence", "Low")
-    tone = "good" if "Buy" in label else "bad" if label in {"Avoid", "Sell / Trim"} else "neutral"
+    conviction = signal.get("conviction_label", "N/A")
+    tone = _signal_tone(label)
     render_metric_grid(
         [
             ("Composite Score", f"{score:.1f}/100" if isinstance(score, (int, float)) else "N/A", "Transparent factor model", tone_for_number(score)),
-            ("Overall Research Signal", label, "Full research signal based on growth, profitability, balance sheet, valuation, momentum, catalysts, and data quality.", tone),
+            ("Overall Research Signal", label, "Directional research signal based on growth, profitability, balance sheet, valuation, momentum, catalysts, and data quality.", tone),
             ("Confidence", confidence, f"{signal.get('data_completeness', 'N/A')}% weighted data completeness", "good" if confidence == "High" else "warn" if confidence == "Medium" else "neutral"),
+            ("Conviction", conviction, f"Factor agreement: {(signal.get('factor_agreement') or {}).get('summary', 'N/A')}", "good" if conviction == "High" else "warn" if conviction == "Medium" else "neutral"),
             ("Missing Data Warnings", str(len(signal.get("missing_data_warnings", []))), signal.get("data_quality_note", ""), "warn" if signal.get("missing_data_warnings") else "good"),
         ],
-        columns=4,
+        columns=5,
         small=True,
     )
     score_frame = pd.DataFrame(
@@ -2204,6 +2264,8 @@ def _format_movers_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if frame is None or frame.empty:
         return pd.DataFrame()
     display = frame.copy()
+    if "Rank" not in display.columns:
+        display.insert(0, "Rank", range(1, len(display) + 1))
     if "Price" in display:
         display["Price"] = display["Price"].map(fmt_price)
     if "Daily Move %" in display:
@@ -2212,9 +2274,37 @@ def _format_movers_frame(frame: pd.DataFrame) -> pd.DataFrame:
         display["Volume"] = display["Volume"].map(fmt_compact)
     if "Relative Volume" in display:
         display["Relative Volume"] = display["Relative Volume"].map(lambda value: fmt_multiple(value) if to_float(value) is not None else "N/A")
+    if "Dollar Volume" in display:
+        display["Dollar Volume"] = display["Dollar Volume"].map(lambda value: fmt_compact(value, prefix="$"))
     if "Market Cap" in display:
         display["Market Cap"] = display["Market Cap"].map(lambda value: fmt_compact(value, prefix="$"))
+    if "Catalyst / News Count" in display:
+        display["Catalyst / News Count"] = display["Catalyst / News Count"].map(lambda value: "N/A" if to_float(value) is None else f"{int(to_float(value))}")
+    display = display.drop(columns=[col for col in ["Is Watchlist"] if col in display.columns])
     return display
+
+
+def _market_mover_height(frame: pd.DataFrame, max_height: int = 520) -> int:
+    rows = 0 if frame is None else len(frame)
+    return min(max(rows * 38 + 48, 130), max_height)
+
+
+def _market_mover_table(frame: pd.DataFrame, columns: list[str], empty_message: str, max_height: int = 520) -> None:
+    if frame is None or frame.empty:
+        empty_state(empty_message)
+        return
+    available = [column for column in columns if column in frame.columns]
+    df_display(_format_movers_frame(frame[available]), height=_market_mover_height(frame, max_height=max_height))
+
+
+def _mover_name(row: dict | pd.Series | None) -> str:
+    if row is None:
+        return "N/A"
+    ticker_value = clean_ticker(row.get("Ticker") or "")
+    move = to_float(row.get("Daily Move %"))
+    if not ticker_value:
+        return "N/A"
+    return f"{ticker_value} {fmt_percent(move, decimals=2, signed=True)}" if move is not None else ticker_value
 
 
 def _social_display_frame(frame: pd.DataFrame, watchlist_tickers: set[str]) -> pd.DataFrame:
@@ -2270,32 +2360,140 @@ def render_mover_row(row: pd.Series, rank: int, tone: str) -> str:
     )
 
 
+def render_whole_market_mover_row(row: pd.Series, rank: int, tone: str) -> str:
+    ticker = clean_ticker(row.get("Ticker") or "")
+    company = str(row.get("Company") or ticker or "N/A")
+    move = to_float(row.get("Daily Move %"))
+    tone_class = "good" if tone == "good" else "bad"
+    return (
+        '<div class="pt-mover-row" style="grid-template-columns:2rem 2.4rem minmax(0,1.5fr) auto auto;gap:0.7rem;">'
+        f'<div class="pt-mover-rank">{rank}</div>'
+        f'{_mover_logo_html(row, size=32)}'
+        '<div class="pt-mover-name">'
+        f'<strong>{escape(ticker or "N/A")}</strong>'
+        f'<span>{escape(company)}</span>'
+        '</div>'
+        f'<div class="pt-mover-change {tone_class}">{escape(fmt_percent(move, decimals=2, signed=True))}</div>'
+        '<div style="text-align:right;min-width:6.4rem;">'
+        f'<strong style="display:block;color:#EAF0F2;font-size:0.88rem;">{escape(fmt_price(row.get("Price")))}</strong>'
+        f'<span style="display:block;color:#A9B6BC;font-size:0.72rem;font-weight:800;">{escape(fmt_compact(row.get("Volume")))}</span>'
+        '</div>'
+        '</div>'
+    )
+
+
+def _whole_market_mover_card(title: str, frame: pd.DataFrame, tone: str) -> str:
+    if frame is None or frame.empty:
+        body = '<div class="pt-mover-empty">No movers passed the current filters.</div>'
+    else:
+        body = "".join(render_whole_market_mover_row(row, idx + 1, tone) for idx, (_, row) in enumerate(frame.iterrows()))
+        if len(frame) < 10:
+            body += f'<div class="pt-mover-empty">Only {len(frame)} movers passed the current filters.</div>'
+    return f'<div class="pt-mover-card"><div class="pt-mover-title">{escape(title)}</div>{body}</div>'
+
+
 def render_biggest_movers_section() -> None:
-    section("Biggest Gainers / Losers", "Current-session leaders from the app universe and watchlist.")
+    section("Whole Market Movers", "Top gainers and losers from a broad U.S. listed-stock scan.")
+    ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([1, 1, 1.2, 1.2])
+    with ctrl1:
+        include_etfs = st.toggle("Include ETFs", value=False, key="home_whole_market_include_etfs")
+    with ctrl2:
+        min_price = st.number_input("Minimum price", min_value=0.0, value=2.0, step=0.5, key="home_whole_market_min_price")
+    with ctrl3:
+        min_volume = st.number_input("Minimum volume", min_value=0, value=500_000, step=100_000, key="home_whole_market_min_volume")
+    with ctrl4:
+        refresh = st.button("Refresh movers", key="home_whole_market_refresh")
+    if refresh:
+        try:
+            get_whole_market_movers.clear()
+        except Exception:
+            pass
     try:
-        gainers, losers, status = get_biggest_movers(limit=10, include_etfs=True, extra_tickers=clean_mover_tickers(tuple(_watchlist_symbols())))
+        packet = get_whole_market_movers(min_price=min_price, min_volume=int(min_volume), include_etfs=include_etfs, refresh=refresh)
     except Exception as exc:
-        gainers, losers = pd.DataFrame(), pd.DataFrame()
-        status = {"Source": "Yahoo Finance/yfinance", "Status": "Source error", "Last Updated": now_et(), "Error": str(exc)}
-    source_line(status.get("Source", "Yahoo Finance/yfinance"), status.get("Last Updated"), status.get("Status", "Unknown"))
+        packet = {
+            "gainers": pd.DataFrame(),
+            "losers": pd.DataFrame(),
+            "most_active": pd.DataFrame(),
+            "unusual_volume": pd.DataFrame(),
+            "all_scanned": pd.DataFrame(),
+            "source_status": {
+                "source": "Yahoo Finance/yfinance quotes + broad listed-stock universe",
+                "status": "Error",
+                "last_updated": now_et(),
+                "message": "Broad market scan unavailable.",
+                "error_summary": str(exc),
+            },
+        }
+    gainers = packet.get("gainers", pd.DataFrame())
+    losers = packet.get("losers", pd.DataFrame())
+    most_active = packet.get("most_active", pd.DataFrame())
+    unusual_volume = packet.get("unusual_volume", pd.DataFrame())
+    all_scanned = packet.get("all_scanned", pd.DataFrame())
+    status = packet.get("source_status", {})
+    status_text = (
+        f"Source: {status.get('source', 'Yahoo Finance/yfinance')} | "
+        f"Scanned: {fmt_compact(status.get('universe_count'), decimals=0)} tickers | "
+        f"Quotes loaded: {fmt_compact(status.get('quotes_successful'), decimals=0)} | "
+        f"Updated: {fmt_date(status.get('last_updated'))}"
+    )
+    st.markdown(f'<div class="source-line">{escape(status_text)}</div>', unsafe_allow_html=True)
+    if status.get("status") == "Fallback":
+        st.warning(status.get("message") or "Broad market scan unavailable. Showing fallback PineTerminal universe.")
+    elif status.get("message"):
+        st.caption(status.get("message"))
     if gainers.empty and losers.empty:
         empty_state("Market mover data unavailable from current free sources.")
-        if status.get("Error"):
-            st.caption(status.get("Error"))
+        if status.get("error_summary"):
+            st.caption(status.get("error_summary"))
         return
+    top_gainer = gainers.iloc[0].to_dict() if not gainers.empty else {}
+    top_loser = losers.iloc[0].to_dict() if not losers.empty else {}
+    render_metric_grid(
+        [
+            ("Tickers Scanned", fmt_compact(status.get("universe_count"), decimals=0), str(status.get("universe_source") or "Broad universe"), "neutral"),
+            ("Quotes Loaded", fmt_compact(status.get("quotes_successful"), decimals=0), f"{fmt_compact(status.get('after_filters'), decimals=0)} after filters", "good" if status.get("quotes_successful") else "warn"),
+            ("Gainers Shown", str(len(gainers)), "Top positive movers", "good"),
+            ("Losers Shown", str(len(losers)), "Top negative movers", "bad"),
+            ("Biggest Gainer", _mover_name(top_gainer), "Current session", "good"),
+            ("Biggest Loser", _mover_name(top_loser), "Current session", "bad"),
+            ("Last Updated", fmt_date(status.get("last_updated")), str(status.get("provider") or "Yahoo Finance/yfinance"), "neutral"),
+        ],
+        columns=7,
+        small=True,
+    )
     col_gain, col_loss = st.columns(2)
     with col_gain:
-        if gainers.empty:
-            body = '<div class="pt-mover-empty">No positive movers found in the current universe.</div>'
-        else:
-            body = "".join(render_mover_row(row, idx + 1, "good") for idx, (_, row) in enumerate(gainers.iterrows()))
-        st.markdown(f'<div class="pt-mover-card"><div class="pt-mover-title">Top 10 Gainers</div>{body}</div>', unsafe_allow_html=True)
+        st.markdown(_whole_market_mover_card("Top 10 Gainers", gainers, "good"), unsafe_allow_html=True)
     with col_loss:
-        if losers.empty:
-            body = '<div class="pt-mover-empty">No negative movers found in the current universe.</div>'
+        st.markdown(_whole_market_mover_card("Top 10 Losers", losers, "bad"), unsafe_allow_html=True)
+    tab_all, tab_active, tab_unusual, tab_status = st.tabs(["All Movers", "Most Active", "Unusual Volume", "Source Status"])
+    home_cols = ["Ticker", "Company", "Price", "Daily Move %", "Volume", "Relative Volume", "Market Cap", "Sector", "Source", "Last Updated"]
+    with tab_all:
+        _market_mover_table(all_scanned.head(40), home_cols, "No movers passed the current filters.", max_height=620)
+    with tab_active:
+        _market_mover_table(most_active, home_cols, "Most-active data unavailable from the current scan.", max_height=520)
+    with tab_unusual:
+        if unusual_volume.empty or "Relative Volume" not in unusual_volume:
+            empty_state("Relative-volume data unavailable for this scan.")
         else:
-            body = "".join(render_mover_row(row, idx + 1, "bad") for idx, (_, row) in enumerate(losers.iterrows()))
-        st.markdown(f'<div class="pt-mover-card"><div class="pt-mover-title">Top 10 Losers</div>{body}</div>', unsafe_allow_html=True)
+            _market_mover_table(unusual_volume, home_cols, "Relative-volume data unavailable for this scan.", max_height=520)
+    with tab_status:
+        st.json(
+            {
+                "Universe source": status.get("universe_source"),
+                "Universe count": status.get("universe_count"),
+                "Quotes successful": status.get("quotes_successful"),
+                "Quotes failed": status.get("quotes_failed"),
+                "Filtered count": status.get("after_filters"),
+                "Cache age": "Cached for about 10 minutes unless refreshed.",
+                "Last refresh": fmt_date(status.get("last_updated")),
+                "Provider": status.get("provider"),
+                "Status": status.get("status"),
+                "Message": status.get("message"),
+                "Error summary": status.get("error_summary"),
+            }
+        )
 
 
 def render_52w_position(quote: dict) -> None:
@@ -3094,10 +3292,12 @@ def signal_page(ticker: str) -> None:
     render_metric_grid(
         [
             ("Composite Score", f"{signal.get('composite_score', 0):.1f}/100", signal.get("source", ""), tone_for_number(signal.get("composite_score"))),
-            ("Signal", signal.get("signal_label", "N/A"), "Buy/Hold/Sell research signal", "good" if "Buy" in signal.get("signal_label", "") else "bad" if signal.get("signal_label") in {"Avoid", "Sell / Trim"} else "neutral"),
+            ("Signal", signal.get("signal_label", "N/A"), "Directional research signal", _signal_tone(signal.get("signal_label", ""))),
+            ("Market Stance", signal.get("market_stance", "N/A"), "Mapped from the directional signal", _stance_from_signal(signal.get("signal_label", ""))[1]),
             ("Confidence", signal.get("confidence", "N/A"), "Missing-data adjusted", "good" if signal.get("confidence") == "High" else "warn" if signal.get("confidence") == "Medium" else "neutral"),
+            ("Conviction", signal.get("conviction_label", "N/A"), f"Factor agreement: {(signal.get('factor_agreement') or {}).get('summary', 'N/A')}", "good" if signal.get("conviction_label") == "High" else "warn" if signal.get("conviction_label") == "Medium" else "neutral"),
         ],
-        columns=3,
+        columns=5,
     )
     score_frame = pd.DataFrame(
         [
@@ -3178,32 +3378,110 @@ def watchlist_page(ticker: str) -> None:
             dismiss_alert(int(dismiss_id))
             st.rerun()
 
-    section("Market Volatility Scanner", "Cached broader-universe scan for tickers moving at least +/-5% by default.")
-    scan_col1, scan_col2, scan_col3, scan_col4 = st.columns(4)
+    section("Market Volatility Scanner", "Broader-market scan for top daily gainers, losers, and unusual-volume movers.")
+    scan_col1, scan_col2, scan_col3, scan_col4, scan_col5 = st.columns([1, 1, 1.1, 1, 1])
     with scan_col1:
         min_move = st.slider("Minimum daily move %", 1.0, 20.0, 5.0, 0.5, key="market_mover_threshold")
     with scan_col2:
-        max_results = st.slider("Max results", 10, 100, 50, 5, key="market_mover_max")
+        max_results = st.slider("Max results per side", 10, 50, 20, 5, key="market_mover_max")
     with scan_col3:
-        include_etfs = st.toggle("Include ETFs", value=True, key="market_mover_include_etfs")
+        min_volume = st.number_input("Minimum volume", min_value=0, value=500_000, step=100_000, key="market_mover_min_volume")
     with scan_col4:
+        include_etfs = st.toggle("Include ETFs", value=True, key="market_mover_include_etfs")
+    with scan_col5:
         include_watch = st.toggle("Include watchlist tickers", value=True, key="market_mover_include_watchlist")
-    if st.button("Refresh scanner"):
+    adv_col1, adv_col2, adv_col3 = st.columns([1, 1, 2])
+    with adv_col1:
+        min_market_cap_b = st.number_input("Min market cap ($B)", min_value=0.0, value=0.0, step=1.0, key="market_mover_min_market_cap")
+    with adv_col2:
+        check_options = st.toggle("Check options availability", value=False, key="market_mover_check_options")
+    with adv_col3:
+        refresh_scanner = st.button("Refresh scanner", key="market_mover_refresh")
+    if refresh_scanner:
         try:
+            get_market_movers.clear()
             scan_market_movers.clear()
         except Exception:
             pass
     extra = tuple(_watchlist_symbols()) if include_watch else ()
     with st.spinner("Scanning cached market universe..."):
-        movers, mover_status = scan_market_movers(min_move, max_results, include_etfs, clean_mover_tickers(extra))
+        mover_packet = get_market_movers(
+            min_move_pct=min_move,
+            max_results=max_results,
+            include_etfs=include_etfs,
+            include_watchlist=include_watch,
+            extra_tickers=clean_mover_tickers(extra),
+            min_volume=min_volume,
+            min_market_cap=(min_market_cap_b * 1_000_000_000 if min_market_cap_b > 0 else None),
+            check_options=check_options,
+        )
+    movers = mover_packet.get("all_movers", pd.DataFrame())
+    gainers = mover_packet.get("gainers", pd.DataFrame())
+    losers = mover_packet.get("losers", pd.DataFrame())
+    unusual_volume = mover_packet.get("unusual_volume", pd.DataFrame())
+    watchlist_movers = mover_packet.get("watchlist_movers", pd.DataFrame())
+    mover_status = mover_packet.get("source_status", {})
+    mover_summary = mover_packet.get("summary", {})
     st.session_state["market_movers_frame"] = movers
-    source_line(mover_status.get("Source"), mover_status.get("Last Updated"), mover_status.get("Status"))
-    if movers.empty:
-        empty_state(f"No tickers in the V1 scan universe moved at least +/-{min_move:.1f}% today.")
-    else:
-        df_display(_format_movers_frame(movers), height=420)
+    source_line(mover_status.get("source"), mover_status.get("last_updated"), mover_status.get("status"))
+    high_rv = mover_summary.get("highest_relative_volume_mover") or {}
+    high_rv_text = "N/A"
+    if high_rv:
+        rel_volume = to_float(high_rv.get("Relative Volume"))
+        high_rv_text = f"{clean_ticker(high_rv.get('Ticker'))} {fmt_multiple(rel_volume) if rel_volume is not None else ''}".strip()
+    render_metric_grid(
+        [
+            (f"Gainers >= +{min_move:.1f}%", str(mover_summary.get("gainers_at_threshold", 0)), "Threshold breadth", "good"),
+            (f"Losers <= -{min_move:.1f}%", str(mover_summary.get("losers_at_threshold", 0)), "Threshold breadth", "bad"),
+            ("Median Move", fmt_percent(mover_summary.get("median_move"), decimals=2, signed=True), "Scanned universe", "neutral"),
+            ("Highest Volume", _mover_name(mover_summary.get("highest_volume_mover")), "By latest volume", "neutral"),
+            ("Highest Rel Vol", high_rv_text, "Relative to average", "warn"),
+            ("Last Refreshed", fmt_date(mover_status.get("last_updated")), f"Scanned {mover_status.get('scanned_count', 0)} tickers", "neutral"),
+        ],
+        columns=6,
+        small=True,
+    )
+    if mover_summary.get("gainers_note"):
+        st.caption(mover_summary["gainers_note"])
+    if mover_summary.get("losers_note"):
+        st.caption(mover_summary["losers_note"])
+    core_cols = ["Ticker", "Company", "Price", "Daily Move %", "Volume", "Relative Volume", "Market Cap", "Sector", "Catalyst / News Count", "Options"]
+    vol_cols = ["Ticker", "Company", "Price", "Daily Move %", "Volume", "Relative Volume", "Dollar Volume", "Sector", "Catalyst / News Count"]
+    top_gain_col, top_loss_col = st.columns(2)
+    with top_gain_col:
+        st.markdown("#### Top Gainers")
+        _market_mover_table(gainers, core_cols, "No positive movers found. Lower the threshold or refresh scanner.", max_height=460)
+    with top_loss_col:
+        st.markdown("#### Top Losers")
+        _market_mover_table(losers, core_cols, "No negative movers found. Lower the threshold or refresh scanner.", max_height=460)
+    tab_gain, tab_loss, tab_volume, tab_all, tab_watch = st.tabs(["Top Gainers", "Top Losers", "Unusual Volume", "All Movers", "Watchlist Movers"])
+    with tab_gain:
+        _market_mover_table(gainers, core_cols, "No gainers met the current scan criteria.", max_height=620)
+    with tab_loss:
+        _market_mover_table(losers, core_cols, "No losers met the current scan criteria.", max_height=620)
+    with tab_volume:
+        _market_mover_table(unusual_volume, vol_cols, "No unusual relative-volume movers available.", max_height=620)
+    with tab_all:
+        _market_mover_table(movers, core_cols, "No movers met the current scan criteria. Lower the threshold or refresh scanner.", max_height=660)
+    with tab_watch:
+        _market_mover_table(watchlist_movers, core_cols, "No watchlist movers available under the current scan settings.", max_height=520)
     with st.expander("Market scanner source status"):
-        st.json(mover_status)
+        st.json(
+            {
+                "Universe source": mover_status.get("universe_source"),
+                "Provider": mover_status.get("provider"),
+                "Tickers scanned": mover_status.get("scanned_count"),
+                "Successful quote fetches": mover_status.get("successful_quote_fetches"),
+                "Failed quote fetches": mover_status.get("failed_quote_fetches"),
+                "Last refresh": fmt_date(mover_status.get("last_updated")),
+                "Cache age": "Cached for about 10 minutes unless refreshed.",
+                "Threshold": mover_status.get("threshold"),
+                "Minimum volume": mover_status.get("min_volume"),
+                "Include ETFs": mover_status.get("include_etfs"),
+                "Include watchlist": mover_status.get("include_watchlist"),
+                "Error summary": mover_status.get("error_summary"),
+            }
+        )
 
     section("Options / Implied Move Monitor", "Options-implied move scanner with clean source statuses.")
     watch_symbols = _watchlist_symbols()
