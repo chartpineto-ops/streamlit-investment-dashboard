@@ -207,6 +207,137 @@ def render_terminal_chart(fig: go.Figure) -> None:
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
 
+def _market_tape_price(row: pd.Series) -> str:
+    ticker_value = str(row.get("Ticker") or "")
+    last = row.get("Last")
+    if ticker_value == "^TNX":
+        return fmt_percent(last, decimals=2)
+    return fmt_price(last)
+
+
+def render_market_tape(snapshot: pd.DataFrame, direction: str = "ltr") -> None:
+    if snapshot is None or snapshot.empty:
+        empty_state("Market tape unavailable from current market snapshot source.")
+        return
+    items = []
+    for _, row in snapshot.iterrows():
+        ticker_value = str(row.get("Ticker") or "").strip()
+        last = row.get("Last")
+        move = row.get("Daily Move %")
+        if not ticker_value or to_float(last) is None:
+            continue
+        tone = tone_for_number(move)
+        tone_class = {"good": "good", "bad": "bad"}.get(tone, "neutral")
+        label = str(row.get("Name") or "").strip()
+        label_html = f'<span class="pt-tape-label">{escape(label)}</span>' if label else ""
+        items.append(
+            '<span class="pt-tape-item">'
+            f'<strong>{escape(ticker_value)}</strong>'
+            f'<span>{escape(_market_tape_price(row))}</span>'
+            f'<b class="{tone_class}">{escape(fmt_daily_move(move))}</b>'
+            f'{label_html}'
+            "</span>"
+        )
+    if not items:
+        empty_state("Market tape unavailable from current market snapshot source.")
+        return
+    direction_class = "ltr" if str(direction).lower() != "rtl" else "rtl"
+    tape_items = '<span class="pt-tape-segment">' + '<i class="pt-tape-dot">•</i>'.join(items) + "</span>"
+    st.markdown(
+        f"""
+        <style>
+          .pt-market-tape {{
+            width: 100%;
+            overflow: hidden;
+            border: 1px solid rgba(30, 52, 64, 0.86);
+            border-radius: 12px;
+            background: linear-gradient(90deg, rgba(5, 13, 17, 0.98), rgba(10, 24, 31, 0.98), rgba(5, 13, 17, 0.98));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+            margin: 0.55rem 0 0.15rem;
+            min-height: 46px;
+            display: flex;
+            align-items: center;
+          }}
+          .pt-market-tape-track {{
+            display: inline-flex;
+            align-items: center;
+            gap: 2.3rem;
+            white-space: nowrap;
+            will-change: transform;
+            animation: ptTapeRTL 46s linear infinite;
+            padding: 0.58rem 0;
+          }}
+          .pt-market-tape-track.ltr {{
+            animation-name: ptTapeLTR;
+          }}
+          .pt-market-tape:hover .pt-market-tape-track {{
+            animation-play-state: paused;
+          }}
+          .pt-tape-segment {{
+            display: inline-flex;
+            align-items: center;
+            gap: 1.15rem;
+            padding-right: 1.15rem;
+          }}
+          .pt-tape-item {{
+            display: inline-flex;
+            align-items: baseline;
+            gap: 0.55rem;
+            color: #EAF0F2;
+            font-size: 0.92rem;
+            font-weight: 800;
+            letter-spacing: 0;
+          }}
+          .pt-tape-item strong {{
+            font-size: 0.95rem;
+            font-weight: 950;
+          }}
+          .pt-tape-item span {{
+            color: #C5D0D5;
+          }}
+          .pt-tape-item b {{
+            font-size: 0.88rem;
+            font-weight: 950;
+          }}
+          .pt-tape-item b.good {{ color: #7CC96F; }}
+          .pt-tape-item b.bad {{ color: #E57368; }}
+          .pt-tape-item b.neutral {{ color: #A9B6BC; }}
+          .pt-tape-label {{
+            color: #6F7E86 !important;
+            font-size: 0.76rem;
+            font-weight: 750;
+          }}
+          .pt-tape-dot {{
+            color: #32515F;
+            font-style: normal;
+            font-weight: 900;
+          }}
+          @keyframes ptTapeRTL {{
+            from {{ transform: translateX(0); }}
+            to {{ transform: translateX(-50%); }}
+          }}
+          @keyframes ptTapeLTR {{
+            from {{ transform: translateX(-50%); }}
+            to {{ transform: translateX(0); }}
+          }}
+          @media (max-width: 900px) {{
+            .pt-market-tape {{ min-height: 42px; border-radius: 10px; }}
+            .pt-market-tape-track {{ animation-duration: 38s; }}
+            .pt-tape-item {{ font-size: 0.82rem; gap: 0.42rem; }}
+            .pt-tape-label {{ display: none; }}
+          }}
+        </style>
+        <div class="pt-market-tape" aria-label="Moving market tape">
+          <div class="pt-market-tape-track {escape(direction_class)}">
+            {tape_items}
+            {tape_items}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def df_display(frame: pd.DataFrame, height: int = 320) -> None:
     if frame is None or frame.empty:
         empty_state("No data available.")
@@ -3238,12 +3369,7 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
 def home_page(ticker: str) -> None:
     render_home_brand_header()
     snapshot, statuses = fetch_market_snapshot()
-    cards = []
-    for _, row in snapshot.iterrows():
-        value = fmt_percent(row["Last"], decimals=2) if row["Ticker"] == "^TNX" else fmt_price(row["Last"])
-        caption = f"{row['Name']} | {fmt_daily_move(row['Daily Move %'])}"
-        cards.append((row["Ticker"], value, caption, tone_for_number(row["Daily Move %"])))
-    render_metric_grid(cards[:7], columns=7, small=True)
+    render_market_tape(snapshot, direction="ltr")
     source_line("Yahoo Finance/yfinance market snapshot", now_et(), "Delayed / cached")
     render_biggest_movers_section()
     section("Macro / Market News Headlines", "Broad market headlines and catalysts from current free sources.")
