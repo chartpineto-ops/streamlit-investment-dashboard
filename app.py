@@ -512,18 +512,31 @@ def _extended_hours_styles() -> str:
       .pt-extended-table .ticker { color:#EAF0F2; font-weight:950; }
       .pt-extended-table .company { display:block; color:#7F8D95; font-size:0.73rem; font-weight:750; margin-top:0.08rem; }
       .pt-eh-tape {
-        display:grid;
-        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        display:block;
         border:1px solid rgba(30,52,64,0.86);
         border-radius:0;
         overflow:hidden;
         background:linear-gradient(90deg, rgba(7,15,20,0.98), rgba(10,22,31,0.98));
         margin:0 0 0.55rem;
+        min-height:78px;
+        position:relative;
+      }
+      .pt-eh-tape-track {
+        display:flex;
+        width:max-content;
+        min-width:200%;
+        will-change:transform;
+        animation: ptEhTapeLTR 54s linear infinite;
+      }
+      .pt-eh-tape:hover .pt-eh-tape-track {
+        animation-play-state: paused;
       }
       .pt-eh-tape-card {
+        flex:0 0 206px;
         padding:0.62rem 0.8rem;
         border-right:1px solid rgba(30,52,64,0.74);
         min-height:74px;
+        box-sizing:border-box;
       }
       .pt-eh-tape-top {
         display:flex;
@@ -533,6 +546,17 @@ def _extended_hours_styles() -> str:
         color:#EAF0F2;
         font-weight:950;
         font-size:0.86rem;
+      }
+      .pt-eh-tape-label {
+        display:block;
+        color:#7F8D95;
+        font-size:0.62rem;
+        font-weight:800;
+        margin-top:0.04rem;
+        max-width:96px;
+        overflow:hidden;
+        white-space:nowrap;
+        text-overflow:ellipsis;
       }
       .pt-eh-dot {
         width:7px;
@@ -561,6 +585,10 @@ def _extended_hours_styles() -> str:
         color:#EAF0F2;
         font-size:0.78rem;
         margin-top:0.08rem;
+      }
+      @keyframes ptEhTapeLTR {
+        0% { transform: translateX(-50%); }
+        100% { transform: translateX(0); }
       }
       .pt-eh-dashboard-grid {
         display:grid;
@@ -616,6 +644,23 @@ def _extended_hours_styles() -> str:
         border-right:1px solid rgba(30,52,64,0.66);
       }
       .pt-eh-session-tab:last-child { border-right:0; }
+      .pt-eh-tab-icon {
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-width:25px;
+        height:18px;
+        border-radius:999px;
+        border:1px solid rgba(169,182,188,0.22);
+        color:#A9B6BC;
+        font-size:0.62rem;
+        font-weight:950;
+      }
+      .pt-eh-session-tab.active .pt-eh-tab-icon {
+        color:#7CC96F;
+        border-color:rgba(109,187,90,0.42);
+        background:rgba(47,125,58,0.18);
+      }
       .pt-eh-session-tab.active {
         color:#7CC96F;
         background:linear-gradient(180deg, rgba(47,125,58,0.28), rgba(47,125,58,0.14));
@@ -932,6 +977,27 @@ def _extended_hours_universe(selected_ticker: str, scope: str) -> list[str]:
     return output[:32]
 
 
+def _home_market_tape_symbols(selected_ticker: str) -> list[str]:
+    preferred = list(MARKET_SYMBOLS.keys()) + [
+        clean_ticker(selected_ticker),
+        "NVDA",
+        "IONQ",
+        "AMPX",
+        "MRVL",
+        "PLTR",
+        "COIN",
+        "MSTR",
+    ]
+    seen: set[str] = set()
+    output: list[str] = []
+    for symbol in preferred:
+        ticker_value = clean_ticker(symbol)
+        if ticker_value and ticker_value not in seen:
+            seen.add(ticker_value)
+            output.append(ticker_value)
+    return output[:16]
+
+
 def _eh_logo_html(row: pd.Series, size: int = 24) -> str:
     ticker = clean_ticker(row.get("ticker") or row.get("Ticker") or "")
     initials = escape(str(row.get("fallback_initials") or ticker[:3] or "PT"))
@@ -1192,7 +1258,7 @@ def _market_breadth_html(frame: pd.DataFrame, selected_ticker: str) -> str:
 
 
 def render_extended_hours_tape(symbols: list[str]) -> None:
-    frame = get_extended_hours_table(tuple(symbols[:9]))
+    frame = get_extended_hours_table(tuple(symbols[:14]))
     if frame.empty:
         empty_state("Extended-hours ticker tape unavailable.")
         return
@@ -1200,16 +1266,20 @@ def render_extended_hours_tape(symbols: list[str]) -> None:
     for _, row in frame.iterrows():
         session_label = str(row.get("latest_session") or "CLOSED")
         dot = _session_tone_class(session_label)
+        ticker_value = str(row.get("ticker") or "N/A")
+        label = MARKET_SYMBOLS.get(ticker_value) or str(row.get("company_name") or "")
+        label_html = f'<span class="pt-eh-tape-label">{escape(label)}</span>' if label else ""
         cards.append(
             '<div class="pt-eh-tape-card">'
-            f'<div class="pt-eh-tape-top"><span>{escape(str(row.get("ticker") or "N/A"))}</span><span><i class="pt-eh-dot {dot}"></i>{escape(session_label)}</span></div>'
+            f'<div class="pt-eh-tape-top"><span>{escape(ticker_value)}{label_html}</span><span><i class="pt-eh-dot {dot}"></i>{escape(session_label)}</span></div>'
             '<div class="pt-eh-tape-grid">'
             f'<div class="pt-eh-tape-mini">Close<strong>{escape(fmt_price(row.get("previous_close")))}</strong></div>'
             f'<div class="pt-eh-tape-mini">PM <b class="pt-eh-move {_move_tone_class(row.get("premarket_change_pct"))}">{escape(fmt_daily_move(row.get("premarket_change_pct")))}</b><strong>{escape(fmt_price(row.get("premarket_price")))}</strong></div>'
             f'<div class="pt-eh-tape-mini">AH <b class="pt-eh-move {_move_tone_class(row.get("afterhours_change_pct"))}">{escape(fmt_daily_move(row.get("afterhours_change_pct")))}</b><strong>{escape(fmt_price(row.get("afterhours_price")))}</strong></div>'
             '</div></div>'
         )
-    st.markdown(_extended_hours_styles() + f'<div class="pt-eh-tape">{"".join(cards)}</div>', unsafe_allow_html=True)
+    card_html = "".join(cards)
+    st.markdown(_extended_hours_styles() + f'<div class="pt-eh-tape"><div class="pt-eh-tape-track">{card_html}{card_html}</div></div>', unsafe_allow_html=True)
 
 
 def _default_session_view(current_session: dict) -> str:
@@ -1228,7 +1298,7 @@ def _session_control_bar_html(current_session: dict) -> str:
 
     def tab(label: str, icon: str) -> str:
         active_class = " active" if label == active else ""
-        return f'<div class="pt-eh-session-tab{active_class}"><span>{escape(icon)}</span>{escape(label)}</div>'
+        return f'<div class="pt-eh-session-tab{active_class}"><span class="pt-eh-tab-icon">{escape(icon)}</span>{escape(label)}</div>'
 
     session_label = str(current_session.get("label") or "CLOSED").upper()
     dot = _session_tone_class(session_label)
@@ -1240,10 +1310,10 @@ def _session_control_bar_html(current_session: dict) -> str:
           <div class="pt-eh-control-card">
             <div class="pt-eh-panel-title" style="margin-bottom:0.52rem;">Session Tracking Control Bar</div>
             <div class="pt-eh-session-tabs">
-              {tab("Pre-Market", "sun")}
-              {tab("Regular", "clock")}
-              {tab("After-Hours", "moon")}
-              {tab("Combined View", "grid")}
+              {tab("Pre-Market", "PM")}
+              {tab("Regular", "REG")}
+              {tab("After-Hours", "AH")}
+              {tab("Combined View", "ALL")}
             </div>
           </div>
           <div class="pt-eh-status-box">
@@ -4350,7 +4420,7 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
 
 def home_page(ticker: str) -> None:
     snapshot, statuses = fetch_market_snapshot()
-    render_extended_hours_tape(_extended_hours_universe(ticker, "Both"))
+    render_extended_hours_tape(_home_market_tape_symbols(ticker))
     render_extended_hours_monitor(ticker)
     render_biggest_movers_section()
     section("Macro / Market News Headlines", "Broad market headlines and catalysts from current free sources.")
