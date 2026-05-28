@@ -515,10 +515,10 @@ def _extended_hours_styles() -> str:
         display:grid;
         grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
         border:1px solid rgba(30,52,64,0.86);
-        border-radius:14px;
+        border-radius:0;
         overflow:hidden;
         background:linear-gradient(90deg, rgba(7,15,20,0.98), rgba(10,22,31,0.98));
-        margin:0.6rem 0 0.9rem;
+        margin:0 0 0.55rem;
       }
       .pt-eh-tape-card {
         padding:0.62rem 0.8rem;
@@ -582,6 +582,74 @@ def _extended_hours_styles() -> str:
         font-weight:950;
         margin-bottom:0.72rem;
       }
+      .pt-eh-control-shell {
+        display:grid;
+        grid-template-columns:minmax(0,1.55fr) minmax(280px,0.7fr) minmax(330px,0.9fr);
+        gap:0.65rem;
+        align-items:stretch;
+        margin:0.55rem 0 0.62rem;
+      }
+      .pt-eh-control-card {
+        border:1px solid rgba(30,52,64,0.88);
+        border-radius:12px;
+        background:linear-gradient(135deg, rgba(9,20,27,0.97), rgba(8,18,25,0.97));
+        padding:0.72rem 0.88rem;
+      }
+      .pt-eh-session-tabs {
+        display:grid;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        gap:0;
+        border:1px solid rgba(30,52,64,0.88);
+        border-radius:8px;
+        overflow:hidden;
+        background:rgba(6,16,20,0.5);
+      }
+      .pt-eh-session-tab {
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        gap:0.36rem;
+        color:#D5DEE2;
+        font-size:0.78rem;
+        font-weight:900;
+        padding:0.55rem 0.45rem;
+        border-right:1px solid rgba(30,52,64,0.66);
+      }
+      .pt-eh-session-tab:last-child { border-right:0; }
+      .pt-eh-session-tab.active {
+        color:#7CC96F;
+        background:linear-gradient(180deg, rgba(47,125,58,0.28), rgba(47,125,58,0.14));
+        box-shadow: inset 0 0 0 1px rgba(109,187,90,0.45);
+      }
+      .pt-eh-toolbar {
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:0.65rem;
+        height:100%;
+      }
+      .pt-eh-toolbar-pill {
+        border:1px solid rgba(30,52,64,0.88);
+        border-radius:8px;
+        background:rgba(6,16,20,0.72);
+        color:#EAF0F2;
+        padding:0.48rem 0.72rem;
+        font-size:0.78rem;
+        font-weight:900;
+      }
+      .pt-eh-toolbar-button {
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        gap:0.4rem;
+        border:1px solid rgba(30,52,64,0.9);
+        border-radius:9px;
+        background:rgba(12,27,34,0.78);
+        color:#EAF0F2;
+        padding:0.5rem 0.72rem;
+        font-size:0.78rem;
+        font-weight:900;
+      }
       .pt-eh-control-grid {
         display:grid;
         grid-template-columns:minmax(0,1.6fr) minmax(250px,0.72fr) minmax(240px,0.88fr);
@@ -611,11 +679,29 @@ def _extended_hours_styles() -> str:
         font-weight:950;
       }
       .pt-eh-mover-table td {
-        padding:0.52rem 0.45rem;
+        padding:0.48rem 0.42rem;
         border-bottom:1px solid rgba(30,52,64,0.58);
         color:#D9E3E7;
         font-weight:800;
         vertical-align:middle;
+      }
+      .pt-eh-faux-tabs {
+        display:flex;
+        align-items:center;
+        gap:0.7rem;
+        margin:0 0 0.72rem;
+      }
+      .pt-eh-faux-tab {
+        color:#C8D2D7;
+        font-size:0.78rem;
+        font-weight:900;
+        padding:0.36rem 0.72rem;
+        border-radius:7px;
+      }
+      .pt-eh-faux-tab.active {
+        color:#7CC96F;
+        background:rgba(47,125,58,0.24);
+        border:1px solid rgba(109,187,90,0.34);
       }
       .pt-eh-mover-table tr:last-child td { border-bottom:none; }
       .pt-eh-company-cell { display:flex; align-items:center; gap:0.5rem; min-width:0; }
@@ -720,7 +806,8 @@ def _extended_hours_styles() -> str:
         .pt-extended-summary { grid-template-columns: repeat(2, minmax(0,1fr)); }
         .pt-session-strip { align-items:flex-start; flex-direction:column; }
         .pt-eh-dashboard-grid,
-        .pt-eh-control-grid { grid-template-columns:1fr; }
+        .pt-eh-control-grid,
+        .pt-eh-control-shell { grid-template-columns:1fr; }
         .pt-eh-breadth-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
       }
     </style>
@@ -1125,6 +1212,57 @@ def render_extended_hours_tape(symbols: list[str]) -> None:
     st.markdown(_extended_hours_styles() + f'<div class="pt-eh-tape">{"".join(cards)}</div>', unsafe_allow_html=True)
 
 
+def _default_session_view(current_session: dict) -> str:
+    label = str(current_session.get("label") or "").upper()
+    if label == "PRE":
+        return "Pre-Market"
+    if label == "LIVE":
+        return "Regular"
+    if label == "AH":
+        return "After-Hours"
+    return "Combined View"
+
+
+def _session_control_bar_html(current_session: dict) -> str:
+    active = _default_session_view(current_session)
+
+    def tab(label: str, icon: str) -> str:
+        active_class = " active" if label == active else ""
+        return f'<div class="pt-eh-session-tab{active_class}"><span>{escape(icon)}</span>{escape(label)}</div>'
+
+    session_label = str(current_session.get("label") or "CLOSED").upper()
+    dot = _session_tone_class(session_label)
+    session_name = str(current_session.get("session") or "Closed")
+    updated = _fmt_session_clock(current_session.get("timestamp"))
+    return dedent(
+        f"""
+        <div class="pt-eh-control-shell">
+          <div class="pt-eh-control-card">
+            <div class="pt-eh-panel-title" style="margin-bottom:0.52rem;">Session Tracking Control Bar</div>
+            <div class="pt-eh-session-tabs">
+              {tab("Pre-Market", "sun")}
+              {tab("Regular", "clock")}
+              {tab("After-Hours", "moon")}
+              {tab("Combined View", "grid")}
+            </div>
+          </div>
+          <div class="pt-eh-status-box">
+            <span><i class="pt-eh-dot {dot}"></i>Current Session: <strong>{escape(session_name)}</strong></span>
+            <div class="pt-eh-note">Last check {escape(updated)} ET</div>
+          </div>
+          <div class="pt-eh-control-card">
+            <div class="pt-eh-toolbar">
+              <span class="pt-eh-note">Auto-Refresh</span>
+              <span class="pt-eh-toolbar-pill">15 sec</span>
+              <span class="pt-eh-toolbar-button">Refresh</span>
+              <span class="pt-eh-toolbar-button">Customize Columns</span>
+            </div>
+          </div>
+        </div>
+        """
+    )
+
+
 def _maybe_schedule_home_refresh(interval_label: str) -> None:
     seconds = {"15 sec": 15, "30 sec": 30, "1 min": 60, "5 min": 300}.get(interval_label)
     if not seconds:
@@ -1137,55 +1275,10 @@ def _maybe_schedule_home_refresh(interval_label: str) -> None:
 
 
 def render_extended_hours_monitor(selected_ticker: str) -> None:
-    section("Extended Hours Monitor", "Session-aware pre-market, regular, and after-hours monitoring for key tickers.")
     current_session = get_market_session_et()
-    valid_refresh_options = {"Off", "15 sec", "30 sec", "1 min"}
-    if st.session_state.get("extended_hours_refresh_interval") not in valid_refresh_options:
-        st.session_state["extended_hours_refresh_interval"] = "Off"
-    control_left, control_status, control_refresh = st.columns([1.65, 0.9, 0.9], vertical_alignment="center")
-    with control_left:
-        st.markdown('<div class="pt-eh-panel-title">Session Tracking Control Bar</div>', unsafe_allow_html=True)
-        session_view = st.radio(
-            "Session view",
-            ["Pre-Market", "Regular", "After-Hours", "Combined View"],
-            index=0 if current_session["label"] == "PRE" else 1 if current_session["label"] == "LIVE" else 2 if current_session["label"] == "AH" else 3,
-            horizontal=True,
-            key="eh_session_view",
-            label_visibility="collapsed",
-        )
-    with control_status:
-        st.markdown(
-            f"""
-            <div class="pt-eh-status-box">
-              <span><i class="pt-eh-dot {_session_tone_class(current_session["label"])}"></i>Current Session: <strong>{escape(current_session["session"])}</strong></span>
-              <div class="pt-eh-note">Timezone: America/New_York</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with control_refresh:
-        refresh_interval = st.radio("Auto-Refresh", ["Off", "15 sec", "30 sec", "1 min"], horizontal=True, key="extended_hours_refresh_interval")
-        if st.button("Refresh quotes", key="extended_hours_manual_refresh"):
-            try:
-                get_extended_hours_quote.clear()
-                get_extended_hours_table.clear()
-            except Exception:
-                pass
-            st.rerun()
-    _maybe_schedule_home_refresh(refresh_interval)
-    filter_left, filter_right = st.columns([1.35, 1], vertical_alignment="center")
-    with filter_left:
-        scope = st.radio(
-            "Ticker universe",
-            ["Both", "Watchlist only", "Major indexes / ETFs"],
-            horizontal=True,
-            key="extended_hours_scope",
-        )
-    with filter_right:
-        st.markdown(
-            f'<div class="source-line">Data as of {_fmt_session_time(current_session["timestamp"])} | Source: Yahoo Finance/yfinance prepost intraday</div>',
-            unsafe_allow_html=True,
-        )
+    session_view = _default_session_view(current_session)
+    scope = "Both"
+    st.markdown(_session_control_bar_html(current_session), unsafe_allow_html=True)
     symbols = _extended_hours_universe(selected_ticker, scope)
     frame = get_extended_hours_table(tuple(symbols))
     if frame.empty:
@@ -1193,17 +1286,17 @@ def render_extended_hours_monitor(selected_ticker: str) -> None:
         return
     left, right = st.columns([2.05, 1.08], gap="small")
     with left:
-        st.markdown('<div class="pt-eh-panel-title">Extended Hours Movers</div>', unsafe_allow_html=True)
-        mover_mode = st.radio(
-            "Mover table",
-            ["Gainers", "Losers", "Most Active", "Watchlist Extended Hours"],
-            horizontal=True,
-            key="eh_mover_mode",
-            label_visibility="collapsed",
-        )
+        mover_mode = "Gainers"
         ranked = _ranked_extended_frame(frame, session_view, mover_mode, limit=10)
         st.markdown(
-            f'<div class="pt-eh-panel">{_extended_movers_table_html(ranked)}<div class="source-line" style="text-align:center;">View all movers &gt;</div></div>',
+            '<div class="pt-eh-panel"><div class="pt-eh-panel-title">Extended Hours Movers</div>'
+            '<div class="pt-eh-faux-tabs">'
+            '<span class="pt-eh-faux-tab active">Gainers</span>'
+            '<span class="pt-eh-faux-tab">Losers</span>'
+            '<span class="pt-eh-faux-tab">Most Active</span>'
+            '<span class="pt-eh-faux-tab">Watchlist Extended Hours</span>'
+            '</div>'
+            f'{_extended_movers_table_html(ranked)}<div class="source-line" style="text-align:center;">View all movers &gt;</div></div>',
             unsafe_allow_html=True,
         )
     with right:
@@ -4256,10 +4349,8 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
 
 
 def home_page(ticker: str) -> None:
-    render_home_brand_header()
     snapshot, statuses = fetch_market_snapshot()
     render_extended_hours_tape(_extended_hours_universe(ticker, "Both"))
-    source_line("Yahoo Finance/yfinance extended-hours quotes", now_et(), "Delayed / cached")
     render_extended_hours_monitor(ticker)
     render_biggest_movers_section()
     section("Macro / Market News Headlines", "Broad market headlines and catalysts from current free sources.")
@@ -4753,7 +4844,8 @@ def main() -> None:
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Selected: {ticker}")
     st.sidebar.caption(f"Session refreshed: {fmt_date(now_et())}")
-    render_selected_session_strip(ticker)
+    if page != "Home / Market Monitor":
+        render_selected_session_strip(ticker)
     render_page(page, ticker)
 
 
