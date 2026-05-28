@@ -380,6 +380,18 @@ def _fmt_session_time(value) -> str:
             return fmt_date(value)
 
 
+def _fmt_session_clock(value) -> str:
+    if value is None:
+        return "N/A"
+    try:
+        return pd.Timestamp(value).tz_convert("America/New_York").strftime("%I:%M:%S %p").lstrip("0")
+    except Exception:
+        try:
+            return pd.Timestamp(value).strftime("%I:%M:%S %p").lstrip("0")
+        except Exception:
+            return "N/A"
+
+
 def _extended_hours_styles() -> str:
     return """
     <style>
@@ -499,9 +511,217 @@ def _extended_hours_styles() -> str:
       .pt-extended-table tr:last-child td { border-bottom:none; }
       .pt-extended-table .ticker { color:#EAF0F2; font-weight:950; }
       .pt-extended-table .company { display:block; color:#7F8D95; font-size:0.73rem; font-weight:750; margin-top:0.08rem; }
+      .pt-eh-tape {
+        display:grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        border:1px solid rgba(30,52,64,0.86);
+        border-radius:14px;
+        overflow:hidden;
+        background:linear-gradient(90deg, rgba(7,15,20,0.98), rgba(10,22,31,0.98));
+        margin:0.6rem 0 0.9rem;
+      }
+      .pt-eh-tape-card {
+        padding:0.62rem 0.8rem;
+        border-right:1px solid rgba(30,52,64,0.74);
+        min-height:74px;
+      }
+      .pt-eh-tape-top {
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:0.5rem;
+        color:#EAF0F2;
+        font-weight:950;
+        font-size:0.86rem;
+      }
+      .pt-eh-dot {
+        width:7px;
+        height:7px;
+        border-radius:50%;
+        display:inline-block;
+        margin-right:0.28rem;
+        background:#6F7E86;
+      }
+      .pt-eh-dot.pre, .pt-eh-dot.live { background:#6DBB5A; box-shadow:0 0 8px rgba(109,187,90,0.45); }
+      .pt-eh-dot.ah { background:#F7931A; box-shadow:0 0 8px rgba(247,147,26,0.45); }
+      .pt-eh-tape-grid {
+        display:grid;
+        grid-template-columns: repeat(3, minmax(0,1fr));
+        gap:0.35rem;
+        margin-top:0.45rem;
+      }
+      .pt-eh-tape-mini {
+        color:#A9B6BC;
+        font-size:0.68rem;
+        font-weight:850;
+        line-height:1.25;
+      }
+      .pt-eh-tape-mini strong {
+        display:block;
+        color:#EAF0F2;
+        font-size:0.78rem;
+        margin-top:0.08rem;
+      }
+      .pt-eh-dashboard-grid {
+        display:grid;
+        grid-template-columns:minmax(0,2fr) minmax(360px,1.05fr);
+        gap:0.8rem;
+        margin-top:0.65rem;
+      }
+      .pt-eh-panel {
+        border:1px solid rgba(30,52,64,0.88);
+        border-radius:13px;
+        background:linear-gradient(135deg, rgba(9,20,27,0.97), rgba(8,18,25,0.97));
+        padding:0.95rem;
+      }
+      .pt-eh-panel-title {
+        color:#EAF0F2;
+        text-transform:uppercase;
+        letter-spacing:0.045em;
+        font-size:0.82rem;
+        font-weight:950;
+        margin-bottom:0.72rem;
+      }
+      .pt-eh-control-grid {
+        display:grid;
+        grid-template-columns:minmax(0,1.6fr) minmax(250px,0.72fr) minmax(240px,0.88fr);
+        gap:0.65rem;
+        align-items:stretch;
+      }
+      .pt-eh-status-box {
+        border:1px solid rgba(30,52,64,0.88);
+        border-radius:12px;
+        background:rgba(6,16,20,0.62);
+        padding:0.7rem 0.85rem;
+        color:#D7E0E4;
+        font-weight:800;
+      }
+      .pt-eh-status-box strong { color:#7CC96F; }
+      .pt-eh-mover-table {
+        width:100%;
+        border-collapse:collapse;
+        font-size:0.76rem;
+      }
+      .pt-eh-mover-table th {
+        color:#9AA7AE;
+        text-align:left;
+        padding:0.52rem 0.45rem;
+        border-bottom:1px solid rgba(30,52,64,0.9);
+        font-size:0.68rem;
+        font-weight:950;
+      }
+      .pt-eh-mover-table td {
+        padding:0.52rem 0.45rem;
+        border-bottom:1px solid rgba(30,52,64,0.58);
+        color:#D9E3E7;
+        font-weight:800;
+        vertical-align:middle;
+      }
+      .pt-eh-mover-table tr:last-child td { border-bottom:none; }
+      .pt-eh-company-cell { display:flex; align-items:center; gap:0.5rem; min-width:0; }
+      .pt-eh-company-cell strong { display:block; color:#EAF0F2; font-size:0.82rem; }
+      .pt-eh-company-cell span { display:block; color:#8A969D; font-size:0.68rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:170px; }
+      .pt-eh-selected-top { display:flex; align-items:center; justify-content:space-between; gap:0.8rem; margin-bottom:0.7rem; }
+      .pt-eh-select-pill {
+        border:1px solid rgba(30,52,64,0.92);
+        border-radius:8px;
+        background:#071117;
+        color:#EAF0F2;
+        padding:0.38rem 0.58rem;
+        font-weight:950;
+        min-width:150px;
+      }
+      .pt-eh-snapshot-cards {
+        display:grid;
+        grid-template-columns:repeat(3,minmax(0,1fr));
+        gap:0.52rem;
+      }
+      .pt-eh-snapshot-card {
+        border:1px solid rgba(30,52,64,0.88);
+        border-radius:9px;
+        background:rgba(6,16,20,0.7);
+        padding:0.72rem 0.65rem;
+        text-align:center;
+        min-height:104px;
+      }
+      .pt-eh-snapshot-card.pre { border-color:rgba(109,187,90,0.36); background:rgba(47,125,58,0.12); }
+      .pt-eh-snapshot-card.ah { border-color:rgba(247,147,26,0.36); background:rgba(247,147,26,0.10); }
+      .pt-eh-snapshot-card .label { color:#A9B6BC; font-size:0.72rem; font-weight:900; }
+      .pt-eh-snapshot-card .price { color:#EAF0F2; font-size:1.25rem; font-weight:950; margin-top:0.18rem; }
+      .pt-eh-snapshot-card .move { font-size:0.86rem; font-weight:950; margin-top:0.08rem; }
+      .pt-eh-chart {
+        margin-top:0.72rem;
+        border:1px solid rgba(30,52,64,0.8);
+        border-radius:10px;
+        background:linear-gradient(90deg, rgba(47,125,58,0.14), rgba(12,27,42,0.74) 36%, rgba(247,147,26,0.16));
+        height:194px;
+        position:relative;
+        overflow:hidden;
+      }
+      .pt-eh-chart svg { width:100%; height:100%; display:block; }
+      .pt-eh-chart-legend {
+        display:flex;
+        gap:0.8rem;
+        flex-wrap:wrap;
+        color:#A9B6BC;
+        font-size:0.72rem;
+        font-weight:850;
+        margin-top:0.48rem;
+      }
+      .pt-eh-watch-table {
+        width:100%;
+        border-collapse:collapse;
+        font-size:0.74rem;
+        margin-top:0.42rem;
+      }
+      .pt-eh-watch-table th,
+      .pt-eh-watch-table td {
+        padding:0.48rem 0.4rem;
+        border-bottom:1px solid rgba(30,52,64,0.7);
+        color:#D9E3E7;
+        font-weight:800;
+        text-align:left;
+      }
+      .pt-eh-watch-table th { color:#9AA7AE; font-size:0.66rem; }
+      .pt-eh-breadth-grid {
+        display:grid;
+        grid-template-columns:repeat(7,minmax(0,1fr));
+        gap:0.65rem;
+        margin-top:0.8rem;
+      }
+      .pt-eh-breadth-card {
+        border:1px solid rgba(30,52,64,0.88);
+        border-radius:10px;
+        background:rgba(8,19,25,0.85);
+        padding:0.74rem;
+        min-height:112px;
+      }
+      .pt-eh-breadth-card .title { color:#A9B6BC; font-size:0.7rem; font-weight:950; }
+      .pt-eh-breadth-card .value { color:#EAF0F2; font-size:1.35rem; font-weight:950; margin-top:0.25rem; }
+      .pt-eh-spark {
+        height:26px;
+        margin-top:0.4rem;
+        background:linear-gradient(135deg, transparent 30%, rgba(109,187,90,0.25));
+        clip-path:polygon(0 85%, 18% 68%, 36% 74%, 52% 46%, 68% 58%, 84% 34%, 100% 16%, 100% 100%, 0 100%);
+      }
+      .pt-eh-legend {
+        display:flex;
+        justify-content:space-between;
+        gap:1rem;
+        flex-wrap:wrap;
+        border-top:1px solid rgba(30,52,64,0.82);
+        margin-top:0.8rem;
+        padding:0.65rem 0.35rem 0;
+        color:#A9B6BC;
+        font-size:0.74rem;
+        font-weight:800;
+      }
       @media (max-width: 1100px) {
         .pt-extended-summary { grid-template-columns: repeat(2, minmax(0,1fr)); }
         .pt-session-strip { align-items:flex-start; flex-direction:column; }
+        .pt-eh-dashboard-grid,
+        .pt-eh-control-grid { grid-template-columns:1fr; }
+        .pt-eh-breadth-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
       }
     </style>
     """
@@ -614,7 +834,7 @@ def _extended_hours_universe(selected_ticker: str, scope: str) -> list[str]:
     elif scope == "Major indexes / ETFs":
         raw = [selected] + majors
     else:
-        raw = [selected] + watchlist + majors
+        raw = [selected] + watchlist + DEFAULT_TICKERS + majors
     seen: set[str] = set()
     output: list[str] = []
     for value in raw:
@@ -625,8 +845,288 @@ def _extended_hours_universe(selected_ticker: str, scope: str) -> list[str]:
     return output[:32]
 
 
+def _eh_logo_html(row: pd.Series, size: int = 24) -> str:
+    ticker = clean_ticker(row.get("ticker") or row.get("Ticker") or "")
+    initials = escape(str(row.get("fallback_initials") or ticker[:3] or "PT"))
+    logo_url = str(row.get("logo_url") or "").strip()
+    logo_data_uri = str(row.get("logo_data_uri") or "").strip()
+    logo_src = logo_url if logo_url.startswith("http") else logo_data_uri
+    if logo_src.startswith(("http", "data:image")):
+        return (
+            f'<div class="pt-mover-logo" style="width:{size}px;height:{size}px;min-width:{size}px;">'
+            f'<img src="{escape(logo_src, quote=True)}" alt="{escape(ticker)} logo" '
+            f'onerror="this.remove(); this.parentNode.classList.add(\'pt-mover-logo-fallback\');">'
+            f'<span>{initials}</span></div>'
+        )
+    return f'<div class="pt-mover-logo pt-mover-logo-fallback" style="width:{size}px;height:{size}px;min-width:{size}px;"><span>{initials}</span></div>'
+
+
+def _session_view_metric(row: pd.Series, session_view: str) -> dict:
+    view = str(session_view or "Combined View")
+    previous_close = to_float(row.get("previous_close"))
+    if view == "Pre-Market":
+        price = to_float(row.get("premarket_price"))
+        pct = to_float(row.get("premarket_change_pct"))
+        label = "Pre-Market"
+    elif view == "Regular":
+        price = to_float(row.get("regular_price"))
+        pct = to_float(row.get("regular_change_pct"))
+        label = "Regular"
+    elif view == "After-Hours":
+        price = to_float(row.get("afterhours_price"))
+        pct = to_float(row.get("afterhours_change_pct"))
+        label = "After-Hours"
+    else:
+        latest_label = str(row.get("latest_session") or "").upper()
+        if latest_label == "PRE":
+            price = to_float(row.get("premarket_price")) or to_float(row.get("latest_price"))
+            pct = to_float(row.get("premarket_change_pct"))
+            label = "Pre-Market"
+        elif latest_label == "AH":
+            price = to_float(row.get("afterhours_price")) or to_float(row.get("latest_price"))
+            pct = to_float(row.get("afterhours_change_pct"))
+            label = "After-Hours"
+        elif latest_label == "LIVE":
+            price = to_float(row.get("regular_price")) or to_float(row.get("latest_price"))
+            pct = to_float(row.get("regular_change_pct"))
+            label = "Regular"
+        else:
+            candidates = [
+                ("Pre-Market", to_float(row.get("premarket_price")), to_float(row.get("premarket_change_pct"))),
+                ("Regular", to_float(row.get("regular_price")), to_float(row.get("regular_change_pct"))),
+                ("After-Hours", to_float(row.get("afterhours_price")), to_float(row.get("afterhours_change_pct"))),
+            ]
+            ranked = sorted([item for item in candidates if item[2] is not None], key=lambda item: abs(item[2]), reverse=True)
+            label, price, pct = ranked[0] if ranked else ("Closed", to_float(row.get("latest_price")), None)
+    gap = price - previous_close if price is not None and previous_close is not None else None
+    return {"price": price, "pct": pct, "label": label, "gap": gap}
+
+
+def _ranked_extended_frame(frame: pd.DataFrame, session_view: str, mode: str, limit: int = 10) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    work = frame.copy()
+    metrics = work.apply(lambda row: _session_view_metric(row, session_view), axis=1)
+    work["display_price"] = metrics.map(lambda item: item.get("price"))
+    work["display_move_pct"] = metrics.map(lambda item: item.get("pct"))
+    work["display_session"] = metrics.map(lambda item: item.get("label"))
+    work["display_gap"] = metrics.map(lambda item: item.get("gap"))
+    if mode == "Losers":
+        return work[pd.to_numeric(work["display_move_pct"], errors="coerce") < 0].sort_values("display_move_pct", ascending=True).head(limit)
+    if mode == "Most Active":
+        return work.sort_values("volume", ascending=False, na_position="last").head(limit)
+    if mode == "Watchlist Extended Hours":
+        watch = set(_watchlist_symbols())
+        return work[work["ticker"].map(lambda value: clean_ticker(value) in watch)].sort_values("display_move_pct", ascending=False, na_position="last").head(limit)
+    return work[pd.to_numeric(work["display_move_pct"], errors="coerce") > 0].sort_values("display_move_pct", ascending=False).head(limit)
+
+
+def _bid_ask_text(row: pd.Series) -> str:
+    bid = to_float(row.get("bid"))
+    ask = to_float(row.get("ask"))
+    if bid is None and ask is None:
+        return "N/A"
+    return f"{bid:,.2f} / {ask:,.2f}" if bid is not None and ask is not None else fmt_price(bid or ask)
+
+
+def _extended_movers_table_html(frame: pd.DataFrame) -> str:
+    if frame is None or frame.empty:
+        return '<div class="pt-mover-empty">No extended-hours movers available for this view.</div>'
+    rows = []
+    for _, row in frame.iterrows():
+        move = to_float(row.get("display_move_pct"))
+        session_label = str(row.get("display_session") or "Closed")
+        session_key = "pre" if "Pre" in session_label else "ah" if "After" in session_label else "live" if "Regular" in session_label else "closed"
+        rows.append(
+            "<tr>"
+            '<td><div class="pt-eh-company-cell">'
+            f'{_eh_logo_html(row, 24)}<div><strong>{escape(str(row.get("ticker") or "N/A"))}</strong>'
+            f'<span>{escape(str(row.get("company_name") or "N/A"))}</span></div></div></td>'
+            f'<td><span class="pt-eh-dot {session_key}"></span>{escape(session_label)}</td>'
+            f'<td>{escape(fmt_price(row.get("display_price")))}</td>'
+            f'<td class="pt-eh-move {_move_tone_class(move)}">{escape(fmt_daily_move(move))}</td>'
+            f'<td>{escape(fmt_compact(row.get("volume")))}</td>'
+            f'<td>{escape(fmt_price(row.get("previous_close")))}</td>'
+            f'<td>{escape(fmt_currency(row.get("display_gap"), 2))} <span class="pt-eh-move {_move_tone_class(move)}">{escape(fmt_daily_move(move))}</span></td>'
+            f'<td>{escape(_bid_ask_text(row))}</td>'
+            f'<td>{escape(_fmt_session_clock(row.get("latest_timestamp")))}</td>'
+            "</tr>"
+        )
+    return (
+        '<table class="pt-eh-mover-table"><thead><tr>'
+        '<th>Ticker</th><th>Session</th><th>Current Session Price</th><th>Session % Move</th>'
+        '<th>Session Volume</th><th>Regular Close</th><th>Gap vs Close</th><th>Bid / Ask</th><th>Last Update</th>'
+        '</tr></thead><tbody>'
+        + "".join(rows)
+        + "</tbody></table>"
+    )
+
+
+def _selected_quote_row(frame: pd.DataFrame, selected_ticker: str) -> pd.Series:
+    ticker = clean_ticker(selected_ticker)
+    if frame is not None and not frame.empty and "ticker" in frame:
+        match = frame[frame["ticker"].map(clean_ticker) == ticker]
+        if not match.empty:
+            return match.iloc[0]
+    return pd.Series(get_extended_hours_quote(ticker))
+
+
+def _mini_session_chart_svg(row: pd.Series) -> str:
+    previous = to_float(row.get("previous_close"))
+    pre = to_float(row.get("premarket_price"))
+    regular = to_float(row.get("regular_price"))
+    after = to_float(row.get("afterhours_price"))
+    values = [value for value in [previous, pre, regular, after] if value is not None]
+    if not values:
+        return '<div class="pt-eh-chart"><div class="pt-mover-empty">Intraday session chart unavailable.</div></div>'
+    low = min(values)
+    high = max(values)
+    span = high - low if high > low else max(high * 0.02, 1)
+
+    def y(value: float | None) -> float:
+        if value is None:
+            value = previous or values[-1]
+        return 155 - ((value - low) / span * 110)
+
+    points = [
+        (28, y(previous)),
+        (96, y(pre)),
+        (222, y(regular)),
+        (332, y(after)),
+    ]
+    path = " ".join(f"{x},{yy:.1f}" for x, yy in points)
+    return (
+        '<div class="pt-eh-chart">'
+        '<svg viewBox="0 0 360 190" preserveAspectRatio="none" role="img" aria-label="Session price path">'
+        '<rect x="0" y="0" width="118" height="190" fill="rgba(47,125,58,0.10)"/>'
+        '<rect x="118" y="0" width="132" height="190" fill="rgba(55,126,184,0.10)"/>'
+        '<rect x="250" y="0" width="110" height="190" fill="rgba(247,147,26,0.12)"/>'
+        '<line x1="0" y1="155" x2="360" y2="155" stroke="rgba(234,240,242,0.35)" stroke-dasharray="5 6"/>'
+        f'<polyline points="{path}" fill="none" stroke="#6DBB5A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<text x="8" y="182" fill="#EAF0F2" font-size="10" font-weight="800">4:00 AM</text>'
+        '<text x="106" y="182" fill="#EAF0F2" font-size="10" font-weight="800">9:30 AM</text>'
+        '<text x="230" y="182" fill="#EAF0F2" font-size="10" font-weight="800">4:00 PM</text>'
+        '<text x="310" y="182" fill="#EAF0F2" font-size="10" font-weight="800">8:00 PM</text>'
+        '</svg></div>'
+    )
+
+
+def _selected_snapshot_html(row: pd.Series) -> str:
+    ticker = escape(str(row.get("ticker") or "N/A"))
+    company = escape(str(row.get("company_name") or "N/A"))
+    chart = _mini_session_chart_svg(row)
+    return dedent(
+        f"""
+        <div class="pt-eh-panel">
+          <div class="pt-eh-selected-top">
+            <div class="pt-eh-panel-title" style="margin:0;">Selected Ticker Session Snapshot</div>
+            <div class="pt-eh-select-pill">{ticker} <span style="color:#829099;font-weight:800;">{company}</span></div>
+          </div>
+          <div class="pt-eh-snapshot-cards">
+            <div class="pt-eh-snapshot-card">
+              <div class="label">Previous Close</div>
+              <div class="price">{escape(fmt_price(row.get("previous_close")))}</div>
+              <div class="move neutral">--</div>
+              <div class="pt-eh-note">Vol: {escape(fmt_compact(row.get("volume")))}</div>
+            </div>
+            <div class="pt-eh-snapshot-card pre">
+              <div class="label">Pre-Market</div>
+              <div class="price">{escape(fmt_price(row.get("premarket_price")))}</div>
+              <div class="move {_move_tone_class(row.get("premarket_change_pct"))}">{escape(fmt_daily_move(row.get("premarket_change_pct")))}</div>
+              <div class="pt-eh-note">Vol: {escape(fmt_compact(row.get("volume")))}</div>
+            </div>
+            <div class="pt-eh-snapshot-card ah">
+              <div class="label">After-Hours</div>
+              <div class="price">{escape(fmt_price(row.get("afterhours_price")))}</div>
+              <div class="move {_move_tone_class(row.get("afterhours_change_pct"))}">{escape(fmt_daily_move(row.get("afterhours_change_pct")))}</div>
+              <div class="pt-eh-note">Vol: N/A</div>
+            </div>
+          </div>
+          <div class="pt-eh-chart-legend">
+            <span>{ticker} · 1D</span><span><span class="pt-eh-dot pre"></span>Pre-Market</span><span><span class="pt-eh-dot live"></span>Regular</span><span><span class="pt-eh-dot ah"></span>After-Hours</span>
+          </div>
+          {chart}
+        </div>
+        """
+    )
+
+
+def _watchlist_extended_html(frame: pd.DataFrame) -> str:
+    watch = set(_watchlist_symbols())
+    if frame is None or frame.empty or not watch:
+        return '<div class="pt-eh-panel"><div class="pt-eh-panel-title">Watchlist Extended Hours</div><div class="pt-mover-empty">No watchlist tickers available.</div></div>'
+    display = frame[frame["ticker"].map(lambda value: clean_ticker(value) in watch)].head(8)
+    if display.empty:
+        display = frame.head(5)
+    rows = []
+    for _, row in display.iterrows():
+        rows.append(
+            "<tr>"
+            f"<td>{escape(str(row.get('ticker') or 'N/A'))}</td>"
+            f"<td>{escape(str(row.get('company_name') or 'N/A'))}</td>"
+            f'<td class="pt-eh-move {_move_tone_class(row.get("premarket_change_pct"))}">{escape(fmt_daily_move(row.get("premarket_change_pct")))}</td>'
+            f'<td class="pt-eh-move {_move_tone_class(row.get("afterhours_change_pct"))}">{escape(fmt_daily_move(row.get("afterhours_change_pct")))}</td>'
+            f"<td>{escape(fmt_price(row.get('premarket_price')))}</td>"
+            f"<td>{escape(fmt_price(row.get('afterhours_price')))}</td>"
+            "</tr>"
+        )
+    return (
+        '<div class="pt-eh-panel" style="margin-top:0.75rem;"><div class="pt-eh-panel-title">Watchlist Extended Hours</div>'
+        '<table class="pt-eh-watch-table"><thead><tr><th>Ticker</th><th>Company</th><th>Pre-Market %</th><th>After-Hours %</th><th>PM Price</th><th>AH Price</th></tr></thead><tbody>'
+        + "".join(rows)
+        + "</tbody></table></div>"
+    )
+
+
+def _market_breadth_html(frame: pd.DataFrame, selected_ticker: str) -> str:
+    if frame is None or frame.empty:
+        return ""
+    pre = pd.to_numeric(frame.get("premarket_change_pct"), errors="coerce")
+    ah = pd.to_numeric(frame.get("afterhours_change_pct"), errors="coerce")
+    volume = pd.to_numeric(frame.get("volume"), errors="coerce")
+    most_active = frame.loc[volume.idxmax()] if volume.notna().any() else pd.Series({"ticker": "N/A", "volume": None})
+    etf_count = frame["ticker"].map(lambda value: clean_ticker(value) in {"SPY", "QQQ", "DIA", "IWM", "VOO", "FBTC", "IBIT", "SMH", "SOXX"}).sum() if "ticker" in frame else 0
+    cards = [
+        ("Pre-Market Gainers", str(int((pre > 0).sum())), fmt_percent(pre.mean(), signed=True) if pre.notna().any() else "N/A", "good"),
+        ("Pre-Market Losers", str(int((pre < 0).sum())), fmt_percent(pre.min(), signed=True) if pre.notna().any() else "N/A", "bad"),
+        ("After-Hours Gainers", str(int((ah > 0).sum())), fmt_percent(ah.mean(), signed=True) if ah.notna().any() else "N/A", "good"),
+        ("After-Hours Losers", str(int((ah < 0).sum())), fmt_percent(ah.min(), signed=True) if ah.notna().any() else "N/A", "bad"),
+        ("Most Active", escape(str(most_active.get("ticker") or "N/A")), f"Vol: {fmt_compact(most_active.get('volume'))}", "neutral"),
+        ("ETFs Moving", str(int(etf_count)), "Tracked ETF names", "neutral"),
+        ("Selected", escape(clean_ticker(selected_ticker)), "Session aware", "good"),
+    ]
+    body = ""
+    for title, value, note, tone in cards:
+        body += (
+            f'<div class="pt-eh-breadth-card"><div class="title">{escape(title)}</div>'
+            f'<div class="value pt-eh-move {tone}">{value}</div><div class="pt-eh-note">{escape(note)}</div><div class="pt-eh-spark"></div></div>'
+        )
+    return f'<div class="pt-eh-panel" style="margin-top:0.8rem;"><div class="pt-eh-panel-title">Market Breadth by Session</div><div class="pt-eh-breadth-grid">{body}</div></div>'
+
+
+def render_extended_hours_tape(symbols: list[str]) -> None:
+    frame = get_extended_hours_table(tuple(symbols[:9]))
+    if frame.empty:
+        empty_state("Extended-hours ticker tape unavailable.")
+        return
+    cards = []
+    for _, row in frame.iterrows():
+        session_label = str(row.get("latest_session") or "CLOSED")
+        dot = _session_tone_class(session_label)
+        cards.append(
+            '<div class="pt-eh-tape-card">'
+            f'<div class="pt-eh-tape-top"><span>{escape(str(row.get("ticker") or "N/A"))}</span><span><i class="pt-eh-dot {dot}"></i>{escape(session_label)}</span></div>'
+            '<div class="pt-eh-tape-grid">'
+            f'<div class="pt-eh-tape-mini">Close<strong>{escape(fmt_price(row.get("previous_close")))}</strong></div>'
+            f'<div class="pt-eh-tape-mini">PM <b class="pt-eh-move {_move_tone_class(row.get("premarket_change_pct"))}">{escape(fmt_daily_move(row.get("premarket_change_pct")))}</b><strong>{escape(fmt_price(row.get("premarket_price")))}</strong></div>'
+            f'<div class="pt-eh-tape-mini">AH <b class="pt-eh-move {_move_tone_class(row.get("afterhours_change_pct"))}">{escape(fmt_daily_move(row.get("afterhours_change_pct")))}</b><strong>{escape(fmt_price(row.get("afterhours_price")))}</strong></div>'
+            '</div></div>'
+        )
+    st.markdown(_extended_hours_styles() + f'<div class="pt-eh-tape">{"".join(cards)}</div>', unsafe_allow_html=True)
+
+
 def _maybe_schedule_home_refresh(interval_label: str) -> None:
-    seconds = {"30 sec": 30, "1 min": 60, "5 min": 300}.get(interval_label)
+    seconds = {"15 sec": 15, "30 sec": 30, "1 min": 60, "5 min": 300}.get(interval_label)
     if not seconds:
         return
     components.html(
@@ -637,26 +1137,35 @@ def _maybe_schedule_home_refresh(interval_label: str) -> None:
 
 
 def render_extended_hours_monitor(selected_ticker: str) -> None:
-    section("Extended Hours Monitor", "Pre-market and after-hours pricing for the selected ticker and key names.")
+    section("Extended Hours Monitor", "Session-aware pre-market, regular, and after-hours monitoring for key tickers.")
     current_session = get_market_session_et()
-    st.markdown(
-        f'<div class="source-line">Market session: <strong>{escape(current_session["session"])}</strong> '
-        f'({escape(current_session["label"])}) | Timezone: America/New_York | Updated: {escape(_fmt_session_time(current_session["timestamp"]))}</div>',
-        unsafe_allow_html=True,
-    )
-    render_extended_hours_summary(selected_ticker)
-    ctrl1, ctrl2, ctrl3 = st.columns([1.4, 1, 1])
-    with ctrl1:
-        scope = st.radio(
-            "Extended-hours universe",
-            ["Both", "Watchlist only", "Major indexes / ETFs"],
+    valid_refresh_options = {"Off", "15 sec", "30 sec", "1 min"}
+    if st.session_state.get("extended_hours_refresh_interval") not in valid_refresh_options:
+        st.session_state["extended_hours_refresh_interval"] = "Off"
+    control_left, control_status, control_refresh = st.columns([1.65, 0.9, 0.9], vertical_alignment="center")
+    with control_left:
+        st.markdown('<div class="pt-eh-panel-title">Session Tracking Control Bar</div>', unsafe_allow_html=True)
+        session_view = st.radio(
+            "Session view",
+            ["Pre-Market", "Regular", "After-Hours", "Combined View"],
+            index=0 if current_session["label"] == "PRE" else 1 if current_session["label"] == "LIVE" else 2 if current_session["label"] == "AH" else 3,
             horizontal=True,
-            key="extended_hours_scope",
+            key="eh_session_view",
+            label_visibility="collapsed",
         )
-    with ctrl2:
-        refresh_interval = st.radio("Auto refresh", ["Off", "30 sec", "1 min", "5 min"], horizontal=True, key="extended_hours_refresh_interval")
-    with ctrl3:
-        if st.button("Refresh extended quotes", key="extended_hours_manual_refresh"):
+    with control_status:
+        st.markdown(
+            f"""
+            <div class="pt-eh-status-box">
+              <span><i class="pt-eh-dot {_session_tone_class(current_session["label"])}"></i>Current Session: <strong>{escape(current_session["session"])}</strong></span>
+              <div class="pt-eh-note">Timezone: America/New_York</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with control_refresh:
+        refresh_interval = st.radio("Auto-Refresh", ["Off", "15 sec", "30 sec", "1 min"], horizontal=True, key="extended_hours_refresh_interval")
+        if st.button("Refresh quotes", key="extended_hours_manual_refresh"):
             try:
                 get_extended_hours_quote.clear()
                 get_extended_hours_table.clear()
@@ -664,12 +1173,53 @@ def render_extended_hours_monitor(selected_ticker: str) -> None:
                 pass
             st.rerun()
     _maybe_schedule_home_refresh(refresh_interval)
+    filter_left, filter_right = st.columns([1.35, 1], vertical_alignment="center")
+    with filter_left:
+        scope = st.radio(
+            "Ticker universe",
+            ["Both", "Watchlist only", "Major indexes / ETFs"],
+            horizontal=True,
+            key="extended_hours_scope",
+        )
+    with filter_right:
+        st.markdown(
+            f'<div class="source-line">Data as of {_fmt_session_time(current_session["timestamp"])} | Source: Yahoo Finance/yfinance prepost intraday</div>',
+            unsafe_allow_html=True,
+        )
     symbols = _extended_hours_universe(selected_ticker, scope)
-    frame = render_extended_hours_table(symbols)
-    source_statuses = frame.get("source_status", pd.Series(dtype=str)).value_counts().to_dict() if isinstance(frame, pd.DataFrame) and not frame.empty else {}
+    frame = get_extended_hours_table(tuple(symbols))
+    if frame.empty:
+        empty_state("Extended-hours quotes unavailable for the selected universe.")
+        return
+    left, right = st.columns([2.05, 1.08], gap="small")
+    with left:
+        st.markdown('<div class="pt-eh-panel-title">Extended Hours Movers</div>', unsafe_allow_html=True)
+        mover_mode = st.radio(
+            "Mover table",
+            ["Gainers", "Losers", "Most Active", "Watchlist Extended Hours"],
+            horizontal=True,
+            key="eh_mover_mode",
+            label_visibility="collapsed",
+        )
+        ranked = _ranked_extended_frame(frame, session_view, mover_mode, limit=10)
+        st.markdown(
+            f'<div class="pt-eh-panel">{_extended_movers_table_html(ranked)}<div class="source-line" style="text-align:center;">View all movers &gt;</div></div>',
+            unsafe_allow_html=True,
+        )
+    with right:
+        selected_row = _selected_quote_row(frame, selected_ticker)
+        st.markdown(_selected_snapshot_html(selected_row), unsafe_allow_html=True)
+        st.markdown(_watchlist_extended_html(frame), unsafe_allow_html=True)
+    st.markdown(_market_breadth_html(frame, selected_ticker), unsafe_allow_html=True)
+    source_statuses = frame.get("source_status", pd.Series(dtype=str)).value_counts().to_dict()
     st.markdown(
-        f'<div class="source-line">Source: Yahoo Finance/yfinance prepost intraday | Universe: {len(symbols)} tickers | '
-        f'Status: {escape(", ".join(f"{key}: {value}" for key, value in source_statuses.items()) or "N/A")}</div>',
+        f"""
+        <div class="pt-eh-legend">
+          <span><strong>Session Legend:</strong> <i class="pt-eh-dot pre"></i>Pre-Market 4:00 AM - 9:30 AM ET | <i class="pt-eh-dot live"></i>Regular 9:30 AM - 4:00 PM ET | <i class="pt-eh-dot ah"></i>After-Hours 4:00 PM - 8:00 PM ET</span>
+          <span>Pre-market move = vs prior regular close | After-hours move = vs prior regular close</span>
+          <span><i class="pt-eh-dot {_session_tone_class(current_session["label"])}"></i>Data status: {escape(", ".join(f"{key}: {value}" for key, value in source_statuses.items()) or "N/A")}</span>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -3708,8 +4258,8 @@ def render_three_statement_visual(ticker: str, financials: dict) -> None:
 def home_page(ticker: str) -> None:
     render_home_brand_header()
     snapshot, statuses = fetch_market_snapshot()
-    render_market_tape(snapshot, direction="ltr")
-    source_line("Yahoo Finance/yfinance market snapshot", now_et(), "Delayed / cached")
+    render_extended_hours_tape(_extended_hours_universe(ticker, "Both"))
+    source_line("Yahoo Finance/yfinance extended-hours quotes", now_et(), "Delayed / cached")
     render_extended_hours_monitor(ticker)
     render_biggest_movers_section()
     section("Macro / Market News Headlines", "Broad market headlines and catalysts from current free sources.")

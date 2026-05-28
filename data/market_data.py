@@ -394,6 +394,9 @@ def get_extended_hours_quote(symbol: str) -> dict:
         return {
             "ticker": ticker,
             "company_name": identity.get("company_name") or info.get("shortName") or info.get("longName") or ticker,
+            "logo_url": identity.get("logo_url"),
+            "logo_data_uri": identity.get("logo_data_uri"),
+            "fallback_initials": identity.get("fallback_initials"),
             "regular_price": regular_price,
             "previous_close": previous_close,
             "regular_change_pct": regular_change_pct,
@@ -402,6 +405,8 @@ def get_extended_hours_quote(symbol: str) -> dict:
             "afterhours_price": afterhours_price,
             "afterhours_change_pct": afterhours_change_pct,
             "latest_price": latest_price,
+            "bid": _first_float(info, ("bid", "regularMarketBid")),
+            "ask": _first_float(info, ("ask", "regularMarketAsk")),
             "latest_session": session["label"],
             "latest_session_name": session["session"],
             "latest_timestamp": _as_et(latest_ts),
