@@ -7,16 +7,27 @@ from math import isnan
 import os
 from pathlib import Path
 import re
+from textwrap import dedent
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 from data.company_identity import get_company_identity
 from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_filing, fetch_sec_filings, ticker_to_cik
 from data.financials import build_three_statement_visual_data, get_latest_quarterly_release, load_latest_company_financials, view_history
 from data.macro import fetch_macro_catalysts
-from data.market_data import DEFAULT_TICKERS, fetch_history, fetch_market_snapshot, fetch_quote
+from data.market_data import (
+    DEFAULT_TICKERS,
+    MARKET_SYMBOLS,
+    fetch_history,
+    fetch_market_snapshot,
+    fetch_quote,
+    get_extended_hours_quote,
+    get_extended_hours_table,
+    get_market_session_et,
+)
 from data.market_movers import clean_mover_tickers, get_biggest_movers, get_market_movers, get_whole_market_movers, scan_market_movers
 from data.news import fetch_news
 from data.options import fetch_options_summary
@@ -93,6 +104,9 @@ init_db()
 def reset_data_caches() -> None:
     for cached in (
         fetch_quote,
+        get_extended_hours_quote,
+        get_extended_hours_table,
+        get_market_session_et,
         fetch_history,
         fetch_market_snapshot,
         load_latest_company_financials,
@@ -334,6 +348,328 @@ def render_market_tape(snapshot: pd.DataFrame, direction: str = "ltr") -> None:
           </div>
         </div>
         """,
+        unsafe_allow_html=True,
+    )
+
+
+def _session_tone_class(label: str) -> str:
+    normalized = str(label or "").upper()
+    if normalized == "LIVE":
+        return "live"
+    if normalized == "PRE":
+        return "pre"
+    if normalized == "AH":
+        return "ah"
+    return "closed"
+
+
+def _move_tone_class(value) -> str:
+    tone = tone_for_number(value)
+    return "good" if tone == "good" else "bad" if tone == "bad" else "neutral"
+
+
+def _fmt_session_time(value) -> str:
+    if value is None:
+        return "N/A"
+    try:
+        return pd.Timestamp(value).tz_convert("America/New_York").strftime("%-m/%-d/%Y %-I:%M %p ET")
+    except Exception:
+        try:
+            return pd.Timestamp(value).strftime("%m/%d/%Y %I:%M %p ET")
+        except Exception:
+            return fmt_date(value)
+
+
+def _extended_hours_styles() -> str:
+    return """
+    <style>
+      .pt-session-strip,
+      .pt-extended-card,
+      .pt-extended-table-card {
+        border: 1px solid rgba(30, 52, 64, 0.86);
+        border-radius: 12px;
+        background: linear-gradient(135deg, rgba(11,20,26,0.98), rgba(12,25,33,0.96));
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+      }
+      .pt-session-strip {
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        gap:1rem;
+        padding:0.72rem 0.9rem;
+        margin:0.15rem 0 0.9rem;
+      }
+      .pt-session-left,
+      .pt-session-right {
+        display:flex;
+        align-items:center;
+        gap:0.7rem;
+        flex-wrap:wrap;
+      }
+      .pt-session-ticker {
+        font-weight:950;
+        font-size:1.02rem;
+        color:#EAF0F2;
+      }
+      .pt-session-pill {
+        display:inline-flex;
+        align-items:center;
+        border-radius:999px;
+        padding:0.18rem 0.55rem;
+        font-size:0.72rem;
+        font-weight:950;
+        letter-spacing:0.04em;
+        border:1px solid rgba(169,182,188,0.28);
+      }
+      .pt-session-pill.live { color:#7CC96F; border-color:rgba(124,201,111,0.55); background:rgba(47,125,58,0.16); }
+      .pt-session-pill.pre,
+      .pt-session-pill.ah { color:#E5A72A; border-color:rgba(229,167,42,0.55); background:rgba(229,167,42,0.12); }
+      .pt-session-pill.closed { color:#A9B6BC; border-color:rgba(169,182,188,0.35); background:rgba(111,126,134,0.12); }
+      .pt-session-stat {
+        color:#A9B6BC;
+        font-size:0.8rem;
+        font-weight:800;
+      }
+      .pt-session-stat strong {
+        color:#EAF0F2;
+        margin-left:0.28rem;
+      }
+      .pt-session-stat .good,
+      .pt-eh-move.good { color:#7CC96F; }
+      .pt-session-stat .bad,
+      .pt-eh-move.bad { color:#E57368; }
+      .pt-session-stat .neutral,
+      .pt-eh-move.neutral { color:#A9B6BC; }
+      .pt-extended-card { padding:1rem; margin-top:0.45rem; }
+      .pt-extended-summary {
+        display:grid;
+        grid-template-columns: minmax(180px, 1.3fr) repeat(6, minmax(120px, 1fr));
+        gap:0.7rem;
+        align-items:stretch;
+      }
+      .pt-eh-tile {
+        border:1px solid rgba(30,52,64,0.92);
+        border-radius:10px;
+        background:rgba(6,16,20,0.72);
+        padding:0.72rem 0.78rem;
+        min-height:76px;
+      }
+      .pt-eh-label {
+        color:#829099;
+        font-size:0.72rem;
+        text-transform:uppercase;
+        letter-spacing:0.055em;
+        font-weight:950;
+      }
+      .pt-eh-value {
+        color:#EAF0F2;
+        font-size:1.08rem;
+        font-weight:950;
+        margin-top:0.24rem;
+      }
+      .pt-eh-note {
+        color:#A9B6BC;
+        font-size:0.73rem;
+        font-weight:750;
+        margin-top:0.14rem;
+      }
+      .pt-extended-table-card { padding:0.9rem; margin-top:0.75rem; }
+      .pt-extended-table {
+        width:100%;
+        border-collapse:collapse;
+        font-size:0.86rem;
+      }
+      .pt-extended-table th {
+        color:#829099;
+        text-transform:uppercase;
+        letter-spacing:0.045em;
+        font-size:0.7rem;
+        font-weight:950;
+        text-align:left;
+        padding:0.55rem 0.5rem;
+        border-bottom:1px solid rgba(30,52,64,0.92);
+      }
+      .pt-extended-table td {
+        color:#D7E0E4;
+        font-weight:800;
+        padding:0.62rem 0.5rem;
+        border-bottom:1px solid rgba(30,52,64,0.55);
+        vertical-align:middle;
+      }
+      .pt-extended-table tr:last-child td { border-bottom:none; }
+      .pt-extended-table .ticker { color:#EAF0F2; font-weight:950; }
+      .pt-extended-table .company { display:block; color:#7F8D95; font-size:0.73rem; font-weight:750; margin-top:0.08rem; }
+      @media (max-width: 1100px) {
+        .pt-extended-summary { grid-template-columns: repeat(2, minmax(0,1fr)); }
+        .pt-session-strip { align-items:flex-start; flex-direction:column; }
+      }
+    </style>
+    """
+
+
+def render_selected_session_strip(ticker: str) -> None:
+    quote = get_extended_hours_quote(ticker)
+    session_label = quote.get("latest_session") or "CLOSED"
+    session_name = quote.get("latest_session_name") or "Closed"
+    tone = _session_tone_class(session_label)
+    day_move = quote.get("regular_change_pct")
+    latest = quote.get("latest_price")
+    st.markdown(
+        _extended_hours_styles()
+        + dedent(f"""
+        <div class="pt-session-strip">
+          <div class="pt-session-left">
+            <span class="pt-session-ticker">{escape(str(quote.get("ticker") or ticker))}</span>
+            <span class="pt-session-pill {tone}">{escape(str(session_label))}</span>
+            <span class="pt-session-stat">{escape(str(session_name))}</span>
+          </div>
+          <div class="pt-session-right">
+            <span class="pt-session-stat">Last <strong>{escape(fmt_price(latest))}</strong></span>
+            <span class="pt-session-stat">Day <strong class="{_move_tone_class(day_move)}">{escape(fmt_daily_move(day_move))}</strong></span>
+            <span class="pt-session-stat">Pre <strong class="{_move_tone_class(quote.get("premarket_change_pct"))}">{escape(fmt_daily_move(quote.get("premarket_change_pct")))}</strong></span>
+            <span class="pt-session-stat">AH <strong class="{_move_tone_class(quote.get("afterhours_change_pct"))}">{escape(fmt_daily_move(quote.get("afterhours_change_pct")))}</strong></span>
+            <span class="pt-session-stat">Updated <strong>{escape(_fmt_session_time(quote.get("latest_timestamp")))}</strong></span>
+          </div>
+        </div>
+        """),
+        unsafe_allow_html=True,
+    )
+
+
+def _extended_hours_summary_html(quote: dict) -> str:
+    session_label = quote.get("latest_session") or "CLOSED"
+    session_name = quote.get("latest_session_name") or "Closed"
+    ticker_value = str(quote.get("ticker") or "N/A")
+    company = str(quote.get("company_name") or ticker_value)
+    return (
+        '<div class="pt-extended-card">'
+        '<div class="pt-extended-summary">'
+        f'<div class="pt-eh-tile"><div class="pt-eh-label">Selected Ticker</div><div class="pt-eh-value">{escape(ticker_value)} '
+        f'<span class="pt-session-pill {_session_tone_class(session_label)}">{escape(str(session_label))}</span></div>'
+        f'<div class="pt-eh-note">{escape(company)} · {escape(str(session_name))}</div></div>'
+        f'<div class="pt-eh-tile"><div class="pt-eh-label">Last Price</div><div class="pt-eh-value">{escape(fmt_price(quote.get("latest_price")))}</div><div class="pt-eh-note">Latest trade</div></div>'
+        f'<div class="pt-eh-tile"><div class="pt-eh-label">Prev Close</div><div class="pt-eh-value">{escape(fmt_price(quote.get("previous_close")))}</div><div class="pt-eh-note">Regular close</div></div>'
+        f'<div class="pt-eh-tile"><div class="pt-eh-label">Pre-Market</div><div class="pt-eh-value pt-eh-move {_move_tone_class(quote.get("premarket_change_pct"))}">{escape(fmt_daily_move(quote.get("premarket_change_pct")))}</div><div class="pt-eh-note">{escape(fmt_price(quote.get("premarket_price")))}</div></div>'
+        f'<div class="pt-eh-tile"><div class="pt-eh-label">Regular Move</div><div class="pt-eh-value pt-eh-move {_move_tone_class(quote.get("regular_change_pct"))}">{escape(fmt_daily_move(quote.get("regular_change_pct")))}</div><div class="pt-eh-note">{escape(fmt_price(quote.get("regular_price")))}</div></div>'
+        f'<div class="pt-eh-tile"><div class="pt-eh-label">After-Hours</div><div class="pt-eh-value pt-eh-move {_move_tone_class(quote.get("afterhours_change_pct"))}">{escape(fmt_daily_move(quote.get("afterhours_change_pct")))}</div><div class="pt-eh-note">{escape(fmt_price(quote.get("afterhours_price")))}</div></div>'
+        f'<div class="pt-eh-tile"><div class="pt-eh-label">Last Update</div><div class="pt-eh-value" style="font-size:0.88rem;">{escape(_fmt_session_time(quote.get("latest_timestamp")))}</div><div class="pt-eh-note">Volume {escape(fmt_compact(quote.get("volume")))}</div></div>'
+        '</div></div>'
+    )
+
+
+def render_extended_hours_summary(selected_ticker: str) -> None:
+    quote = get_extended_hours_quote(selected_ticker)
+    st.markdown(_extended_hours_summary_html(quote), unsafe_allow_html=True)
+
+
+def _extended_hours_row_html(row: pd.Series) -> str:
+    ticker_value = str(row.get("ticker") or "N/A")
+    company = str(row.get("company_name") or ticker_value)
+    session_label = str(row.get("latest_session") or "CLOSED")
+    return (
+        "<tr>"
+        f'<td><span class="ticker">{escape(ticker_value)}</span><span class="company">{escape(company)}</span></td>'
+        f"<td>{escape(fmt_price(row.get('latest_price')))}</td>"
+        f'<td><span class="pt-session-pill {_session_tone_class(session_label)}">{escape(session_label)}</span></td>'
+        f'<td class="pt-eh-move {_move_tone_class(row.get("premarket_change_pct"))}">{escape(fmt_daily_move(row.get("premarket_change_pct")))}</td>'
+        f'<td class="pt-eh-move {_move_tone_class(row.get("regular_change_pct"))}">{escape(fmt_daily_move(row.get("regular_change_pct")))}</td>'
+        f'<td class="pt-eh-move {_move_tone_class(row.get("afterhours_change_pct"))}">{escape(fmt_daily_move(row.get("afterhours_change_pct")))}</td>'
+        f"<td>{escape(fmt_compact(row.get('volume')))}</td>"
+        f"<td>{escape(_fmt_session_time(row.get('latest_timestamp')))}</td>"
+        "</tr>"
+    )
+
+
+def render_extended_hours_table(symbols: list[str]) -> pd.DataFrame:
+    frame = get_extended_hours_table(tuple(symbols))
+    if frame.empty:
+        empty_state("Extended-hours quotes unavailable for the selected universe.")
+        return frame
+    rows = "".join(_extended_hours_row_html(row) for _, row in frame.iterrows())
+    st.markdown(
+        dedent(f"""
+        <div class="pt-extended-table-card">
+          <table class="pt-extended-table">
+            <thead>
+              <tr>
+                <th>Ticker</th><th>Price</th><th>Session</th><th>Pre-Mkt %</th>
+                <th>Day %</th><th>After-Hrs %</th><th>Volume</th><th>Last Update</th>
+              </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+          </table>
+        </div>
+        """),
+        unsafe_allow_html=True,
+    )
+    return frame
+
+
+def _extended_hours_universe(selected_ticker: str, scope: str) -> list[str]:
+    selected = clean_ticker(selected_ticker) or "IONQ"
+    watchlist = _watchlist_symbols()
+    majors = list(MARKET_SYMBOLS.keys())
+    if scope == "Watchlist only":
+        raw = [selected] + watchlist
+    elif scope == "Major indexes / ETFs":
+        raw = [selected] + majors
+    else:
+        raw = [selected] + watchlist + majors
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in raw:
+        ticker_value = clean_ticker(value)
+        if ticker_value and ticker_value not in seen:
+            seen.add(ticker_value)
+            output.append(ticker_value)
+    return output[:32]
+
+
+def _maybe_schedule_home_refresh(interval_label: str) -> None:
+    seconds = {"30 sec": 30, "1 min": 60, "5 min": 300}.get(interval_label)
+    if not seconds:
+        return
+    components.html(
+        f"<script>setTimeout(function() {{ window.parent.location.reload(); }}, {seconds * 1000});</script>",
+        height=0,
+        width=0,
+    )
+
+
+def render_extended_hours_monitor(selected_ticker: str) -> None:
+    section("Extended Hours Monitor", "Pre-market and after-hours pricing for the selected ticker and key names.")
+    current_session = get_market_session_et()
+    st.markdown(
+        f'<div class="source-line">Market session: <strong>{escape(current_session["session"])}</strong> '
+        f'({escape(current_session["label"])}) | Timezone: America/New_York | Updated: {escape(_fmt_session_time(current_session["timestamp"]))}</div>',
+        unsafe_allow_html=True,
+    )
+    render_extended_hours_summary(selected_ticker)
+    ctrl1, ctrl2, ctrl3 = st.columns([1.4, 1, 1])
+    with ctrl1:
+        scope = st.radio(
+            "Extended-hours universe",
+            ["Both", "Watchlist only", "Major indexes / ETFs"],
+            horizontal=True,
+            key="extended_hours_scope",
+        )
+    with ctrl2:
+        refresh_interval = st.radio("Auto refresh", ["Off", "30 sec", "1 min", "5 min"], horizontal=True, key="extended_hours_refresh_interval")
+    with ctrl3:
+        if st.button("Refresh extended quotes", key="extended_hours_manual_refresh"):
+            try:
+                get_extended_hours_quote.clear()
+                get_extended_hours_table.clear()
+            except Exception:
+                pass
+            st.rerun()
+    _maybe_schedule_home_refresh(refresh_interval)
+    symbols = _extended_hours_universe(selected_ticker, scope)
+    frame = render_extended_hours_table(symbols)
+    source_statuses = frame.get("source_status", pd.Series(dtype=str)).value_counts().to_dict() if isinstance(frame, pd.DataFrame) and not frame.empty else {}
+    st.markdown(
+        f'<div class="source-line">Source: Yahoo Finance/yfinance prepost intraday | Universe: {len(symbols)} tickers | '
+        f'Status: {escape(", ".join(f"{key}: {value}" for key, value in source_statuses.items()) or "N/A")}</div>',
         unsafe_allow_html=True,
     )
 
@@ -2527,11 +2863,14 @@ def render_biggest_movers_section() -> None:
     section("Whole Market Movers", "Top gainers and losers from a broad U.S. listed-stock scan.")
     ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([1, 1, 1.2, 1.2])
     with ctrl1:
-        include_etfs = st.toggle("Include ETFs", value=False, key="home_whole_market_include_etfs")
+        etf_mode = st.radio("Universe", ["Stocks only", "Include ETFs"], horizontal=True, key="home_whole_market_universe_mode")
+        include_etfs = etf_mode == "Include ETFs"
     with ctrl2:
-        min_price = st.number_input("Minimum price", min_value=0.0, value=2.0, step=0.5, key="home_whole_market_min_price")
+        min_price_label = st.radio("Minimum price", ["$0", "$2", "$5", "$10"], index=1, horizontal=True, key="home_whole_market_min_price_choice")
+        min_price = float(min_price_label.replace("$", ""))
     with ctrl3:
-        min_volume = st.number_input("Minimum volume", min_value=0, value=500_000, step=100_000, key="home_whole_market_min_volume")
+        min_volume_label = st.radio("Minimum volume", ["100K", "500K", "1M", "5M"], index=1, horizontal=True, key="home_whole_market_min_volume_choice")
+        min_volume = {"100K": 100_000, "500K": 500_000, "1M": 1_000_000, "5M": 5_000_000}[min_volume_label]
     with ctrl4:
         refresh = st.button("Refresh movers", key="home_whole_market_refresh")
     if refresh:
@@ -3371,6 +3710,7 @@ def home_page(ticker: str) -> None:
     snapshot, statuses = fetch_market_snapshot()
     render_market_tape(snapshot, direction="ltr")
     source_line("Yahoo Finance/yfinance market snapshot", now_et(), "Delayed / cached")
+    render_extended_hours_monitor(ticker)
     render_biggest_movers_section()
     section("Macro / Market News Headlines", "Broad market headlines and catalysts from current free sources.")
     macro_news_raw, macro_statuses = fetch_news("", 24)
@@ -3851,11 +4191,19 @@ def main() -> None:
     if st.sidebar.button("Refresh Data"):
         reset_data_caches()
         st.rerun()
-    page = st.sidebar.radio("Tabs", PAGES, index=PAGES.index(st.session_state.get("page", PAGES[0])) if st.session_state.get("page") in PAGES else 0)
+    page = st.radio(
+        "Tabs",
+        PAGES,
+        index=PAGES.index(st.session_state.get("page", PAGES[0])) if st.session_state.get("page") in PAGES else 0,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="pine_top_tabs",
+    )
     st.session_state["page"] = page
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Selected: {ticker}")
     st.sidebar.caption(f"Session refreshed: {fmt_date(now_et())}")
+    render_selected_session_strip(ticker)
     render_page(page, ticker)
 
 
