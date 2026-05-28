@@ -12,7 +12,6 @@ from textwrap import dedent
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 
 from data.company_identity import get_company_identity
 from data.filings import fetch_latest_periodic_sec_filing, fetch_latest_sec_filing, fetch_sec_filings, ticker_to_cik
@@ -1082,34 +1081,53 @@ def _bid_ask_text(row: pd.Series) -> str:
     return f"{bid:,.2f} / {ask:,.2f}" if bid is not None and ask is not None else fmt_price(bid or ask)
 
 
-def _extended_movers_table_html(frame: pd.DataFrame) -> str:
+def _extended_movers_table_html(frame: pd.DataFrame, visible_columns: list[str] | None = None) -> str:
     if frame is None or frame.empty:
         return '<div class="pt-mover-empty">No extended-hours movers available for this view.</div>'
+    all_columns = [
+        ("ticker", "Ticker"),
+        ("company", "Company"),
+        ("session", "Session"),
+        ("price", "Current Session Price"),
+        ("move", "Session % Move"),
+        ("volume", "Session Volume"),
+        ("close", "Regular Close"),
+        ("gap", "Gap vs Close"),
+        ("bid_ask", "Bid / Ask"),
+        ("updated", "Last Update"),
+    ]
+    selected = set(visible_columns or [key for key, _ in all_columns])
+    selected.add("ticker")
+    header = "".join(f"<th>{escape(label)}</th>" for key, label in all_columns if key in selected)
     rows = []
     for _, row in frame.iterrows():
         move = to_float(row.get("display_move_pct"))
         session_label = str(row.get("display_session") or "Closed")
         session_key = "pre" if "Pre" in session_label else "ah" if "After" in session_label else "live" if "Regular" in session_label else "closed"
+        cells = {
+            "ticker": (
+                '<td><div class="pt-eh-company-cell">'
+                f'{_eh_logo_html(row, 24)}<strong>{escape(str(row.get("ticker") or "N/A"))}</strong></div></td>'
+            ),
+            "company": f'<td>{escape(str(row.get("company_name") or "N/A"))}</td>',
+            "session": f'<td><span class="pt-eh-dot {session_key}"></span>{escape(session_label)}</td>',
+            "price": f'<td>{escape(fmt_price(row.get("display_price")))}</td>',
+            "move": f'<td class="pt-eh-move {_move_tone_class(move)}">{escape(fmt_daily_move(move))}</td>',
+            "volume": f'<td>{escape(fmt_compact(row.get("volume")))}</td>',
+            "close": f'<td>{escape(fmt_price(row.get("previous_close")))}</td>',
+            "gap": f'<td>{escape(fmt_currency(row.get("display_gap"), 2))} <span class="pt-eh-move {_move_tone_class(move)}">{escape(fmt_daily_move(move))}</span></td>',
+            "bid_ask": f'<td>{escape(_bid_ask_text(row))}</td>',
+            "updated": f'<td>{escape(_fmt_session_clock(row.get("latest_timestamp")))}</td>',
+        }
         rows.append(
             "<tr>"
-            '<td><div class="pt-eh-company-cell">'
-            f'{_eh_logo_html(row, 24)}<div><strong>{escape(str(row.get("ticker") or "N/A"))}</strong>'
-            f'<span>{escape(str(row.get("company_name") or "N/A"))}</span></div></div></td>'
-            f'<td><span class="pt-eh-dot {session_key}"></span>{escape(session_label)}</td>'
-            f'<td>{escape(fmt_price(row.get("display_price")))}</td>'
-            f'<td class="pt-eh-move {_move_tone_class(move)}">{escape(fmt_daily_move(move))}</td>'
-            f'<td>{escape(fmt_compact(row.get("volume")))}</td>'
-            f'<td>{escape(fmt_price(row.get("previous_close")))}</td>'
-            f'<td>{escape(fmt_currency(row.get("display_gap"), 2))} <span class="pt-eh-move {_move_tone_class(move)}">{escape(fmt_daily_move(move))}</span></td>'
-            f'<td>{escape(_bid_ask_text(row))}</td>'
-            f'<td>{escape(_fmt_session_clock(row.get("latest_timestamp")))}</td>'
-            "</tr>"
+            + "".join(cells[key] for key, _ in all_columns if key in selected)
+            + "</tr>"
         )
     return (
         '<table class="pt-eh-mover-table"><thead><tr>'
-        '<th>Ticker</th><th>Session</th><th>Current Session Price</th><th>Session % Move</th>'
-        '<th>Session Volume</th><th>Regular Close</th><th>Gap vs Close</th><th>Bid / Ask</th><th>Last Update</th>'
-        '</tr></thead><tbody>'
+        + header
+        + '</tr></thead><tbody>'
         + "".join(rows)
         + "</tbody></table>"
     )
@@ -1164,17 +1182,14 @@ def _mini_session_chart_svg(row: pd.Series) -> str:
     )
 
 
-def _selected_snapshot_html(row: pd.Series) -> str:
+def _selected_snapshot_html(row: pd.Series, chart_range: str = "1D") -> str:
     ticker = escape(str(row.get("ticker") or "N/A"))
     company = escape(str(row.get("company_name") or "N/A"))
     chart = _mini_session_chart_svg(row)
     return dedent(
         f"""
         <div class="pt-eh-panel">
-          <div class="pt-eh-selected-top">
-            <div class="pt-eh-panel-title" style="margin:0;">Selected Ticker Session Snapshot</div>
-            <div class="pt-eh-select-pill">{ticker} <span style="color:#829099;font-weight:800;">{company}</span></div>
-          </div>
+          <div class="pt-eh-select-pill" style="margin-bottom:0.7rem;">{ticker} <span style="color:#829099;font-weight:800;">{company}</span></div>
           <div class="pt-eh-snapshot-cards">
             <div class="pt-eh-snapshot-card">
               <div class="label">Previous Close</div>
@@ -1196,7 +1211,7 @@ def _selected_snapshot_html(row: pd.Series) -> str:
             </div>
           </div>
           <div class="pt-eh-chart-legend">
-            <span>{ticker} · 1D</span><span><span class="pt-eh-dot pre"></span>Pre-Market</span><span><span class="pt-eh-dot live"></span>Regular</span><span><span class="pt-eh-dot ah"></span>After-Hours</span>
+            <span>{ticker} · {escape(str(chart_range or "1D"))}</span><span><span class="pt-eh-dot pre"></span>Pre-Market</span><span><span class="pt-eh-dot live"></span>Regular</span><span><span class="pt-eh-dot ah"></span>After-Hours</span>
           </div>
           {chart}
         </div>
@@ -1334,45 +1349,159 @@ def _session_control_bar_html(current_session: dict) -> str:
 
 
 def _maybe_schedule_home_refresh(interval_label: str) -> None:
-    seconds = {"15 sec": 15, "30 sec": 30, "1 min": 60, "5 min": 300}.get(interval_label)
-    if not seconds:
-        return
-    components.html(
-        f"<script>setTimeout(function() {{ window.parent.location.reload(); }}, {seconds * 1000});</script>",
-        height=0,
-        width=0,
-    )
+    # Avoid custom HTML timers here: deployed Streamlit builds can leave stale JS
+    # chunks around those components. The selected interval remains visible state,
+    # while the explicit Refresh button performs a stable quote refresh.
+    st.session_state["extended_hours_refresh_label"] = interval_label
 
 
 def render_extended_hours_monitor(selected_ticker: str) -> None:
     current_session = get_market_session_et()
-    session_view = _default_session_view(current_session)
+    session_options = ["Pre-Market", "Regular", "After-Hours", "Combined View"]
+    if st.session_state.get("eh_session_view") not in session_options:
+        st.session_state["eh_session_view"] = _default_session_view(current_session)
+    refresh_options = ["Off", "15 sec", "30 sec", "1 min", "5 min"]
+    if st.session_state.get("extended_hours_refresh_interval") not in refresh_options:
+        st.session_state["extended_hours_refresh_interval"] = "15 sec"
+    mover_options = ["Gainers", "Losers", "Most Active", "Watchlist Extended Hours"]
+    if st.session_state.get("eh_mover_mode") not in mover_options:
+        st.session_state["eh_mover_mode"] = "Gainers"
+    st.markdown(_extended_hours_styles(), unsafe_allow_html=True)
+    control_left, control_status, control_actions = st.columns([1.55, 0.72, 0.98], gap="small", vertical_alignment="center")
+    with control_left:
+        st.markdown('<div class="pt-eh-panel-title" style="margin-bottom:0.35rem;">Session Tracking Control Bar</div>', unsafe_allow_html=True)
+        session_cols = st.columns(len(session_options), gap="small")
+        for idx, option in enumerate(session_options):
+            is_active = st.session_state.get("eh_session_view") == option
+            label = f"{'● ' if is_active else ''}{option}"
+            with session_cols[idx]:
+                if st.button(label, key=f"eh_session_btn_{idx}", use_container_width=True):
+                    st.session_state["eh_session_view"] = option
+                    st.rerun()
+        session_view = st.session_state.get("eh_session_view", _default_session_view(current_session))
+    with control_status:
+        st.markdown(
+            f"""
+            <div class="pt-eh-status-box">
+              <span><i class="pt-eh-dot {_session_tone_class(current_session["label"])}"></i>Current Session: <strong>{escape(str(current_session["session"]))}</strong></span>
+              <div class="pt-eh-note">Last check {escape(_fmt_session_clock(current_session.get("timestamp")))} ET</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with control_actions:
+        st.markdown('<div class="pt-eh-note">Auto-Refresh</div>', unsafe_allow_html=True)
+        refresh_cols = st.columns(len(refresh_options), gap="small")
+        for idx, option in enumerate(refresh_options):
+            is_active = st.session_state.get("extended_hours_refresh_interval") == option
+            with refresh_cols[idx]:
+                if st.button(f"{'● ' if is_active else ''}{option}", key=f"eh_refresh_interval_btn_{idx}", use_container_width=True):
+                    st.session_state["extended_hours_refresh_interval"] = option
+                    st.rerun()
+        refresh_interval = st.session_state.get("extended_hours_refresh_interval", "15 sec")
+        action_cols = st.columns([0.45, 1.15], gap="small", vertical_alignment="center")
+        with action_cols[0]:
+            if st.button("Refresh", key="extended_hours_manual_refresh", use_container_width=True):
+                try:
+                    get_extended_hours_quote.clear()
+                    get_extended_hours_table.clear()
+                except Exception:
+                    pass
+                st.rerun()
+        with action_cols[1]:
+            if st.button("Customize Columns", key="eh_customize_columns_toggle", use_container_width=True):
+                st.session_state["eh_compact_columns"] = not st.session_state.get("eh_compact_columns", False)
+                st.rerun()
+            column_mode = "Compact columns" if st.session_state.get("eh_compact_columns") else "Full columns"
+            st.markdown(f'<div class="pt-eh-note">{escape(column_mode)}</div>', unsafe_allow_html=True)
+    _maybe_schedule_home_refresh(refresh_interval)
     scope = "Both"
-    st.markdown(_session_control_bar_html(current_session), unsafe_allow_html=True)
     symbols = _extended_hours_universe(selected_ticker, scope)
     frame = get_extended_hours_table(tuple(symbols))
     if frame.empty:
         empty_state("Extended-hours quotes unavailable for the selected universe.")
         return
+    ticker_options = [str(value) for value in frame.get("ticker", pd.Series(dtype=str)).dropna().tolist()]
+    selected_clean = clean_ticker(selected_ticker)
+    if selected_clean not in ticker_options and ticker_options:
+        ticker_options.insert(0, selected_clean)
+    if st.session_state.get("eh_selected_ticker") not in ticker_options:
+        st.session_state["eh_selected_ticker"] = selected_clean if selected_clean in ticker_options else (ticker_options[0] if ticker_options else selected_clean)
+    visible_columns = (
+        ["ticker", "session", "price", "move", "volume", "updated"]
+        if st.session_state.get("eh_compact_columns")
+        else ["ticker", "company", "session", "price", "move", "volume", "close", "gap", "bid_ask", "updated"]
+    )
     left, right = st.columns([2.05, 1.08], gap="small")
     with left:
-        mover_mode = "Gainers"
-        ranked = _ranked_extended_frame(frame, session_view, mover_mode, limit=10)
+        st.markdown('<div class="pt-eh-panel-title">Extended Hours Movers</div>', unsafe_allow_html=True)
+        mover_cols = st.columns(len(mover_options), gap="small")
+        for idx, option in enumerate(mover_options):
+            is_active = st.session_state.get("eh_mover_mode") == option
+            with mover_cols[idx]:
+                if st.button(f"{'● ' if is_active else ''}{option}", key=f"eh_mover_mode_btn_{idx}", use_container_width=True):
+                    st.session_state["eh_mover_mode"] = option
+                    st.rerun()
+        mover_mode = st.session_state.get("eh_mover_mode", "Gainers")
+        limit = 30 if st.session_state.get("eh_show_all_movers") else 10
+        ranked = _ranked_extended_frame(frame, session_view, mover_mode, limit=limit)
         st.markdown(
-            '<div class="pt-eh-panel"><div class="pt-eh-panel-title">Extended Hours Movers</div>'
-            '<div class="pt-eh-faux-tabs">'
-            '<span class="pt-eh-faux-tab active">Gainers</span>'
-            '<span class="pt-eh-faux-tab">Losers</span>'
-            '<span class="pt-eh-faux-tab">Most Active</span>'
-            '<span class="pt-eh-faux-tab">Watchlist Extended Hours</span>'
-            '</div>'
-            f'{_extended_movers_table_html(ranked)}<div class="source-line" style="text-align:center;">View all movers &gt;</div></div>',
+            f'<div class="pt-eh-panel">{_extended_movers_table_html(ranked, visible_columns)}</div>',
             unsafe_allow_html=True,
         )
+        if st.button("View all movers" if not st.session_state.get("eh_show_all_movers") else "Show top 10 movers", key="eh_toggle_all_movers", use_container_width=True):
+            st.session_state["eh_show_all_movers"] = not st.session_state.get("eh_show_all_movers", False)
+            st.rerun()
     with right:
-        selected_row = _selected_quote_row(frame, selected_ticker)
-        st.markdown(_selected_snapshot_html(selected_row), unsafe_allow_html=True)
+        st.markdown('<div class="pt-eh-panel-title">Selected Ticker Session Snapshot</div>', unsafe_allow_html=True)
+        selected_snapshot_ticker = st.session_state.get("eh_selected_ticker", selected_clean)
+        if selected_snapshot_ticker not in ticker_options and ticker_options:
+            selected_snapshot_ticker = ticker_options[0]
+            st.session_state["eh_selected_ticker"] = selected_snapshot_ticker
+        quick_tickers = [ticker for ticker in ticker_options[:6] if ticker]
+        if quick_tickers:
+            quick_cols = st.columns(len(quick_tickers), gap="small")
+            for idx, ticker in enumerate(quick_tickers):
+                with quick_cols[idx]:
+                    active = ticker == selected_snapshot_ticker
+                    if st.button(f"{'● ' if active else ''}{ticker}", key=f"eh_quick_ticker_btn_{idx}", use_container_width=True):
+                        st.session_state["eh_selected_ticker"] = ticker
+                        st.rerun()
+        selected_snapshot_ticker = st.session_state.get("eh_selected_ticker", selected_snapshot_ticker)
+        snapshot_actions = st.columns([1, 1], gap="small")
+        with snapshot_actions[0]:
+            if st.button("Add to Watchlist", key="eh_add_selected_watchlist", use_container_width=True):
+                ok = add_ticker(selected_snapshot_ticker)
+                st.toast("Added to watchlist." if ok else "Ticker already exists or is unavailable.")
+        with snapshot_actions[1]:
+            if st.button("Open Analysis", key="eh_open_selected_analysis", use_container_width=True):
+                st.session_state["global_ticker_input"] = selected_snapshot_ticker
+                st.session_state["global_ticker"] = selected_snapshot_ticker
+                st.session_state["page"] = "Company Analysis"
+                st.rerun()
+        chart_ranges = ["1D", "5D", "1M", "3M", "6M", "YTD", "1Y"]
+        if st.session_state.get("eh_snapshot_chart_range") not in chart_ranges:
+            st.session_state["eh_snapshot_chart_range"] = "1D"
+        range_cols = st.columns(len(chart_ranges), gap="small")
+        for idx, option in enumerate(chart_ranges):
+            is_active = st.session_state.get("eh_snapshot_chart_range") == option
+            with range_cols[idx]:
+                if st.button(f"{'● ' if is_active else ''}{option}", key=f"eh_snapshot_range_btn_{idx}", use_container_width=True):
+                    st.session_state["eh_snapshot_chart_range"] = option
+                    st.rerun()
+        chart_range = st.session_state.get("eh_snapshot_chart_range", "1D")
+        selected_row = _selected_quote_row(frame, selected_snapshot_ticker)
+        st.markdown(_selected_snapshot_html(selected_row, chart_range), unsafe_allow_html=True)
         st.markdown(_watchlist_extended_html(frame), unsafe_allow_html=True)
+        watch_buttons = st.columns([1, 1], gap="small")
+        with watch_buttons[0]:
+            if st.button("View full watchlist", key="eh_view_full_watchlist", use_container_width=True):
+                st.session_state["page"] = "Watchlist"
+                st.rerun()
+        with watch_buttons[1]:
+            if st.button("Edit watchlist", key="eh_edit_watchlist", use_container_width=True):
+                st.session_state["page"] = "Watchlist"
+                st.rerun()
     st.markdown(_market_breadth_html(frame, selected_ticker), unsafe_allow_html=True)
     source_statuses = frame.get("source_status", pd.Series(dtype=str)).value_counts().to_dict()
     st.markdown(
