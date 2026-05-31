@@ -3167,12 +3167,6 @@ h3 {
 .pt-as-footer-row b.rt-good { color: var(--green); }
 .pt-as-footer-row b.rt-warn { color: var(--yellow); }
 .pt-as-footer-row b.rt-bad { color: var(--red); }
-.pt-data-asof {
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 780;
-  padding-left: 0.5rem;
-}
 .pt-chip,
 .pt-entry-signal,
 .pt-signal-badge,
