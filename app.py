@@ -3178,7 +3178,837 @@ def _ecosystem_extension_html(
     )
 
 
-def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, signal: dict, options: dict) -> str:
+FUNDAMENTAL_WEIGHTS = {
+    "Revenue Growth": 0.20,
+    "Gross Margin": 0.15,
+    "Operating Leverage": 0.15,
+    "Free Cash Flow": 0.15,
+    "Balance Sheet": 0.15,
+    "Customers / Backlog": 0.10,
+    "Competitive Position": 0.05,
+    "Execution Quality": 0.05,
+}
+
+
+E2E_SAMPLE_MODELS = {
+    "AMPX": {
+        "themes": ["Batteries", "Silicon Anode", "Military Drones", "EVs", "High-Density Energy Storage"],
+        "theme_label": "Batteries / Silicon Anode / Defense Drones",
+        "risk_level": "High",
+        "quality_overrides": {
+            "Customers / Backlog": ("Growing", "Backlog +86% YoY", 7.5),
+            "Competitive Position": ("Niche Tech", "Silicon anode IP", 7.0),
+            "Execution Quality": ("Good", "Milestones hit", 7.0),
+        },
+        "valuation_scenarios": [
+            {"name": "Bear Case", "revenue": 115_000_000, "multiple": 4.0, "future_price": 6.0, "probability": 0.25, "assumption": "Growth slows / dilution increases", "tone": "bad"},
+            {"name": "Base Case", "revenue": 260_000_000, "multiple": 7.0, "future_price": 20.0, "probability": 0.50, "assumption": "Strong revenue growth and margin expansion", "tone": "info"},
+            {"name": "Bull Case", "revenue": 500_000_000, "multiple": 10.0, "future_price": 45.0, "probability": 0.25, "assumption": "Major customer adoption and premium multiple", "tone": "good"},
+        ],
+        "must_be_true": [
+            ("Revenue grows from current base to $260M by 2028", "Tracking", "Medium"),
+            ("Gross margin expands above 35%", "Tracking", "Medium"),
+            ("Market assigns a 7.0x EV / Sales multiple", "At Risk", "Medium"),
+            ("Dilution remains below 15%", "Needs Monitoring", "Medium"),
+            ("Defense drone and EV adoption accelerates", "Tracking", "Medium"),
+        ],
+    },
+    "MRVL": {
+        "themes": ["AI Data Centers", "Custom Silicon", "Networking", "Optical Connectivity"],
+        "theme_label": "AI Data Centers / Custom Silicon / Networking",
+        "risk_level": "Medium",
+        "quality_overrides": {
+            "Customers / Backlog": ("Strong", "Hyperscaler demand", 8.0),
+            "Competitive Position": ("Strong", "Custom silicon + DSP", 8.0),
+            "Execution Quality": ("Good", "AI ramp progressing", 7.5),
+        },
+    },
+    "NVDA": {
+        "themes": ["AI Data Centers", "Accelerated Compute", "GPU Platforms", "AI Software"],
+        "theme_label": "AI Data Centers / Accelerated Compute",
+        "risk_level": "Medium",
+        "quality_overrides": {
+            "Customers / Backlog": ("Very Strong", "Hyperscaler AI demand", 9.0),
+            "Competitive Position": ("Dominant", "GPU ecosystem", 9.5),
+            "Execution Quality": ("Excellent", "Platform execution", 9.0),
+        },
+    },
+    "IONQ": {
+        "themes": ["Quantum Computing", "Government R&D", "Long-Duration Growth"],
+        "theme_label": "Quantum Computing / Government R&D",
+        "risk_level": "High",
+        "quality_overrides": {
+            "Customers / Backlog": ("Developing", "Government and enterprise pilots", 6.5),
+            "Competitive Position": ("Emerging", "Trapped-ion approach", 7.0),
+            "Execution Quality": ("Tracking", "Roadmap execution", 6.5),
+        },
+    },
+    "MP": {
+        "themes": ["Critical Minerals", "Rare Earths", "Defense Supply Chain"],
+        "theme_label": "Critical Minerals / Rare Earths / Defense Supply Chain",
+        "risk_level": "Medium",
+        "quality_overrides": {
+            "Customers / Backlog": ("Strategic", "Domestic supply chain demand", 7.0),
+            "Competitive Position": ("Strategic Asset", "US rare earth exposure", 7.5),
+            "Execution Quality": ("Tracking", "Processing ramp", 6.5),
+        },
+    },
+    "FBTC": {
+        "themes": ["Bitcoin", "Crypto ETF Flows", "Digital Assets"],
+        "theme_label": "Bitcoin / Crypto ETF Flows",
+        "risk_level": "High",
+        "quality_overrides": {
+            "Revenue Growth": ("Fund Flow", "ETF flow sensitivity", 6.0),
+            "Gross Margin": ("N/A", "Fund structure", 5.0),
+            "Operating Leverage": ("N/A", "Fund structure", 5.0),
+            "Free Cash Flow": ("N/A", "Fund structure", 5.0),
+            "Balance Sheet": ("N/A", "Fund structure", 5.0),
+            "Customers / Backlog": ("Asset Flows", "Crypto allocation demand", 6.5),
+            "Competitive Position": ("Large issuer", "ETF distribution", 7.0),
+            "Execution Quality": ("Tracking", "Tracking and liquidity", 6.5),
+        },
+    },
+}
+
+
+THEME_EXPOSURE_MAP = {
+    "Military Drones": {
+        "impacted_tickers": ["AMPX", "AVAV", "RCAT", "KTOS"],
+        "transmission_path": "Higher drone demand increases need for lightweight, high-density batteries, sensors, and autonomous systems.",
+        "default_impact": "Positive",
+    },
+    "AI Data Centers": {
+        "impacted_tickers": ["MRVL", "NVDA", "DELL", "HPE", "VRT", "CEG"],
+        "transmission_path": "Higher hyperscaler capex supports demand for networking, servers, cooling, power, and custom silicon.",
+        "default_impact": "Positive",
+    },
+    "Critical Minerals": {
+        "impacted_tickers": ["MP", "REMX", "LAC"],
+        "transmission_path": "Supply chain restrictions increase strategic value of domestic rare earth and critical mineral assets.",
+        "default_impact": "Positive",
+    },
+    "Crypto ETF Flows": {
+        "impacted_tickers": ["FBTC", "COIN", "MSTR", "RIOT", "MARA"],
+        "transmission_path": "ETF inflows and Bitcoin price action affect crypto-linked equities and funds.",
+        "default_impact": "Positive",
+    },
+    "Rates / Treasury Yields": {
+        "impacted_tickers": ["IONQ", "AMPX", "Growth Stocks", "Long Duration Tech"],
+        "transmission_path": "Higher discount rates pressure long-duration speculative growth valuations.",
+        "default_impact": "Negative",
+    },
+    "Quantum Computing": {
+        "impacted_tickers": ["IONQ", "RGTI", "QBTS", "QUBT"],
+        "transmission_path": "Government R&D, cloud quantum access, and enterprise experimentation affect quantum platform demand.",
+        "default_impact": "Positive",
+    },
+}
+
+
+MARKET_READ_THROUGH_UPDATES = [
+    {
+        "date": "2026-05-20",
+        "market_update": "US defense agencies increase funding for small autonomous drones",
+        "theme": "Military Drones",
+        "impact": "Positive",
+        "confidence": "Medium",
+        "affected_valuation_lever": "Base Case Revenue Assumption",
+        "why_it_matters": "Drone endurance and battery weight are bottlenecks, which supports high-density battery suppliers when procurement expands.",
+    },
+    {
+        "date": "2026-05-20",
+        "market_update": "Hyperscalers raise AI infrastructure capex guidance",
+        "theme": "AI Data Centers",
+        "impact": "Positive",
+        "confidence": "High",
+        "affected_valuation_lever": "Revenue Growth / Multiple Expansion",
+        "why_it_matters": "Higher AI capex supports data-center networking, custom silicon, servers, cooling, and power infrastructure.",
+    },
+    {
+        "date": "2026-05-19",
+        "market_update": "China tightens rare earth export controls",
+        "theme": "Critical Minerals",
+        "impact": "Positive",
+        "confidence": "Medium",
+        "affected_valuation_lever": "Competitive Position",
+        "why_it_matters": "Supply chain stress increases strategic value of domestic critical mineral producers.",
+    },
+    {
+        "date": "2026-05-19",
+        "market_update": "Bitcoin ETF inflows continue",
+        "theme": "Crypto ETF Flows",
+        "impact": "Positive",
+        "confidence": "Medium",
+        "affected_valuation_lever": "Customer Demand / Asset Flows",
+        "why_it_matters": "ETF flows and Bitcoin price action can change liquidity and demand for crypto-linked vehicles.",
+    },
+    {
+        "date": "2026-05-18",
+        "market_update": "10-year Treasury yield moves higher on sticky inflation",
+        "theme": "Rates / Treasury Yields",
+        "impact": "Negative",
+        "confidence": "Medium",
+        "affected_valuation_lever": "Multiple Compression",
+        "why_it_matters": "Higher discount rates pressure long-duration growth equities and speculative technology valuations.",
+    },
+]
+
+
+def _clamp_number(value, low: float, high: float) -> float | None:
+    number = to_float(value)
+    if number is None:
+        return None
+    return max(low, min(high, number))
+
+
+def calculate_fundamental_score(metrics: list[dict]) -> dict:
+    weighted = 0.0
+    weight_sum = 0.0
+    for metric in metrics:
+        name = str(metric.get("name") or "")
+        score = to_float(metric.get("score"))
+        weight = FUNDAMENTAL_WEIGHTS.get(name, 0)
+        if score is None or weight <= 0:
+            continue
+        weighted += score * weight
+        weight_sum += weight
+    total = weighted / weight_sum if weight_sum else None
+    if total is None:
+        label = "Insufficient Data"
+    elif total >= 8.5:
+        label = "High Quality Compounder"
+    elif total >= 7.0:
+        label = "Emerging Compounder"
+    elif total >= 5.5:
+        label = "Improving / Watchlist"
+    elif total >= 4.0:
+        label = "Speculative / Needs Proof"
+    else:
+        label = "Weak Fundamentals"
+    return {"score": total, "label": label}
+
+
+def calculate_expected_value(scenarios: list[dict]) -> float | None:
+    total = 0.0
+    seen = False
+    for scenario in scenarios:
+        price = to_float(scenario.get("future_price"))
+        probability = to_float(scenario.get("probability"))
+        if price is None or probability is None:
+            continue
+        total += price * probability
+        seen = True
+    return total if seen else None
+
+
+def calculate_expected_return(expected_value_price, current_price) -> float | None:
+    expected = to_float(expected_value_price)
+    current = to_float(current_price)
+    if expected is None or current in (None, 0):
+        return None
+    return ((expected - current) / abs(current)) * 100
+
+
+def calculate_future_value_bridge(current_price, bridge_items: list[dict]) -> float | None:
+    base = to_float(current_price)
+    if base is None:
+        return None
+    total = base
+    for item in bridge_items:
+        impact = to_float(item.get("value_impact")) or 0.0
+        item_type = str(item.get("type") or "positive")
+        total = total - abs(impact) if item_type == "negative" else total + impact
+    return max(0.0, total)
+
+
+def calculate_investment_signal(scores: dict) -> dict:
+    fundamental = to_float(scores.get("fundamentalScore")) or 0
+    valuation = to_float(scores.get("valuationUpsideScore")) or 0
+    catalyst = to_float(scores.get("catalystMomentumScore")) or 0
+    risk = to_float(scores.get("riskAdjustmentScore")) or 0
+    total = fundamental * 0.35 + valuation * 0.30 + catalyst * 0.20 + risk * 0.15
+    return {"total_score": total, "signal": classify_investment_signal(total)}
+
+
+def classify_investment_signal(score) -> str:
+    number = to_float(score)
+    if number is None:
+        return "No Rating"
+    if number >= 8.5:
+        return "Strong Buy"
+    if number >= 7.0:
+        return "Buy"
+    if number >= 6.0:
+        return "Speculative Buy"
+    if number >= 4.5:
+        return "Hold"
+    if number >= 3.0:
+        return "Avoid"
+    return "Sell"
+
+
+def classify_impact_score(score) -> str:
+    number = to_float(score)
+    if number is None:
+        return "Neutral"
+    if number >= 3.5:
+        return "Strong Positive"
+    if number >= 1.0:
+        return "Positive"
+    if number <= -3.5:
+        return "Strong Negative"
+    if number <= -1.0:
+        return "Negative"
+    return "Neutral"
+
+
+def compare_market_implied_to_base_case(market_implied: dict, base_case: dict) -> dict:
+    implied_revenue = to_float(market_implied.get("impliedRevenue"))
+    base_revenue = to_float(base_case.get("baseRevenue"))
+    if implied_revenue is None or base_revenue in (None, 0):
+        return {"tone": "neutral", "conclusion": "Market-implied assumptions are unavailable from current data."}
+    gap = (implied_revenue - base_revenue) / abs(base_revenue)
+    if gap > 0.20:
+        return {"tone": "bad", "conclusion": "Market expects more growth than base case. Limited margin for error."}
+    if gap < -0.20:
+        return {"tone": "good", "conclusion": "Base case exceeds market expectations. Potential valuation gap."}
+    return {"tone": "warn", "conclusion": "Market price broadly aligns with base case."}
+
+
+def _quality_score_from_percent(value, excellent: float, weak: float, higher_is_better: bool = True) -> float:
+    number = to_float(value)
+    if number is None:
+        return 5.0
+    if not higher_is_better:
+        number = -number
+        excellent = -excellent
+        weak = -weak
+    if excellent == weak:
+        return 5.0
+    score = 2.0 + ((number - weak) / (excellent - weak)) * 7.0
+    return max(1.0, min(10.0, score))
+
+
+def _metric_tone_from_score(score) -> str:
+    number = to_float(score)
+    if number is None:
+        return "neutral"
+    if number >= 7:
+        return "good"
+    if number >= 5:
+        return "warn"
+    return "bad"
+
+
+def _format_metric_value(name: str, value) -> str:
+    if "Margin" in name:
+        return fmt_meaningful_percent(value)
+    if "Revenue Growth" in name or "Leverage" in name:
+        return fmt_growth(value, signed=True)
+    if "Cash Flow" in name:
+        return fmt_currency(value, 1)
+    return str(value if value not in (None, "") else "N/A")
+
+
+def _build_quality_metrics(symbol: str, latest: dict, signal: dict, sample: dict) -> list[dict]:
+    growth = to_float(latest.get("revenue_yoy_growth"))
+    gross_margin = to_float(latest.get("gross_margin"))
+    operating_margin = to_float(latest.get("operating_margin"))
+    fcf = to_float(latest.get("free_cash_flow"))
+    debt = to_float(latest.get("total_debt"))
+    cash = to_float(latest.get("cash"))
+    revenue_growth_score = (to_float(signal.get("growth_score")) or _quality_score_from_percent(growth, 40, -10) * 10) / 10
+    gross_score = (to_float(signal.get("profitability_score")) or _quality_score_from_percent(gross_margin, 55, 10) * 10) / 10
+    leverage_score = _quality_score_from_percent(operating_margin, 25, -60)
+    fcf_score = 8.0 if fcf is not None and fcf > 0 else 4.0 if fcf is not None else 5.0
+    balance_score = (to_float(signal.get("balance_sheet_score")) or 60) / 10
+    if cash is not None and debt is not None and cash > debt:
+        balance_score = max(balance_score, 7.0)
+    overrides = sample.get("quality_overrides") or {}
+    metrics = [
+        {"name": "Revenue Growth", "value": growth, "label": "TTM / latest YoY", "score": revenue_growth_score},
+        {"name": "Gross Margin", "value": gross_margin, "label": "Latest period", "score": gross_score},
+        {"name": "Operating Leverage", "value": operating_margin, "label": "Operating margin", "score": leverage_score},
+        {"name": "Free Cash Flow", "value": fcf, "label": "Latest period", "score": fcf_score},
+        {"name": "Balance Sheet", "value": "Net cash" if cash is not None and debt is not None and cash > debt else "Watch", "label": "Cash / debt", "score": balance_score},
+        {"name": "Customers / Backlog", "value": "Tracking", "label": "Customer demand", "score": 6.0},
+        {"name": "Competitive Position", "value": "Developing", "label": "Market position", "score": 6.0},
+        {"name": "Execution Quality", "value": "Tracking", "label": "Milestones", "score": 6.0},
+    ]
+    for metric in metrics:
+        override = overrides.get(metric["name"])
+        if override:
+            metric["value"], metric["label"], metric["score"] = override
+        metric["tone"] = _metric_tone_from_score(metric.get("score"))
+        metric["formatted_value"] = _format_metric_value(metric["name"], metric.get("value"))
+    return metrics
+
+
+def _estimate_scenarios(symbol: str, latest: dict, quote: dict, sample: dict) -> list[dict]:
+    current_price = to_float(quote.get("price")) or 1.0
+    explicit = sample.get("valuation_scenarios")
+    if explicit:
+        return [dict(scenario) for scenario in explicit]
+    market_cap = to_float(quote.get("market_cap"))
+    shares = market_cap / current_price if market_cap and current_price else None
+    revenue = to_float(latest.get("revenue"))
+    annual_revenue = revenue * 4 if revenue is not None else max((market_cap or 0) / 8, 50_000_000)
+    net_debt = to_float(latest.get("net_debt")) or 0.0
+    growth_factor = 2.0 if symbol in {"MRVL", "NVDA", "AMD"} else 2.8
+    base_revenue = annual_revenue * growth_factor
+    assumptions = [
+        ("Bear Case", base_revenue * 0.55, 4.0, 0.25, "Growth slows / multiple compresses", "bad"),
+        ("Base Case", base_revenue, 7.0, 0.50, "Revenue growth and margin expansion continue", "info"),
+        ("Bull Case", base_revenue * 1.75, 10.0, 0.25, "Adoption accelerates and premium multiple holds", "good"),
+    ]
+    scenarios = []
+    for name, future_revenue, multiple, probability, assumption, tone in assumptions:
+        if shares:
+            future_price = max(0.0, ((future_revenue * multiple) - net_debt) / shares)
+        else:
+            future_price = current_price * (0.55 if tone == "bad" else 1.45 if tone == "info" else 2.4)
+        scenarios.append(
+            {
+                "name": name,
+                "revenue": future_revenue,
+                "multiple": multiple,
+                "future_price": future_price,
+                "probability": probability,
+                "assumption": assumption,
+                "tone": tone,
+            }
+        )
+    return scenarios
+
+
+def _build_bridge_items(current_price, scenarios: list[dict], risk_level: str) -> list[dict]:
+    current = to_float(current_price) or 0.0
+    base = next((item for item in scenarios if str(item.get("name")) == "Base Case"), scenarios[1] if len(scenarios) > 1 else {})
+    base_price = to_float(base.get("future_price")) or current
+    spread = max(0.0, base_price - current)
+    risk_discount = 0.15 if risk_level == "High" else 0.10 if risk_level == "Medium" else 0.06
+    return [
+        {"label": "Revenue Growth Impact", "value_impact": spread * 0.42, "type": "positive"},
+        {"label": "Margin Expansion Impact", "value_impact": spread * 0.20, "type": "positive"},
+        {"label": "Multiple Expansion Impact", "value_impact": spread * 0.22, "type": "positive"},
+        {"label": "Dilution Impact", "value_impact": current * 0.08, "type": "negative"},
+        {"label": "Execution Risk Discount", "value_impact": current * risk_discount, "type": "negative"},
+    ]
+
+
+def _confidence_weight(value: str) -> float:
+    text = str(value or "").casefold()
+    if "high" in text:
+        return 1.0
+    if "medium" in text:
+        return 0.75
+    return 0.55
+
+
+def get_theme_read_through_for_ticker(ticker: str, company_themes: list[str], market_updates: list[dict]) -> list[dict]:
+    symbol = clean_ticker(ticker)
+    company_theme_set = {str(theme).casefold() for theme in company_themes or []}
+    rows: list[dict] = []
+    for update in market_updates:
+        theme = str(update.get("theme") or "")
+        exposure = THEME_EXPOSURE_MAP.get(theme, {})
+        impacted = exposure.get("impacted_tickers") or []
+        ticker_match = symbol in {clean_ticker(item) for item in impacted}
+        theme_match = theme.casefold() in company_theme_set or any(theme.casefold() in item or item in theme.casefold() for item in company_theme_set)
+        broad_growth_match = theme == "Rates / Treasury Yields" and any("growth" in item for item in company_theme_set)
+        if not (ticker_match or theme_match or broad_growth_match):
+            continue
+        direction = 1 if str(update.get("impact") or exposure.get("default_impact")).casefold().startswith("positive") else -1
+        theme_strength = 1.0 if ticker_match else 0.75
+        revenue_relevance = 0.9 if theme_match else 0.65
+        confidence = _confidence_weight(str(update.get("confidence") or "Medium"))
+        score = direction * 5.0 * theme_strength * 0.85 * revenue_relevance * confidence
+        rows.append(
+            {
+                "date": update.get("date"),
+                "market_update": update.get("market_update"),
+                "theme": theme,
+                "impacted_tickers": impacted,
+                "impact": classify_impact_score(score),
+                "impact_score": max(-5.0, min(5.0, score)),
+                "confidence": update.get("confidence") or "Medium",
+                "transmission_path": exposure.get("transmission_path") or "",
+                "why_it_matters": update.get("why_it_matters") or exposure.get("transmission_path") or "",
+                "affected_valuation_lever": update.get("affected_valuation_lever") or "Revenue Growth",
+            }
+        )
+    return rows
+
+
+def _market_implied_model(current_price, latest: dict, quote: dict, scenarios: list[dict]) -> dict:
+    base = next((item for item in scenarios if str(item.get("name")) == "Base Case"), scenarios[1] if len(scenarios) > 1 else {})
+    market_cap = to_float(quote.get("market_cap"))
+    ev = to_float(quote.get("enterprise_value")) or market_cap
+    current_revenue = to_float(latest.get("revenue"))
+    annual_revenue = current_revenue * 4 if current_revenue is not None else None
+    base_revenue = to_float(base.get("revenue"))
+    base_multiple = to_float(base.get("multiple")) or 7.0
+    implied_revenue = ev / base_multiple if ev is not None and base_multiple else None
+    current_base = annual_revenue if annual_revenue and annual_revenue > 0 else None
+    implied_cagr = ((implied_revenue / current_base) ** (1 / 3) - 1) * 100 if implied_revenue and current_base else None
+    base_cagr = ((base_revenue / current_base) ** (1 / 3) - 1) * 100 if base_revenue and current_base else None
+    gross_margin = to_float(latest.get("gross_margin"))
+    market = {
+        "impliedRevenue": implied_revenue,
+        "impliedEvSales": base_multiple,
+        "impliedGrossMargin": gross_margin,
+        "impliedRevenueCagr": implied_cagr,
+        "baseRevenue": base_revenue,
+        "baseEvSales": base_multiple,
+        "baseGrossMargin": max(gross_margin or 0, 35.0) if gross_margin is not None else None,
+        "baseRevenueCagr": base_cagr,
+    }
+    market.update(compare_market_implied_to_base_case(market, market))
+    return market
+
+
+def _risk_level_from_data(latest: dict, valuation_text: str, signal: dict, sample: dict) -> str:
+    if sample.get("risk_level"):
+        return str(sample.get("risk_level"))
+    fcf = to_float(latest.get("free_cash_flow"))
+    balance = to_float(signal.get("balance_sheet_score"))
+    valuation = str(valuation_text or "").casefold()
+    if fcf is not None and fcf < 0 and ("very" in valuation or (balance is not None and balance < 45)):
+        return "High"
+    if "expensive" in valuation or fcf is not None and fcf < 0:
+        return "Medium"
+    return "Low"
+
+
+def build_e2e_analysis_model(ticker: str, view_model: dict, financials: dict, quote: dict, signal: dict) -> dict:
+    symbol = clean_ticker(ticker)
+    latest = financials.get("latest_financials") or {}
+    sample = E2E_SAMPLE_MODELS.get(symbol, {})
+    themes = sample.get("themes") or [item for item in [view_model.get("industry"), view_model.get("sector")] if item]
+    valuation_text = str(view_model.get("quick_stats", [{}])[3].get("value") if view_model.get("quick_stats") else valuation_label(signal))
+    risk_level = _risk_level_from_data(latest, valuation_text, signal, sample)
+    quality_metrics = _build_quality_metrics(symbol, latest, signal, sample)
+    fundamental = calculate_fundamental_score(quality_metrics)
+    scenarios = _estimate_scenarios(symbol, latest, quote, sample)
+    current_price = to_float(quote.get("price")) or to_float(view_model.get("price"))
+    expected_value_price = calculate_expected_value(scenarios)
+    expected_return = calculate_expected_return(expected_value_price, current_price)
+    bridge_items = _build_bridge_items(current_price, scenarios, risk_level)
+    bridge_value = calculate_future_value_bridge(current_price, bridge_items)
+    market_implied = _market_implied_model(current_price, latest, quote, scenarios)
+    readthrough = get_theme_read_through_for_ticker(symbol, themes, MARKET_READ_THROUGH_UPDATES)
+    if not readthrough:
+        readthrough = get_theme_read_through_for_ticker(symbol, [view_model.get("sector") or "General Market"], MARKET_READ_THROUGH_UPDATES)
+    catalyst_score = min(10.0, max(3.0, 5.0 + sum(to_float(row.get("impact_score")) or 0 for row in readthrough[:4]) / 2.5))
+    valuation_upside_score = 5.0
+    if expected_return is not None:
+        valuation_upside_score = min(10.0, max(1.0, 5.0 + expected_return / 25.0))
+    risk_adjustment_score = {"Low": 8.0, "Medium": 6.0, "High": 4.0}.get(risk_level, 5.0)
+    signal_calc = calculate_investment_signal(
+        {
+            "fundamentalScore": fundamental.get("score"),
+            "valuationUpsideScore": valuation_upside_score,
+            "catalystMomentumScore": catalyst_score,
+            "riskAdjustmentScore": risk_adjustment_score,
+        }
+    )
+    if (to_float(view_model.get("data_completeness")) or 0) < 40:
+        signal_calc["signal"] = "No Rating"
+    must_be_true = sample.get("must_be_true") or [
+        ("Revenue growth sustains through the forecast period", "Tracking", "Medium"),
+        ("Gross margins remain stable or improve", "Tracking", "Medium"),
+        ("Market multiple does not compress materially", "Needs Monitoring", "Medium"),
+        ("Free cash flow trajectory improves", "At Risk" if to_float(latest.get("free_cash_flow")) and to_float(latest.get("free_cash_flow")) < 0 else "Tracking", "Medium"),
+        ("Execution remains on schedule", "Tracking", "Medium"),
+    ]
+    direct_impact = "Positive" if (to_float(latest.get("revenue_yoy_growth")) or 0) > 0 else "Neutral"
+    thesis_updates = [
+        {
+            "date": financials.get("last_updated") or latest.get("period_end_date"),
+            "title": f"{symbol} latest structured financial packet refreshed",
+            "type": "Direct Company Update",
+            "impact": direct_impact,
+            "affected_thesis_lever": "Financial Snapshot",
+            "affected_valuation_lever": "Revenue growth / cash flow inputs",
+            "dashboard_adjustment": "Model inputs refreshed",
+            "explanation": "Latest available financial values feed the business quality, valuation bridge, and investment signal sections.",
+        }
+    ] + [
+        {
+            "date": row.get("date"),
+            "title": row.get("market_update"),
+            "type": "Indirect Catalyst",
+            "impact": row.get("impact"),
+            "affected_thesis_lever": "Customer demand" if row.get("impact_score", 0) and row.get("impact_score", 0) > 0 else "Multiple compression",
+            "affected_valuation_lever": row.get("affected_valuation_lever"),
+            "dashboard_adjustment": "Conviction +0.3" if row.get("impact_score", 0) and row.get("impact_score", 0) > 0 else "Risk discount +0.2",
+            "explanation": row.get("why_it_matters"),
+        }
+        for row in readthrough[:3]
+    ]
+    risks = [
+        ("Technology / Product Risk", "Product scaling or performance may not meet commercial expectations.", "High" if risk_level == "High" else "Medium", "Could reduce future revenue and valuation multiple.", "Customer validation and execution milestones."),
+        ("Customer Concentration Risk", "A small number of customers or end-markets may drive a large share of revenue.", "High" if symbol in {"AMPX", "IONQ"} else "Medium", "Raises discount rate and lowers multiple.", "Broader customer wins."),
+        ("Capital Raising / Dilution Risk", "Additional funding may be required before scale or profitability.", "Medium", "Reduces future per-share value.", "Cash discipline and improving FCF."),
+        ("Execution Risk", "Commercial or manufacturing ramp may take longer than expected.", "Medium", "Pushes revenue realization further out.", "On-time milestones."),
+        ("Competition Risk", "Larger or better-funded competitors may pressure pricing or adoption.", "Medium", "Reduces margin and multiple assumptions.", "Differentiated product and customer traction."),
+    ]
+    return {
+        "ticker": symbol,
+        "company_name": view_model.get("company_name") or symbol,
+        "sector": view_model.get("sector") or "N/A",
+        "industry": view_model.get("industry") or "N/A",
+        "themes": themes,
+        "theme_label": sample.get("theme_label") or " / ".join([str(item) for item in themes[:3] if item]) or "Company-specific themes",
+        "current_price": current_price,
+        "market_cap": quote.get("market_cap"),
+        "enterprise_value": quote.get("enterprise_value"),
+        "range_52w": f"{fmt_price(quote.get('fifty_two_week_low'))} - {fmt_price(quote.get('fifty_two_week_high'))}",
+        "fundamental_score": fundamental,
+        "quality_metrics": quality_metrics,
+        "scenarios": scenarios,
+        "expected_value_price": expected_value_price,
+        "expected_return": expected_return,
+        "must_be_true": must_be_true,
+        "bridge_items": bridge_items,
+        "bridge_value": bridge_value,
+        "market_implied": market_implied,
+        "readthrough": readthrough,
+        "thesis_updates": thesis_updates,
+        "risks": risks,
+        "valuation_upside_score": valuation_upside_score,
+        "catalyst_momentum_score": catalyst_score,
+        "risk_adjustment_score": risk_adjustment_score,
+        "investment_signal": signal_calc,
+        "risk_level": risk_level,
+        "conviction": view_model.get("conviction") or "N/A",
+        "confidence": view_model.get("confidence") or "N/A",
+        "available_themes": sorted({str(row.get("theme")) for row in readthrough if row.get("theme")}),
+        "available_impacted_tickers": sorted({clean_ticker(item) for row in readthrough for item in row.get("impacted_tickers", []) if clean_ticker(item)}),
+    }
+
+
+def _e2e_progress_html(score) -> str:
+    pct = max(0, min(100, (to_float(score) or 0) * 10))
+    return f'<div class="pt-e2e-progress"><i style="width:{pct:.1f}%"></i></div>'
+
+
+def _e2e_quality_card(metric: dict) -> str:
+    score = to_float(metric.get("score"))
+    tone = str(metric.get("tone") or "neutral")
+    return (
+        f'<div class="pt-e2e-quality-card {escape(tone)}">'
+        f'<div class="pt-e2e-card-title">{escape(str(metric.get("name") or "N/A"))}</div>'
+        f'<strong>{escape(str(metric.get("formatted_value") or "N/A"))}</strong>'
+        f'<span>{escape(str(metric.get("label") or ""))}</span>'
+        f'{_e2e_progress_html(score)}'
+        f'<b>{escape(f"{score:.1f} / 10" if score is not None else "N/A")}</b>'
+        "</div>"
+    )
+
+
+def _e2e_scenario_card(scenario: dict, current_price) -> str:
+    future_price = to_float(scenario.get("future_price"))
+    implied_return = calculate_expected_return(future_price, current_price)
+    tone = str(scenario.get("tone") or "neutral")
+    return (
+        f'<div class="pt-e2e-scenario-card {escape(tone)}">'
+        f'<div class="pt-e2e-scenario-name">{escape(str(scenario.get("name") or "Scenario"))}</div>'
+        f'{_as_value_row("2028 Revenue", fmt_currency(scenario.get("revenue"), 1))}'
+        f'{_as_value_row("EV / Sales Multiple", fmt_multiple(scenario.get("multiple")))}'
+        f'{_as_value_row("Future Price", fmt_price(future_price))}'
+        f'{_as_value_row("Return", fmt_percent(implied_return, signed=True), _trend_tone_class(implied_return).replace("rt-", ""))}'
+        f'<p>{escape(str(scenario.get("assumption") or ""))}</p>'
+        "</div>"
+    )
+
+
+def _e2e_check_item(item: tuple[str, str, str]) -> str:
+    description, status, confidence = item
+    status_text = str(status or "Tracking")
+    tone = "good" if status_text in {"Met", "Tracking"} else "bad" if status_text == "At Risk" else "warn"
+    return (
+        f'<div class="pt-e2e-check {escape(tone)}">'
+        f'<span>{escape("OK" if tone == "good" else "!" if tone == "bad" else "?")}</span>'
+        f'<strong>{escape(str(description))}</strong>'
+        f'<em>{escape(status_text)} | {escape(str(confidence or "Medium"))}</em>'
+        "</div>"
+    )
+
+
+def _e2e_bridge_html(model: dict) -> str:
+    rows = [
+        f'{_as_value_row("Current Price", fmt_price(model.get("current_price")))}'
+    ]
+    for item in model.get("bridge_items", []):
+        tone = "bad" if item.get("type") == "negative" else "good"
+        prefix = "-" if item.get("type") == "negative" else "+"
+        rows.append(_as_value_row(f"{prefix} {item.get('label')}", fmt_price(abs(to_float(item.get("value_impact")) or 0)), tone))
+    rows.append(_as_value_row("Base Case Future Value", fmt_price(model.get("bridge_value")), "info"))
+    return "".join(rows)
+
+
+def _e2e_market_implied_html(model: dict) -> str:
+    market = model.get("market_implied") or {}
+    tone = str(market.get("tone") or "neutral")
+    return (
+        '<div class="pt-e2e-implied-grid">'
+        f'<div>{_as_value_row("Implied 2028 Revenue", fmt_currency(market.get("impliedRevenue"), 1))}{_as_value_row("Implied EV / Sales", fmt_multiple(market.get("impliedEvSales")))}{_as_value_row("Implied Gross Margin", fmt_meaningful_percent(market.get("impliedGrossMargin")))}{_as_value_row("Implied Revenue CAGR", fmt_percent(market.get("impliedRevenueCagr")))}</div>'
+        f'<div>{_as_value_row("Base Case Revenue", fmt_currency(market.get("baseRevenue"), 1), "good")}{_as_value_row("Base Case EV / Sales", fmt_multiple(market.get("baseEvSales")), "good")}{_as_value_row("Base Case Gross Margin", fmt_meaningful_percent(market.get("baseGrossMargin")), "good")}{_as_value_row("Base Case Revenue CAGR", fmt_percent(market.get("baseRevenueCagr")), "good")}</div>'
+        f'</div><div class="pt-e2e-conclusion {escape(tone)}">{escape(str(market.get("conclusion") or "Market-implied conclusion unavailable."))}</div>'
+    )
+
+
+def _e2e_readthrough_table(rows: list[dict], filter_mode: str = "Show all", theme_filter: str = "All themes", ticker_filter: str = "All tickers") -> str:
+    filtered = []
+    for row in rows:
+        impact_score = to_float(row.get("impact_score")) or 0
+        confidence = str(row.get("confidence") or "")
+        if filter_mode == "Positive only" and impact_score <= 0:
+            continue
+        if filter_mode == "Negative only" and impact_score >= 0:
+            continue
+        if filter_mode == "High confidence only" and confidence != "High":
+            continue
+        if theme_filter != "All themes" and str(row.get("theme")) != theme_filter:
+            continue
+        if ticker_filter != "All tickers" and ticker_filter not in [clean_ticker(item) for item in row.get("impacted_tickers", [])]:
+            continue
+        filtered.append(row)
+    if not filtered:
+        return '<div class="pt-e2e-empty">No read-through items match the current filter.</div>'
+    body = ""
+    for row in filtered[:8]:
+        score = to_float(row.get("impact_score")) or 0
+        tone = "good" if score > 0 else "bad" if score < 0 else "neutral"
+        body += (
+            "<tr>"
+            f"<td>{escape(fmt_date(row.get('date')))}</td>"
+            f"<td><strong>{escape(str(row.get('market_update') or 'N/A'))}</strong><span>{escape(str(row.get('theme') or 'N/A'))}</span></td>"
+            f"<td>{escape(', '.join(row.get('impacted_tickers') or []))}</td>"
+            f"<td><span class=\"pt-e2e-pill {tone}\">{escape(str(row.get('impact') or 'Neutral'))} {score:+.1f}</span></td>"
+            f"<td>{escape(str(row.get('confidence') or 'N/A'))}</td>"
+            f"<td>{escape(str(row.get('transmission_path') or row.get('why_it_matters') or 'N/A'))}</td>"
+            "</tr>"
+        )
+    return (
+        '<table class="pt-e2e-readthrough-table"><thead><tr><th>Date</th><th>Market Update</th><th>Impacted</th><th>Impact</th><th>Confidence</th><th>Transmission Path</th></tr></thead>'
+        f"<tbody>{body}</tbody></table>"
+    )
+
+
+def _e2e_updates_html(rows: list[dict]) -> str:
+    if not rows:
+        return '<div class="pt-e2e-empty">No direct or indirect thesis updates available.</div>'
+    html = ""
+    for row in rows[:4]:
+        impact = str(row.get("impact") or "")
+        tone = "bad" if "negative" in impact.casefold() else "good" if "positive" in impact.casefold() else "neutral"
+        html += (
+            f'<div class="pt-e2e-update {escape(tone)}">'
+            f'<span>{escape(fmt_date(row.get("date")))}</span>'
+            f'<strong>{escape(str(row.get("title") or "N/A"))}</strong>'
+            f'<em>{escape(str(row.get("type") or "Update"))} | {escape(str(row.get("affected_valuation_lever") or "N/A"))}</em>'
+            f'<p>{escape(str(row.get("explanation") or ""))}</p>'
+            f'<b>{escape(str(row.get("dashboard_adjustment") or ""))}</b>'
+            "</div>"
+        )
+    return html
+
+
+def _e2e_risks_html(risks: list[tuple]) -> str:
+    html = ""
+    for idx, risk in enumerate(risks[:5], start=1):
+        name, description, severity, valuation_impact, mitigant = risk
+        tone = "bad" if severity == "High" else "warn" if severity == "Medium" else "good"
+        html += (
+            f'<div class="pt-e2e-risk {escape(tone)}">'
+            f'<b>{idx}</b><div><strong>{escape(str(name))}</strong><span>{escape(str(description))}</span><em>{escape(str(valuation_impact))} Mitigant: {escape(str(mitigant))}</em></div><i>{escape(str(severity))}</i>'
+            "</div>"
+        )
+    return html
+
+
+def _e2e_sensitivity_html(model: dict) -> str:
+    current = to_float(model.get("current_price")) or 1
+    market_cap = to_float(model.get("market_cap"))
+    shares = market_cap / current if market_cap and current else 50_000_000
+    net_debt = 0.0
+    base = next((item for item in model.get("scenarios", []) if item.get("name") == "Base Case"), {})
+    base_revenue = to_float(base.get("revenue")) or 250_000_000
+    base_multiple = to_float(base.get("multiple")) or 7.0
+    revenues = [base_revenue * factor for factor in (0.6, 0.8, 1.0, 1.35, 1.7)]
+    multiples = [4, 6, 8, 10, 12]
+    closest = min(((abs(rev - base_revenue) + abs(mult - base_multiple) * base_revenue / 4, rev, mult) for rev in revenues for mult in multiples), key=lambda item: item[0])
+    header = "".join(f"<th>{escape(fmt_currency(rev, 0))}</th>" for rev in revenues)
+    body = ""
+    for mult in multiples:
+        cells = ""
+        for rev in revenues:
+            price = max(0.0, ((rev * mult) - net_debt) / shares)
+            cls = "base" if rev == closest[1] and mult == closest[2] else ""
+            cells += f'<td class="{cls}">{escape(fmt_price(price))}</td>'
+        body += f"<tr><th>{mult:.1f}x</th>{cells}</tr>"
+    return f'<table class="pt-e2e-sensitivity"><thead><tr><th>EV / Sales</th>{header}</tr></thead><tbody>{body}</tbody></table><p>Blue highlighted cell represents closest base-case valuation assumption.</p>'
+
+
+def _e2e_signal_html(model: dict) -> str:
+    signal_data = model.get("investment_signal") or {}
+    total = to_float(signal_data.get("total_score"))
+    return (
+        '<div class="pt-e2e-final-grid">'
+        f'<div><span>Investment Signal</span><strong>{escape(str(signal_data.get("signal") or "No Rating"))}</strong><p>{escape("High upside, high risk." if model.get("risk_level") == "High" else "Balanced risk / reward based on current data.")}</p></div>'
+        f'<div>{_as_value_row("Fundamental Score", f"{(to_float((model.get("fundamental_score") or {}).get("score")) or 0):.1f} / 10", "good")}{_as_value_row("Valuation Upside Score", f"{(to_float(model.get("valuation_upside_score")) or 0):.1f} / 10", "good")}</div>'
+        f'<div>{_as_value_row("Catalyst / Momentum Score", f"{(to_float(model.get("catalyst_momentum_score")) or 0):.1f} / 10", "good")}{_as_value_row("Risk Adjustment Score", f"{(to_float(model.get("risk_adjustment_score")) or 0):.1f} / 10", "bad" if model.get("risk_level") == "High" else "warn")}</div>'
+        f'<div>{_as_value_row("Total Score", f"{total:.1f} / 10" if total is not None else "N/A", "good" if total and total >= 7 else "warn")}{_as_value_row("Conviction", str(model.get("conviction") or "N/A"), "warn")}{_as_value_row("Risk", str(model.get("risk_level") or "N/A"), "bad" if model.get("risk_level") == "High" else "warn")}</div>'
+        "</div>"
+    )
+
+
+def _e2e_dashboard_html(model: dict, filter_mode: str = "Show all", theme_filter: str = "All themes", ticker_filter: str = "All tickers") -> str:
+    fundamental = model.get("fundamental_score") or {}
+    quality_cards = "".join(_e2e_quality_card(metric) for metric in model.get("quality_metrics", []))
+    scenarios = "".join(_e2e_scenario_card(scenario, model.get("current_price")) for scenario in model.get("scenarios", []))
+    expected_return = calculate_expected_return(model.get("expected_value_price"), model.get("current_price"))
+    must_be_true = "".join(_e2e_check_item(item) for item in model.get("must_be_true", []))
+    return (
+        '<div class="pt-e2e-shell">'
+        '<div class="pt-e2e-topline">'
+        f'<div><span>Dashboard / {escape(str(model.get("ticker") or "N/A"))}</span><strong>{escape(str(model.get("company_name") or "N/A"))}</strong><p>{escape(str(model.get("sector") or "N/A"))} | {escape(str(model.get("theme_label") or "Company themes"))}</p></div>'
+        f'<div>{_as_value_row("Market Cap", fmt_currency(model.get("market_cap"), 1))}{_as_value_row("Enterprise Value", fmt_currency(model.get("enterprise_value"), 1))}{_as_value_row("52W Range", str(model.get("range_52w") or "N/A"))}</div>'
+        f'<div>{_as_value_row("Fundamental Score", f"{(to_float(fundamental.get("score")) or 0):.1f} / 10", "good")}{_as_value_row("Expected 36M Return", fmt_percent(expected_return, signed=True), "good" if expected_return and expected_return > 0 else "bad")}{_as_value_row("Investment Signal", str((model.get("investment_signal") or {}).get("signal") or "N/A"), "good")}{_as_value_row("Risk Level", str(model.get("risk_level") or "N/A"), "bad" if model.get("risk_level") == "High" else "warn")}</div>'
+        "</div>"
+        '<div class="pt-e2e-section"><div class="pt-e2e-section-title">Business Quality <small>Fundamental Engine</small></div><div class="pt-e2e-quality-grid">' + quality_cards + "</div></div>"
+        '<div class="pt-e2e-dual">'
+        '<div class="pt-e2e-section"><div class="pt-e2e-section-title">Future Value Model <small>Future Value Engine</small></div><div class="pt-e2e-scenario-grid">' + scenarios + f'</div><div class="pt-e2e-expected"><span>Probability-Weighted Expected Value</span><strong>{escape(fmt_price(model.get("expected_value_price")))}</strong><b>{escape(fmt_percent(expected_return, signed=True))}</b><p>Current Price: {escape(fmt_price(model.get("current_price")))}</p></div></div>'
+        '<div class="pt-e2e-section"><div class="pt-e2e-section-title">Market Read-Through <small>Indirect Catalyst Radar</small></div><div class="pt-e2e-filter-note">Filter: ' + escape(filter_mode) + " | Theme: " + escape(theme_filter) + " | Ticker: " + escape(ticker_filter) + '</div>' + _e2e_readthrough_table(model.get("readthrough", []), filter_mode, theme_filter, ticker_filter) + "</div>"
+        "</div>"
+        '<div class="pt-e2e-three">'
+        '<div class="pt-e2e-section"><div class="pt-e2e-section-title">What Must Be True?</div><div class="pt-e2e-checklist">' + must_be_true + "</div></div>"
+        '<div class="pt-e2e-section"><div class="pt-e2e-section-title">Future Value Bridge <small>Base Case</small></div><div class="pt-e2e-bridge-list">' + _e2e_bridge_html(model) + "</div></div>"
+        '<div class="pt-e2e-section"><div class="pt-e2e-section-title">Market-Implied Assumptions <small>What current price prices in</small></div>' + _e2e_market_implied_html(model) + "</div>"
+        "</div>"
+        '<div class="pt-e2e-three lower">'
+        '<div class="pt-e2e-section"><div class="pt-e2e-section-title">Sensitivity Table <small>Future share price</small></div>' + _e2e_sensitivity_html(model) + "</div>"
+        '<div class="pt-e2e-section"><div class="pt-e2e-section-title">Top Risks to Thesis</div>' + _e2e_risks_html(model.get("risks", [])) + "</div>"
+        '<div class="pt-e2e-section"><div class="pt-e2e-section-title">Latest Updates & Thesis Impact</div>' + _e2e_updates_html(model.get("thesis_updates", [])) + "</div>"
+        "</div>"
+        '<div class="pt-e2e-section final"><div class="pt-e2e-section-title">Investment Signal</div>' + _e2e_signal_html(model) + "</div>"
+        "</div>"
+    )
+
+
+def _reference_dashboard_html(
+    view_model: dict,
+    financials: dict,
+    quote: dict,
+    signal: dict,
+    options: dict,
+    e2e_model: dict | None = None,
+    e2e_filter: str = "Show all",
+    e2e_theme_filter: str = "All themes",
+    e2e_ticker_filter: str = "All tickers",
+) -> str:
     ticker = str(view_model.get("ticker") or "N/A")
     latest = financials.get("latest_financials") or {}
     qhist = view_history(financials, "Quarterly")
@@ -3186,6 +4016,8 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
     score = to_float(view_model.get("composite_score"))
     score_text = f"{score:.1f}" if score is not None else "N/A"
     score_caption = f"{score_text} / 100" if score is not None else "N/A"
+    e2e = e2e_model or build_e2e_analysis_model(ticker, view_model, financials, quote, signal)
+    e2e_html = _e2e_dashboard_html(e2e, e2e_filter, e2e_theme_filter, e2e_ticker_filter)
     change_pct = view_model.get("daily_move_pct")
     change_amt = to_float(view_model.get("daily_change_amount"))
     change_class = "good" if (to_float(change_pct) or 0) >= 0 else "bad"
@@ -3367,6 +4199,7 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
         <div class="pt-as-stance"><span>Investment Stance</span><strong>{escape(str(view_model.get("overall_research_signal") or "N/A"))}</strong><b>{escape(score_caption)}</b><div class="pt-as-stance-meta"><i>{escape(str(view_model.get("market_stance") or "N/A"))}</i><i>{escape(str(view_model.get("confidence") or "N/A"))} confidence</i><i>{escape(str(view_model.get("conviction") or "N/A"))} conviction</i><i>{escape(_fmt_completeness(view_model.get("data_completeness")))} complete</i></div><p>{escape(str(view_model.get("executive_summary") or ""))}</p></div>
         <div class="pt-as-why"><span>Why this score?</span>{why_rows or '<div class="pt-as-why-row warn"><span>!</span>Insufficient score drivers.</div>'}</div>
       </div>
+      {e2e_html}
       <div class="pt-as-panel">
         <div class="pt-as-panel-title">Performance Journey</div>
         <div class="pt-as-performance-grid">
@@ -3395,8 +4228,31 @@ def _reference_dashboard_html(view_model: dict, financials: dict, quote: dict, s
     """
 
 
-def render_reference_company_dashboard(view_model: dict, financials: dict, quote: dict, signal: dict, options: dict) -> None:
-    st.markdown(_reference_dashboard_html(view_model, financials, quote, signal, options), unsafe_allow_html=True)
+def render_reference_company_dashboard(
+    view_model: dict,
+    financials: dict,
+    quote: dict,
+    signal: dict,
+    options: dict,
+    e2e_model: dict | None = None,
+    e2e_filter: str = "Show all",
+    e2e_theme_filter: str = "All themes",
+    e2e_ticker_filter: str = "All tickers",
+) -> None:
+    st.markdown(
+        _reference_dashboard_html(
+            view_model,
+            financials,
+            quote,
+            signal,
+            options,
+            e2e_model=e2e_model,
+            e2e_filter=e2e_filter,
+            e2e_theme_filter=e2e_theme_filter,
+            e2e_ticker_filter=e2e_ticker_filter,
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_terminal_company_hero(view_model: dict) -> None:
@@ -4588,7 +5444,35 @@ def company_page(ticker: str) -> None:
     options = fetch_options_summary(ticker, quote.get("price"))
     identity = get_company_identity(ticker)
     header_view_model = build_company_header_view_model(ticker, quote, identity, financials, signal, {"valuation_label": valuation_label(signal)}, signal.get("technicals", {}))
-    render_reference_company_dashboard(header_view_model, financials, quote, signal, options)
+    e2e_model = build_e2e_analysis_model(ticker, header_view_model, financials, quote, signal)
+    filter_key = f"e2e_readthrough_filter_{clean_ticker(ticker) or 'ticker'}"
+    theme_key = f"e2e_readthrough_theme_{clean_ticker(ticker) or 'ticker'}"
+    impacted_key = f"e2e_readthrough_impacted_{clean_ticker(ticker) or 'ticker'}"
+    filter_col, theme_col, impacted_col = st.columns([0.34, 0.33, 0.33])
+    with filter_col:
+        e2e_filter = st.radio(
+            "Market Read-Through",
+            ["Show all", "Positive only", "Negative only", "High confidence only"],
+            horizontal=True,
+            key=filter_key,
+        )
+    with theme_col:
+        theme_options = ["All themes"] + list(e2e_model.get("available_themes") or [])
+        e2e_theme_filter = st.selectbox("Theme filter", theme_options, key=theme_key)
+    with impacted_col:
+        ticker_options = ["All tickers"] + list(e2e_model.get("available_impacted_tickers") or [])
+        e2e_ticker_filter = st.selectbox("Impacted ticker filter", ticker_options, key=impacted_key)
+    render_reference_company_dashboard(
+        header_view_model,
+        financials,
+        quote,
+        signal,
+        options,
+        e2e_model=e2e_model,
+        e2e_filter=e2e_filter,
+        e2e_theme_filter=e2e_theme_filter,
+        e2e_ticker_filter=e2e_ticker_filter,
+    )
 
 
 def signal_page(ticker: str) -> None:
