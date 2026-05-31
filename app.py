@@ -85,6 +85,7 @@ def fmt_growth(value, base_effect: bool = False, signed: bool = True) -> str:
 
 
 PAGES = [
+    "Dashboard",
     "Home / Market Monitor",
     "Company Analysis",
     "Watchlist",
@@ -4008,6 +4009,7 @@ def _reference_dashboard_html(
     e2e_filter: str = "Show all",
     e2e_theme_filter: str = "All themes",
     e2e_ticker_filter: str = "All tickers",
+    include_e2e: bool = True,
 ) -> str:
     ticker = str(view_model.get("ticker") or "N/A")
     latest = financials.get("latest_financials") or {}
@@ -4017,7 +4019,7 @@ def _reference_dashboard_html(
     score_text = f"{score:.1f}" if score is not None else "N/A"
     score_caption = f"{score_text} / 100" if score is not None else "N/A"
     e2e = e2e_model or build_e2e_analysis_model(ticker, view_model, financials, quote, signal)
-    e2e_html = _e2e_dashboard_html(e2e, e2e_filter, e2e_theme_filter, e2e_ticker_filter)
+    e2e_html = _e2e_dashboard_html(e2e, e2e_filter, e2e_theme_filter, e2e_ticker_filter) if include_e2e else ""
     change_pct = view_model.get("daily_move_pct")
     change_amt = to_float(view_model.get("daily_change_amount"))
     change_class = "good" if (to_float(change_pct) or 0) >= 0 else "bad"
@@ -4238,6 +4240,7 @@ def render_reference_company_dashboard(
     e2e_filter: str = "Show all",
     e2e_theme_filter: str = "All themes",
     e2e_ticker_filter: str = "All tickers",
+    include_e2e: bool = True,
 ) -> None:
     st.markdown(
         _reference_dashboard_html(
@@ -4250,6 +4253,7 @@ def render_reference_company_dashboard(
             e2e_filter=e2e_filter,
             e2e_theme_filter=e2e_theme_filter,
             e2e_ticker_filter=e2e_ticker_filter,
+            include_e2e=include_e2e,
         ),
         unsafe_allow_html=True,
     )
@@ -5425,19 +5429,19 @@ def home_page(ticker: str) -> None:
 
 
 def company_page(ticker: str) -> None:
-    st.title("Company Analysis")
-    st.markdown('<div class="terminal-subtitle">Latest quote, financials, valuation, balance sheet risk, filings, options, and 3-statement snapshot.</div>', unsafe_allow_html=True)
     financials = load_latest_company_financials(ticker)
-    refresh_col, asof_col = st.columns([0.22, 0.78], vertical_alignment="center")
-    with refresh_col:
+    """
+        refresh_col, asof_col = st.columns([0.22, 0.78], vertical_alignment="center")
+        with refresh_col:
         if st.button("↻ Refresh Financial Data", type="primary"):
             reset_data_caches()
             st.rerun()
-    with asof_col:
+        with asof_col:
         st.markdown(
             f'<div class="pt-data-asof">Data as of {escape(fmt_date(financials.get("last_updated")))} <span title="Latest available refresh timestamp">ⓘ</span></div>',
             unsafe_allow_html=True,
         )
+    """
     quote = _quote_for_company_analysis(ticker, financials)
     latest = latest_row(financials, "Quarterly")
     signal = compute_signal(ticker)
@@ -5445,34 +5449,42 @@ def company_page(ticker: str) -> None:
     identity = get_company_identity(ticker)
     header_view_model = build_company_header_view_model(ticker, quote, identity, financials, signal, {"valuation_label": valuation_label(signal)}, signal.get("technicals", {}))
     e2e_model = build_e2e_analysis_model(ticker, header_view_model, financials, quote, signal)
-    filter_key = f"e2e_readthrough_filter_{clean_ticker(ticker) or 'ticker'}"
-    theme_key = f"e2e_readthrough_theme_{clean_ticker(ticker) or 'ticker'}"
-    impacted_key = f"e2e_readthrough_impacted_{clean_ticker(ticker) or 'ticker'}"
-    filter_col, theme_col, impacted_col = st.columns([0.34, 0.33, 0.33])
-    with filter_col:
-        e2e_filter = st.radio(
-            "Market Read-Through",
-            ["Show all", "Positive only", "Negative only", "High confidence only"],
-            horizontal=True,
-            key=filter_key,
+    clean = clean_ticker(ticker) or "ticker"
+    e2e_filter = st.session_state.get(f"e2e_readthrough_filter_{clean}", "Show all")
+    e2e_theme_filter = st.session_state.get(f"e2e_readthrough_theme_{clean}", "All themes")
+    e2e_ticker_filter = st.session_state.get(f"e2e_readthrough_impacted_{clean}", "All tickers")
+    st.markdown(_e2e_dashboard_html(e2e_model, e2e_filter, e2e_theme_filter, e2e_ticker_filter), unsafe_allow_html=True)
+
+    with st.expander("Dashboard Controls / Source Evidence", expanded=False):
+        filter_key = f"e2e_readthrough_filter_{clean_ticker(ticker) or 'ticker'}"
+        theme_key = f"e2e_readthrough_theme_{clean_ticker(ticker) or 'ticker'}"
+        impacted_key = f"e2e_readthrough_impacted_{clean_ticker(ticker) or 'ticker'}"
+        filter_col, theme_col, impacted_col = st.columns([0.34, 0.33, 0.33])
+        with filter_col:
+            e2e_filter = st.radio(
+                "Market Read-Through",
+                ["Show all", "Positive only", "Negative only", "High confidence only"],
+                horizontal=True,
+                key=filter_key,
+            )
+        with theme_col:
+            theme_options = ["All themes"] + list(e2e_model.get("available_themes") or [])
+            e2e_theme_filter = st.selectbox("Theme filter", theme_options, key=theme_key)
+        with impacted_col:
+            ticker_options = ["All tickers"] + list(e2e_model.get("available_impacted_tickers") or [])
+            e2e_ticker_filter = st.selectbox("Impacted ticker filter", ticker_options, key=impacted_key)
+        render_reference_company_dashboard(
+            header_view_model,
+            financials,
+            quote,
+            signal,
+            options,
+            e2e_model=e2e_model,
+            e2e_filter=e2e_filter,
+            e2e_theme_filter=e2e_theme_filter,
+            e2e_ticker_filter=e2e_ticker_filter,
+            include_e2e=False,
         )
-    with theme_col:
-        theme_options = ["All themes"] + list(e2e_model.get("available_themes") or [])
-        e2e_theme_filter = st.selectbox("Theme filter", theme_options, key=theme_key)
-    with impacted_col:
-        ticker_options = ["All tickers"] + list(e2e_model.get("available_impacted_tickers") or [])
-        e2e_ticker_filter = st.selectbox("Impacted ticker filter", ticker_options, key=impacted_key)
-    render_reference_company_dashboard(
-        header_view_model,
-        financials,
-        quote,
-        signal,
-        options,
-        e2e_model=e2e_model,
-        e2e_filter=e2e_filter,
-        e2e_theme_filter=e2e_theme_filter,
-        e2e_ticker_filter=e2e_ticker_filter,
-    )
 
 
 def signal_page(ticker: str) -> None:
@@ -5892,7 +5904,9 @@ def data_health_page(ticker: str) -> None:
 
 def render_page(page: str, ticker: str) -> None:
     try:
-        if page == "Home / Market Monitor":
+        if page == "Dashboard":
+            company_page(ticker)
+        elif page == "Home / Market Monitor":
             home_page(ticker)
         elif page == "Company Analysis":
             company_page(ticker)
@@ -5915,14 +5929,16 @@ def main() -> None:
     if st.sidebar.button("Refresh Data"):
         reset_data_caches()
         st.rerun()
+    page_state_key = "pine_active_page_v2"
     page = st.radio(
         "Tabs",
         PAGES,
-        index=PAGES.index(st.session_state.get("page", PAGES[0])) if st.session_state.get("page") in PAGES else 0,
+        index=PAGES.index(st.session_state.get(page_state_key, PAGES[0])) if st.session_state.get(page_state_key) in PAGES else 0,
         horizontal=True,
         label_visibility="collapsed",
-        key="pine_top_tabs",
+        key="pine_top_tabs_v2",
     )
+    st.session_state[page_state_key] = page
     st.session_state["page"] = page
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Selected: {ticker}")
