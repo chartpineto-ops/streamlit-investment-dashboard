@@ -212,6 +212,8 @@ def company_profile_from_analysis(analysis: CompanyAnalysis) -> CompanyProfile:
         risk_level=analysis.investment_signal.risk_level,
         market_status=company.market_status,
         last_updated=company.last_updated,
+        data_mode=company.data_mode,
+        data_source=company.data_source,
         pre_market_change_percent=company.pre_market_change_percent,
         after_hours_change_percent=company.after_hours_change_percent,
     )
@@ -243,10 +245,10 @@ def render_company_header(profile: CompanyProfile) -> str:
           <span class="pt-header-star">*</span>
         </div>
         <div class="pt-tags">{tags}<span class="pt-status-pill">{escape(profile.market_status)}</span></div>
-        <small class="pt-muted">Last updated {escape(profile.last_updated)}</small>
+        <small class="pt-muted">Last updated {escape(profile.last_updated)} &bull; {escape(profile.data_source)}</small>
       </div>
       <div class="pt-header-market">
-        <div class="pt-kpi pt-current-price"><span>Current Price {data_label("Actual / Demo")}</span><strong>{price(profile.current_price)}</strong><b class="{tone_for_value(profile.day_change_percent)}">{day_change_label} ({percent(profile.day_change_percent, 2)})</b>{price_detail}</div>
+        <div class="pt-kpi pt-current-price"><span>Current Price {data_label(profile.data_mode)}</span><strong>{price(profile.current_price)}</strong><b class="{tone_for_value(profile.day_change_percent)}">{day_change_label} ({percent(profile.day_change_percent, 2)})</b>{price_detail}</div>
         <div class="pt-kpi"><span>Market Cap</span><strong>{money(profile.market_cap)}</strong></div>
         <div class="pt-kpi"><span>Enterprise Value</span><strong>{money(profile.enterprise_value)}</strong></div>
         <div class="pt-kpi pt-range-kpi"><span>52W Range</span><strong>{price(profile.week52_low)} to {price(profile.week52_high)}</strong><div class="pt-range"><div class="pt-range-track"><i style="left:{profile.week52_current_position:.1f}%"></i></div></div></div>
@@ -473,14 +475,21 @@ def _key_stats_for_analysis(analysis: CompanyAnalysis) -> dict[str, str]:
         "CEG": {"shares": "311.0M", "insider": "0.5%", "cash_burn": "FCF positive"},
     }
     extra = overrides.get(company.ticker, {})
-    shares = extra.get("shares", f"{base.diluted_shares_outstanding / 1_000_000:.1f}M")
+    if company.shares_outstanding is not None:
+        shares = money(company.shares_outstanding, 1).replace("$", "")
+    else:
+        shares = extra.get("shares", f"{base.diluted_shares_outstanding / 1_000_000:.1f}M")
+    if company.cash_burn_ttm is not None:
+        cash_burn = "FCF positive" if company.cash_burn_ttm >= 0 else money(abs(company.cash_burn_ttm))
+    else:
+        cash_burn = extra.get("cash_burn", "N/A")
     return {
         "shares": shares,
         "insider": extra.get("insider", "N/A"),
         "cash": money(company.cash) if company.cash is not None else "N/A",
         "revenue": money(company.revenue_ttm) if company.revenue_ttm is not None else "N/A",
         "gross_margin": percent(company.gross_margin, 0, False) if company.gross_margin is not None else "N/A",
-        "cash_burn": extra.get("cash_burn", "N/A"),
+        "cash_burn": cash_burn,
     }
 
 
@@ -491,9 +500,9 @@ def render_key_stats(analysis: CompanyAnalysis) -> str:
       {value_row("Shares Outstanding (Dil.)", values["shares"])}
       {value_row("Insider Ownership", values["insider"])}
       {value_row("Cash & Equivalents", values["cash"])}
-      {value_row("TTM Revenue", values["revenue"])}
-      {value_row("TTM Gross Margin", values["gross_margin"])}
-      {value_row("Cash Burn (TTM)", values["cash_burn"])}
+      {value_row("Revenue Run-Rate / TTM", values["revenue"])}
+      {value_row("Gross Margin", values["gross_margin"])}
+      {value_row("Cash Burn Run-Rate / TTM", values["cash_burn"])}
     </div>
     """
     return section("Key Stats", "", stats)

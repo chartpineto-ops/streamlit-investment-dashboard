@@ -49,7 +49,7 @@ FUNDAMENTAL_WEIGHTS = {
 
 
 COMPANIES: dict[str, Company] = {
-    "AMPX": Company("AMPX", "Amprius Technologies, Inc.", "Technology", "Batteries", ["Batteries", "Silicon Anode", "Military Drones", "EVs", "High-Density Energy Storage"], 12.08, 4.32, 681_400_000, 612_700_000, 1.66, 13.26, pre_market_change_percent=0.8, after_hours_change_percent=-0.3, market_status="Closed", revenue_ttm=81_700_000, gross_margin=28, cash=74_100_000, debt=5_400_000, day_change_dollar=0.50),
+    "AMPX": Company("AMPX", "Amprius Technologies, Inc.", "Industrials", "Electrical Equipment & Parts", ["Batteries", "Silicon Anode", "Military Drones", "EVs", "High-Density Energy Storage"], 20.28, -2.73, 2_872_200_000, 2_816_400_000, 2.55, 22.80, pre_market_change_percent=0.0, after_hours_change_percent=0.0, market_status="Closed", last_updated="2026-06-01 05:54 ET", data_mode="Live Fallback", data_source="Yahoo Finance/yfinance + SEC XBRL fallback", revenue_ttm=90_000_000, gross_margin=20.1, cash=62_352_000, debt=6_562_000, day_change_dollar=-0.57, shares_outstanding=141_627_170, cash_burn_ttm=-38_255_000),
     "MRVL": Company("MRVL", "Marvell Technology, Inc.", "Technology", "Semiconductors", ["AI Data Centers", "Custom Silicon", "Networking", "Optical Connectivity"], 68.32, 2.11, 59_200_000_000, 61_600_000_000, 47.09, 127.48, pre_market_change_percent=0.4, after_hours_change_percent=0.2, revenue_ttm=5_600_000_000, gross_margin=47, cash=950_000_000, debt=4_100_000_000),
     "IONQ": Company("IONQ", "IonQ, Inc.", "Technology", "Quantum Computing", ["Quantum Computing", "Long-Duration Growth", "Government R&D", "Speculative Technology"], 18.67, -1.02, 4_100_000_000, 3_650_000_000, 6.22, 54.74, pre_market_change_percent=-0.6, after_hours_change_percent=-0.4, revenue_ttm=45_000_000, gross_margin=54, cash=420_000_000, debt=0),
     "MP": Company("MP", "MP Materials Corp.", "Materials", "Rare Earths", ["Critical Minerals", "Rare Earths", "Defense Supply Chain", "Reshoring"], 25.11, 1.76, 4_300_000_000, 4_000_000_000, 10.02, 29.88, pre_market_change_percent=0.2, after_hours_change_percent=0.1, revenue_ttm=238_000_000, gross_margin=22, cash=997_000_000, debt=930_000_000),
@@ -186,7 +186,8 @@ def _base_metrics(ticker: str) -> list[FundamentalMetric]:
         "CEG": [("+7%", "TTM YoY", 6.5, "up", "Positive"), ("41%", "TTM", 7.9, "up", "Positive"), ("Stable", "Power pricing", 7.4, "flat", "Positive"), ("Positive", "FCF after capex", 7.2, "up", "Positive"), ("Durable", "Utility leverage", 7.1, "flat", "Positive"), ("Power Contracts", "Data-center demand", 8.0, "up", "Positive"), ("Scarce Assets", "Nuclear fleet", 8.2, "up", "Positive"), ("Strong", "Operational execution", 7.7, "up", "Positive")],
     }
     names = ["Revenue Growth", "Gross Margin", "Operating Leverage", "Free Cash Flow", "Balance Sheet", "Customers / Backlog", "Competitive Position", "Execution Quality"]
-    return [_metric(name, *values) for name, values in zip(names, profiles[ticker])]
+    fallback = [("N/A", "Live source pending", 5.0, "flat", "Neutral"), ("N/A", "Live source pending", 5.0, "flat", "Neutral"), ("N/A", "Operating trend pending", 5.0, "flat", "Neutral"), ("N/A", "FCF pending", 5.0, "flat", "Neutral"), ("N/A", "Balance sheet pending", 5.0, "flat", "Neutral"), ("Developing", "Customer evidence pending", 5.0, "flat", "Neutral"), ("Unscored", "Competitive review pending", 5.0, "flat", "Neutral"), ("Tracking", "Milestones pending", 5.0, "flat", "Neutral")]
+    return [_metric(name, *values) for name, values in zip(names, profiles.get(ticker, fallback))]
 
 
 SCENARIO_SPECS = {
@@ -203,7 +204,19 @@ SCENARIO_SPECS = {
 def _scenarios(company: Company) -> list[ValuationScenario]:
     names = ["Bear Case", "Base Case", "Bull Case"]
     rows: list[ValuationScenario] = []
-    for name, spec in zip(names, SCENARIO_SPECS[company.ticker]):
+    scenario_specs = SCENARIO_SPECS.get(company.ticker)
+    if scenario_specs is None:
+        revenue_anchor = company.revenue_ttm or max(company.market_cap / 8, 50_000_000)
+        current_multiple = company.enterprise_value / revenue_anchor if revenue_anchor else 5.0
+        current_multiple = max(1.0, min(12.0, current_multiple))
+        net_debt = (company.debt or 0) - (company.cash or 0)
+        shares = company.shares_outstanding or (company.market_cap / company.current_price if company.current_price else 100_000_000)
+        scenario_specs = [
+            (revenue_anchor * 0.85, max(0.8, current_multiple * 0.65), net_debt, shares * 1.03, 0.25, "Growth slows and valuation multiple compresses"),
+            (revenue_anchor * 1.35, current_multiple, net_debt, shares * 1.07, 0.50, "Revenue improves and the current multiple holds"),
+            (revenue_anchor * 1.90, current_multiple * 1.25, net_debt, shares * 1.12, 0.25, "Growth accelerates and market awards a premium multiple"),
+        ]
+    for name, spec in zip(names, scenario_specs):
         revenue, multiple, net_debt, diluted_shares, probability, assumption = spec
         price = calculate_future_share_price(revenue=revenue, multiple=multiple, net_debt=net_debt, diluted_shares_outstanding=diluted_shares)
         rows.append(
@@ -225,7 +238,7 @@ def _scenarios(company: Company) -> list[ValuationScenario]:
 
 
 def _market_implied(company: Company, base_revenue: float, base_multiple: float) -> MarketImpliedAssumptions:
-    values = {
+    values_by_ticker = {
         "AMPX": (410_000_000, 6.5, 34, 18, base_revenue, base_multiple, 35, 17),
         "MRVL": (9_800_000_000, 8.2, 49, 9, base_revenue, base_multiple, 50, 10),
         "NVDA": (360_000_000_000, 14.0, 72, 19, base_revenue, base_multiple, 73, 20),
@@ -233,7 +246,20 @@ def _market_implied(company: Company, base_revenue: float, base_multiple: float)
         "MP": (1_280_000_000, 6.0, 25, 15, base_revenue, base_multiple, 28, 17),
         "FBTC": (68_000_000_000, 1.0, 0, 0, base_revenue, base_multiple, 0, 0),
         "CEG": (42_000_000_000, 3.4, 42, 6, base_revenue, base_multiple, 43, 7),
-    }[company.ticker]
+    }
+    values = values_by_ticker.get(
+        company.ticker,
+        (
+            max(company.revenue_ttm or base_revenue, base_revenue),
+            base_multiple,
+            company.gross_margin or 0,
+            0,
+            base_revenue,
+            base_multiple,
+            company.gross_margin or 0,
+            0,
+        ),
+    )
     assumptions = MarketImpliedAssumptions(*values, conclusion="", tone="warn", status="Derived Output")
     return with_market_implied_conclusion(assumptions)
 
@@ -312,7 +338,12 @@ def _risks(ticker: str) -> list[RiskItem]:
         "NVDA": [("AI Demand Normalization", "Customers may digest capacity after a capex wave.", "Medium", "Compresses revenue growth and multiple.", "Inference demand and platform breadth.", "Monitoring"), ("Gross Margin Peak Risk", "Competition or mix can pressure margins.", "Medium", "Lowers earnings power.", "Software and networking attach.", "Monitoring"), ("Export Control Risk", "Restrictions can limit addressable markets.", "Medium", "Reduces revenue assumptions.", "Compliant product roadmap.", "Monitoring")],
         "CEG": [("Regulatory Risk", "Power pricing and nuclear policy can change.", "Medium", "Reduces multiple and cash flow confidence.", "Long-term contracts.", "Monitoring"), ("Grid Execution Risk", "Interconnection bottlenecks can delay load growth.", "Medium", "Pushes demand realization outward.", "Contract discipline and grid investment.", "Monitoring"), ("Commodity / Fuel Risk", "Fuel and power market volatility can affect margins.", "Low", "Adds earnings volatility.", "Hedging and diversified fleet.", "Contained")],
     }
-    return [RiskItem(idx, *row) for idx, row in enumerate(specific[ticker], start=1)]
+    fallback = [
+        ("Data Quality Risk", "Some live financial fields may be incomplete or provider-dependent.", "Medium", "Can reduce confidence in scoring and valuation.", "Verify against filings and company releases.", "Monitoring"),
+        ("Valuation Risk", "Current market expectations may not match the model assumptions.", "Medium", "Can compress expected return.", "Track revenue, margin, and multiple changes.", "Monitoring"),
+        ("Execution Risk", "Company-specific milestones need deeper diligence.", "Medium", "Can delay thesis realization.", "Add ticker-specific milestones.", "Monitoring"),
+    ]
+    return [RiskItem(idx, *row) for idx, row in enumerate(specific.get(ticker, fallback), start=1)]
 
 
 def _thesis_updates(company: Company, readthrough_count: int) -> list[ThesisUpdate]:
@@ -329,8 +360,12 @@ def _thesis_updates(company: Company, readthrough_count: int) -> list[ThesisUpda
         "NVDA": [("AI compute clusters keep expanding", "Sector / Indirect Catalyst", "Indirect", "Positive", "Customer Demand", "Revenue Growth", "Revenue confidence +0.3", "AI workloads support GPU and platform demand.", "Demand High", "Demand Very High"), ("Export-control risk remains active", "Regulatory", "Indirect", "Negative", "Market Access", "Revenue Growth", "Risk score -0.1", "Restrictions can limit addressable markets.", "Risk Medium", "Risk Medium")],
         "CEG": [("Data-center power contracts lengthen", "Indirect Catalyst", "Indirect", "Positive", "Customer Demand", "Revenue Growth", "Catalyst score +0.4", "Long-duration contracts improve revenue visibility.", "Contract visibility Medium", "Contract visibility High"), ("Grid queues remain a bottleneck", "Infrastructure", "Indirect", "Negative", "Execution Timing", "Execution Risk", "Timing confidence -0.2", "Interconnection delays can slow customer additions.", "Execution risk Medium", "Execution risk Medium")],
     }
-    dates = ["2025-05-20", "2025-05-20", "2025-05-18"]
-    return [ThesisUpdate(date=dates[idx] if idx < len(dates) else "2025-05-18", title=row[0], type=row[1], directness=row[2], impact=row[3], affected_thesis_lever=row[4], affected_valuation_lever=row[5], dashboard_adjustment=row[6], explanation=row[7], before_value=row[8], after_value=row[9]) for idx, row in enumerate(latest[company.ticker])]
+    fallback = [
+        ("Live quote and financial source connected", "Data Source", "Direct", "Neutral", "Data Quality", "Model Confidence", "Live data loaded", "Ticker search now updates the dashboard from the live adapter when available.", "Demo only", "Live adapter"),
+        ("Ticker-specific thesis still needs analyst review", "Research Workflow", "Direct", "Neutral", "Thesis Detail", "Risk Adjustment", "Keep conviction medium", "The generic model should be treated as a starting point until a ticker-specific thesis is added.", "Unscored", "Initial score"),
+    ]
+    dates = ["2026-06-01", "2026-06-01", "2026-05-18"]
+    return [ThesisUpdate(date=dates[idx] if idx < len(dates) else "2026-06-01", title=row[0], type=row[1], directness=row[2], impact=row[3], affected_thesis_lever=row[4], affected_valuation_lever=row[5], dashboard_adjustment=row[6], explanation=row[7], before_value=row[8], after_value=row[9]) for idx, row in enumerate(latest.get(company.ticker, fallback))]
 
 
 def _ampx_reference_readthrough() -> list[MarketReadThroughItem]:
@@ -425,8 +460,7 @@ def _valuation_score(expected_return: float) -> float:
     return 3.8
 
 
-def build_company_analysis(ticker: str) -> CompanyAnalysis:
-    company = COMPANIES.get(ticker.upper(), COMPANIES["AMPX"])
+def build_company_analysis_for_company(company: Company) -> CompanyAnalysis:
     metrics = _base_metrics(company.ticker)
     scenarios = _scenarios(company)
     expected_value = calculate_expected_value(scenarios)
@@ -470,6 +504,13 @@ def build_company_analysis(ticker: str) -> CompanyAnalysis:
         investment_signal=signal,
         next_events=_events_for_ticker(company.ticker),
     )
+
+
+def build_company_analysis(ticker: str) -> CompanyAnalysis:
+    company = COMPANIES.get(ticker.upper())
+    if company is None:
+        raise KeyError(f"Unknown demo ticker: {ticker}")
+    return build_company_analysis_for_company(company)
 
 
 ANALYSES = {ticker: build_company_analysis(ticker) for ticker in COMPANIES}

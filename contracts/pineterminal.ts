@@ -1,6 +1,6 @@
 export type Impact = "Strong Positive" | "Positive" | "Neutral" | "Negative" | "Strong Negative";
 export type Confidence = "Low" | "Medium" | "High";
-export type DataType = "Actual" | "Estimated" | "Model Assumption" | "Derived Output" | "Demo Data" | "Model-Derived";
+export type DataType = "Actual" | "Estimated" | "Model Assumption" | "Derived Output" | "Demo Data" | "Model-Derived" | "Live Source";
 export type Signal = "Strong Buy" | "Buy" | "Speculative Buy" | "Hold" | "Avoid" | "Sell";
 
 export interface CompanyProfile {
@@ -26,8 +26,10 @@ export interface CompanyProfile {
   investmentSignal: Signal;
   confidence: string;
   riskLevel: string;
-  marketStatus: "Open" | "Closed";
+  marketStatus: "Open" | "Closed" | "Live Quote";
   lastUpdated: string;
+  dataMode: string;
+  dataSource: string;
 }
 
 export interface FundamentalMetric {

@@ -46,6 +46,30 @@ h1, h2, h3, p {
 button, input, textarea, select {
   border-radius: 7px !important;
 }
+[data-testid="stTextInput"] {
+  margin-bottom: 0.25rem;
+}
+[data-testid="stTextInput"] label p {
+  color: var(--faint);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+[data-testid="stTextInput"] input {
+  min-height: 2.35rem;
+  background: #091523;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  box-shadow: 0 0 0 1px rgba(49, 209, 124, 0.06);
+}
+[data-testid="stTextInput"] input:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 1px rgba(49, 209, 124, 0.35);
+}
 [data-testid="stMetricValue"] {
   color: var(--text);
 }

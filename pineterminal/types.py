@@ -22,11 +22,14 @@ class Company:
     market_status: str = "Closed"
     last_updated: str = "2026-05-31 13:45 ET"
     data_mode: str = "Demo"
+    data_source: str = "Demo Data"
     revenue_ttm: float | None = None
     gross_margin: float | None = None
     cash: float | None = None
     debt: float | None = None
     day_change_dollar: float | None = None
+    shares_outstanding: float | None = None
+    cash_burn_ttm: float | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,8 @@ class CompanyProfile:
     risk_level: str
     market_status: str
     last_updated: str
+    data_mode: str
+    data_source: str
     pre_market_change_percent: float | None
     after_hours_change_percent: float | None
 

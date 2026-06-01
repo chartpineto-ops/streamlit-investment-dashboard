@@ -33,7 +33,9 @@ from pineterminal.demo_data import (
     all_watchlist_rows,
     screener_rows,
 )
+from pineterminal.live_data import load_dashboard_analysis
 from pineterminal.styles import apply_theme
+from utils.formatting import clean_ticker
 
 
 PAGES = [
@@ -51,7 +53,7 @@ PAGES = [
     "Settings",
 ]
 
-APP_STATE_VERSION = "pineterminal-dashboard-v2"
+APP_STATE_VERSION = "pineterminal-dashboard-v3"
 
 
 st.set_page_config(page_title="PineTerminal", page_icon="P", layout="wide", initial_sidebar_state="expanded")
@@ -60,10 +62,10 @@ apply_theme()
 
 def _init_state() -> None:
     if st.session_state.get("_pt_app_state_version") != APP_STATE_VERSION:
-        for key in ("selected_ticker", "currency", "page"):
+        for key in ("currency", "page"):
             st.session_state.pop(key, None)
         st.session_state["_pt_app_state_version"] = APP_STATE_VERSION
-    st.session_state["selected_ticker"] = "AMPX"
+    st.session_state.setdefault("selected_ticker", "AMPX")
     st.session_state.setdefault("currency", "USD")
     st.session_state.setdefault("page", "Dashboard")
 
@@ -83,9 +85,16 @@ def render_sidebar() -> str:
     return page
 
 
-def render_global_controls(page: str) -> None:
-    analysis = ANALYSES[st.session_state["selected_ticker"]]
-    render_topbar(page, st.session_state["selected_ticker"], st.session_state["currency"], analysis.company.data_mode, analysis.company.last_updated)
+def render_global_controls(page: str, analysis) -> None:
+    search_col, topbar_col = st.columns([0.16, 0.84], vertical_alignment="center")
+    with search_col:
+        search_value = st.text_input("Ticker", value=st.session_state["selected_ticker"], placeholder="Search ticker")
+        searched = clean_ticker(search_value)
+        if searched and searched != st.session_state["selected_ticker"]:
+            st.session_state["selected_ticker"] = searched
+            st.rerun()
+    with topbar_col:
+        render_topbar(page, analysis.company.ticker, st.session_state["currency"], analysis.company.data_mode, analysis.company.last_updated)
 
 
 def market_tape() -> str:
@@ -317,9 +326,7 @@ def render_settings_page() -> None:
     )
 
 
-def render_page(page: str) -> None:
-    ticker = st.session_state["selected_ticker"]
-    analysis = ANALYSES[ticker]
+def render_page(page: str, analysis) -> None:
     if page == "Dashboard":
         render_company_dashboard(analysis)
     elif page == "Markets":
@@ -349,8 +356,9 @@ def render_page(page: str) -> None:
 def main() -> None:
     _init_state()
     page = render_sidebar()
-    render_global_controls(page)
-    render_page(page)
+    analysis = load_dashboard_analysis(st.session_state["selected_ticker"])
+    render_global_controls(page, analysis)
+    render_page(page, analysis)
 
 
 if __name__ == "__main__":
