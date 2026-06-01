@@ -126,7 +126,7 @@ def section(title: str, subtitle: str = "", body: str = "", action: str = "") ->
 
 
 def value_row(label: str, value: str, tone: str = "neutral") -> str:
-    return f'<div><span>{escape(label)}</span><b class="{escape(tone)}">{escape(value)}</b></div>'
+    return f'<div class="pt-kv-row"><span>{escape(label)}</span><b class="{escape(tone)}">{escape(value)}</b></div>'
 
 
 def render_brand() -> None:
@@ -288,14 +288,17 @@ def render_scenario_card(scenario: ValuationScenario, current_price: float) -> s
     implied_return = calculate_expected_return(scenario.future_share_price, current_price)
     return f"""
     <div class="pt-scenario-card {name_tone}">
-      <h4 class="{name_tone}">{escape(scenario.name)}</h4>
+      <div class="pt-scenario-title">
+        <h4 class="{name_tone}">{escape(scenario.name)}</h4>
+        {data_label("Model")}
+      </div>
       <dl>
         {value_row(str(scenario.year) + " Revenue", money(scenario.revenue, 0))}
         {value_row("EV / Sales Multiple", f"{scenario.ev_sales_multiple:.1f}x")}
         {value_row("Future Price", price(scenario.future_share_price), "info" if name_tone == "info" else name_tone)}
         {value_row("Return", percent(implied_return, 0), tone_for_value(implied_return))}
       </dl>
-      {data_label(scenario.data_type)}
+      <small class="pt-scenario-note">{escape(scenario.assumption)}</small>
     </div>
     """
 
@@ -311,9 +314,9 @@ def render_future_value_model(analysis: CompanyAnalysis) -> str:
       <div class="pt-fv-grid">
         <div class="pt-scenario-grid">{cards}</div>
         <div class="pt-expected-card">
-          <span class="pt-mini-label">Probability-Weighted Expected Value {data_label("Derived")}</span>
+          <div class="pt-expected-head"><span class="pt-mini-label">Probability-Weighted Expected Value</span>{data_label("Derived")}</div>
           <strong>{price(analysis.expected_value)}</strong>
-          <div class="pt-data-list">
+          <div class="pt-data-list pt-expected-list">
             {value_row("Upside / Downside", percent(expected_return, 1), tone_for_value(expected_return))}
             {probability_rows}
             {value_row("Current Price", price(analysis.company.current_price))}
@@ -329,17 +332,18 @@ def render_readthrough_table(rows: list[MarketReadThroughItem]) -> str:
     for row in rows:
         tone = tone_for_value(row.impact_score)
         transmission = f"{row.transmission_path} {row.why_it_matters} {row.thesis_impact}"
+        tickers = "".join(f'<span class="pt-ticker-chip">{escape(ticker)}</span>' for ticker in row.impacted_tickers)
         body += (
             f'<tr title="{escape(transmission)}">'
-            f"<td>{escape(compact_date(row.date))}</td>"
-            f"<td><strong>{escape(row.market_update)}</strong><small>({escape(row.theme)})</small><small>Path: {escape(row.transmission_path)}</small></td>"
-            f"<td>{escape(', '.join(row.impacted_tickers))}</td>"
+            f'<td class="pt-date-cell">{escape(compact_date(row.date))}</td>'
+            f'<td><div class="pt-market-copy"><strong>{escape(row.market_update)}</strong><small>{escape(row.theme)}</small><small>Path: {escape(row.transmission_path)}</small></div></td>'
+            f'<td><div class="pt-ticker-chips">{tickers}</div></td>'
             f'<td><span class="pt-pill {tone}">{escape(row.impact)} {row.impact_score:+.1f}</span></td>'
             f"<td>{escape(row.confidence)}</td>"
             "</tr>"
         )
     return f"""
-    <table class="pt-table">
+    <table class="pt-table pt-readthrough-table">
       <thead><tr><th>Date</th><th>Market Update (Theme)</th><th>Impacted Tickers</th><th>Impact</th><th>Confidence</th></tr></thead>
       <tbody>{body}</tbody>
     </table>
@@ -356,23 +360,24 @@ def render_must_be_true(analysis: CompanyAnalysis) -> str:
     rows = ""
     for item in analysis.what_must_be_true:
         tone = tone_for_impact(item.status)
-        mark = "OK"
+        mark = "OK" if tone != "bad" else "!"
         rows += (
             f'<div class="pt-check-row"><span class="pt-check {tone}">{mark}</span>'
-            f'<div title="{escape(item.evidence)}"><strong>{escape(item.description)}</strong></div></div>'
+            f'<div title="{escape(item.evidence)}"><strong>{escape(item.description)}</strong><small>{escape(item.valuation_lever)} &bull; {escape(item.confidence)} confidence</small></div>'
+            f'<span class="pt-row-status {tone}">{escape(item.status)}</span></div>'
         )
     base = next((item for item in analysis.valuation_scenarios if item.name == "Base Case"), None)
     subtitle = f"To reach Base Case {price(base.future_share_price)}" if base else "To reach Base Case"
-    return section("What Must Be True?", subtitle, rows)
+    return section("What Must Be True?", subtitle, f'<div class="pt-check-list">{rows}</div>')
 
 
 def render_bridge(analysis: CompanyAnalysis) -> str:
-    bridge_start = 12.00 if analysis.company.ticker == "AMPX" else analysis.company.current_price
-    rows = f'<div class="pt-bridge-row"><span>Current Price</span><b>{price(bridge_start)}</b></div>'
+    bridge_start = analysis.company.current_price
+    rows = f'<div class="pt-bridge-row start"><span>Current Price</span><b>{price(bridge_start)}</b></div>'
     for item in analysis.future_value_bridge:
         tone = "bad" if item.type == "negative" else "good"
         sign = "-" if item.type == "negative" else "+"
-        rows += f'<div class="pt-bridge-row"><div><span>{escape(item.label)}</span><small>{escape(item.explanation)}</small></div><b class="{tone}">{sign}{price(abs(item.value_impact))}</b></div>'
+        rows += f'<div class="pt-bridge-row"><div class="pt-bridge-label"><span>{escape(item.label)}</span><small>{escape(item.explanation)}</small></div><b class="{tone}">{sign}{price(abs(item.value_impact))}</b></div>'
     final_value = calculate_future_value_bridge(bridge_start, analysis.future_value_bridge)
     rows += f'<div class="pt-bridge-row final"><span>Base Case Future Value</span><b class="info">{price(final_value)}</b></div>'
     return section("Future Value Bridge", "Base Case", rows)
@@ -381,14 +386,16 @@ def render_bridge(analysis: CompanyAnalysis) -> str:
 def render_market_implied(analysis: CompanyAnalysis) -> str:
     item = analysis.market_implied_assumptions
     body = f"""
-    <div class="pt-grid-two" style="grid-template-columns:1fr 1fr;">
-      <div class="pt-data-list">
+    <div class="pt-implied-grid">
+      <div class="pt-data-list pt-implied-side">
+        <span class="pt-mini-label">Market-Implied</span>
         {value_row("Implied 2028 Revenue", money(item.implied_revenue, 0))}
         {value_row("Implied EV / Sales", f"{item.implied_ev_sales:.1f}x")}
         {value_row("Implied Gross Margin", percent(item.implied_gross_margin, 0, False))}
         {value_row("Implied Revenue CAGR", percent(item.implied_revenue_cagr, 0, False))}
       </div>
-      <div class="pt-data-list">
+      <div class="pt-data-list pt-implied-side">
+        <span class="pt-mini-label">Your Base Case</span>
         {value_row("Your Base Case Revenue", money(item.base_revenue, 0), "good")}
         {value_row("Your Base Case EV / Sales", f"{item.base_ev_sales:.1f}x", "good")}
         {value_row("Your Base Case Gross Margin", percent(item.base_gross_margin, 0, False), "good")}
@@ -407,8 +414,8 @@ def render_updates(analysis: CompanyAnalysis) -> str:
         thesis_arrow = "Up" if tone == "good" else "Down" if tone == "bad" else "Flat"
         valuation_arrow = thesis_arrow
         rows += (
-            f'<div class="pt-update-row"><span class="pt-update-icon {tone}"></span>'
-            f'<div><small class="pt-muted">{escape(compact_date(item.date))}</small><strong>{escape(item.title)}</strong><small class="pt-muted">Impact: {escape(item.explanation)}</small></div>'
+            f'<div class="pt-update-row"><div class="pt-update-meta"><span class="pt-update-icon {tone}"></span><small>{escape(compact_date(item.date))}</small></div>'
+            f'<div class="pt-update-copy"><strong>{escape(item.title)}</strong><small><b>Impact:</b> {escape(item.explanation)}</small></div>'
             f'<span class="pt-pill {tone}">{escape(item.impact)}</span>'
             f'<div class="pt-arrow-stack"><small>Thesis</small><b class="{tone}">{thesis_arrow}</b><small>Valuation</small><b class="{tone}">{valuation_arrow}</b></div></div>'
         )
@@ -420,11 +427,11 @@ def render_risks(analysis: CompanyAnalysis) -> str:
     for item in analysis.risks:
         tone = tone_for_impact(item.severity)
         rows += (
-            f'<div class="pt-risk-row"><b>{item.rank}</b>'
-            f'<div title="{escape(item.mitigant)}"><strong>{escape(item.risk_name)}</strong><small class="pt-muted">{escape(item.description)}</small></div>'
+            f'<div class="pt-risk-row"><b class="pt-risk-rank">{item.rank}</b>'
+            f'<div class="pt-risk-copy" title="{escape(item.mitigant)}"><strong>{escape(item.risk_name)}</strong><small>{escape(item.description)}</small></div>'
             f'<span class="pt-pill {tone}">{escape(item.severity)}</span></div>'
         )
-    return section("Top Risks to Thesis", "", rows + '<div class="pt-section-footer">View All Risks & Mitigants</div>')
+    return section("Top Risks to Thesis", "", f'<div class="pt-risk-list">{rows}</div><div class="pt-section-footer">View All Risks & Mitigants</div>')
 
 
 def render_sensitivity_table(table: SensitivityTable, current_price: float) -> str:
@@ -438,7 +445,8 @@ def render_sensitivity_table(table: SensitivityTable, current_price: float) -> s
             cls = " ".join(classes)
             cells += f'<td class="{cls}">{price(table.values[(revenue, multiple)])}</td>'
         rows += f"<tr><th>{multiple:.1f}x</th>{cells}</tr>"
-    body = f'<div class="pt-sensitivity"><table class="pt-table"><thead><tr><th>EV / Sales Multiple</th>{header}</tr></thead><tbody>{rows}</tbody></table></div><small class="pt-muted">{escape(table.note)} Current price marker: {price(current_price)}.</small>'
+    footer = f"Blue box = Base Case revenue x multiple estimate. Current price marker: {price(current_price)}."
+    body = f'<div class="pt-sensitivity"><table class="pt-table pt-sensitivity-table"><thead><tr><th>EV / Sales Multiple</th>{header}</tr></thead><tbody>{rows}</tbody></table></div><small class="pt-table-note">{escape(footer)}</small>'
     return section("Sensitivity Table", "2028 Price Target", body)
 
 
@@ -447,16 +455,23 @@ def render_signal(analysis: CompanyAnalysis) -> str:
     breakdown = ""
     for label, (score, weight) in signal.score_breakdown.items():
         tone = "bad" if "Risk" in label and score < 6 else "good" if score >= 7 else "warn"
-        breakdown += f'<div class="pt-row-card"><span class="pt-mini-label">{escape(label)}</span><strong class="{tone}">{score:.1f}/10</strong><em>{weight:.0%} weight</em></div>'
+        breakdown += f'<div class="pt-score-chip"><span>{escape(label)}</span><strong class="{tone}">{score:.1f}<small>/10</small></strong><em>{weight:.0%} weight</em></div>'
     body = f"""
     <div class="pt-final-grid">
       <div class="pt-signal-callout">
         <span class="pt-mini-label">Investment Signal</span>
-        <strong>{escape(signal.signal)}</strong>
+        <strong class="{tone_for_signal(signal.signal)}">{escape(signal.signal)}</strong>
         <p class="pt-placeholder">{escape(signal.summary)}</p>
-        <div class="pt-data-list">{value_row("Total Score", f"{signal.total_score:.1f} / 10", tone_for_signal(signal.signal))}{value_row("Conviction", signal.conviction, "warn")}{value_row("Risk Level", signal.risk_level, tone_for_impact(signal.risk_level))}</div>
       </div>
-      <div><span class="pt-mini-label">Score Breakdown</span><div class="pt-score-breakdown">{breakdown}</div></div>
+      <div class="pt-score-area"><span class="pt-mini-label">Score Breakdown</span><div class="pt-score-breakdown">{breakdown}</div></div>
+      <div class="pt-total-score-card">
+        <span class="pt-mini-label">Total Score</span>
+        <strong class="{tone_for_signal(signal.signal)}">{signal.total_score:.1f}<small>/10</small></strong>
+        <div class="pt-data-list">
+          {value_row("Conviction", signal.conviction, "warn")}
+          {value_row("Risk Level", signal.risk_level, tone_for_impact(signal.risk_level))}
+        </div>
+      </div>
     </div>
     """
     return section("Investment Signal", "", body)
@@ -496,7 +511,7 @@ def _key_stats_for_analysis(analysis: CompanyAnalysis) -> dict[str, str]:
 def render_key_stats(analysis: CompanyAnalysis) -> str:
     values = _key_stats_for_analysis(analysis)
     stats = f"""
-    <div class="pt-data-list pt-key-stats-grid">
+    <div class="pt-data-list pt-key-stats-grid pt-compact-kv">
       {value_row("Shares Outstanding (Dil.)", values["shares"])}
       {value_row("Insider Ownership", values["insider"])}
       {value_row("Cash & Equivalents", values["cash"])}
@@ -510,7 +525,7 @@ def render_key_stats(analysis: CompanyAnalysis) -> str:
 
 def render_next_events(analysis: CompanyAnalysis) -> str:
     events = "".join(value_row(item["event"], item["date"]) for item in analysis.next_events)
-    events_body = f'<div class="pt-data-list">{events}</div>'
+    events_body = f'<div class="pt-data-list pt-events-list pt-compact-kv">{events}</div>'
     return section("Next Events", "", events_body)
 
 
