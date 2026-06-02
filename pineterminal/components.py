@@ -1008,9 +1008,9 @@ def sensitivity_table_markup(
     table: SensitivityTable,
     current_price: float,
     *,
-    valuation_method: str = "EV/Sales",
+    valuation_method: str = "Revenue Multiple",
     metric_label: str = "Revenue",
-    multiple_label: str = "EV / Sales Multiple",
+    multiple_label: str = "Revenue Multiple",
 ) -> str:
     unit = "eps" if valuation_method == "P/E" else "asset_price" if valuation_method == "Asset Price Scenario" else "dollars"
     header = "".join(f"<th>{format_financial_value(value, unit)}</th>" for value in table.revenue_columns)

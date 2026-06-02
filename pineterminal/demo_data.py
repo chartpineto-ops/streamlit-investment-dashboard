@@ -48,14 +48,14 @@ FUNDAMENTAL_WEIGHTS = {
 
 
 COMPANIES: dict[str, Company] = {
-    "AMPX": Company("AMPX", "Amprius Technologies, Inc.", "Industrials", "Electrical Equipment & Parts", ["Batteries", "Silicon Anode", "Military Drones", "EVs", "High-Density Energy Storage"], 20.28, -2.73, 2_872_200_000, 2_816_400_000, 2.55, 22.80, pre_market_change_percent=0.0, after_hours_change_percent=0.0, market_status="Closed", last_updated="2026-06-01 05:54 ET", data_mode="Live Fallback", data_source="Yahoo Finance/yfinance + SEC XBRL fallback", revenue_ttm=90_000_000, gross_margin=20.1, cash=62_352_000, debt=6_562_000, day_change_dollar=-0.57, shares_outstanding=141_627_170, cash_burn_ttm=-38_255_000),
+    "AMPX": Company("AMPX", "Amprius Technologies, Inc.", "Industrials", "Electrical Equipment & Parts", ["Batteries", "Silicon Anode", "Military Drones", "EVs", "High-Density Energy Storage"], 21.75, -2.73, 3_080_000_000, 3_024_000_000, 2.55, 22.80, pre_market_change_percent=0.0, after_hours_change_percent=0.0, market_status="Closed", last_updated="2026-06-01 05:54 ET", data_mode="Live Fallback", data_source="Yahoo Finance/yfinance + SEC XBRL fallback", revenue_ttm=90_000_000, gross_margin=20.1, cash=62_352_000, debt=6_562_000, day_change_dollar=-0.57, shares_outstanding=141_627_170, cash_burn_ttm=-38_255_000),
     "MRVL": Company("MRVL", "Marvell Technology, Inc.", "Technology", "Semiconductors", ["AI Data Centers", "Custom Silicon", "Networking", "Optical Connectivity"], 219.43, 2.11, 190_000_000_000, 193_100_000_000, 47.09, 226.80, pre_market_change_percent=0.4, after_hours_change_percent=0.2, revenue_ttm=5_600_000_000, gross_margin=47, cash=950_000_000, debt=4_100_000_000, shares_outstanding=865_000_000),
-    "IONQ": Company("IONQ", "IonQ, Inc.", "Technology", "Quantum Computing", ["Quantum Computing", "Long-Duration Growth", "Government R&D", "Speculative Technology"], 18.67, -1.02, 4_100_000_000, 3_650_000_000, 6.22, 54.74, pre_market_change_percent=-0.6, after_hours_change_percent=-0.4, revenue_ttm=45_000_000, gross_margin=54, cash=420_000_000, debt=0),
-    "MP": Company("MP", "MP Materials Corp.", "Materials", "Rare Earths", ["Critical Minerals", "Rare Earths", "Defense Supply Chain", "Reshoring"], 25.11, 1.76, 4_300_000_000, 4_000_000_000, 10.02, 29.88, pre_market_change_percent=0.2, after_hours_change_percent=0.1, revenue_ttm=238_000_000, gross_margin=22, cash=997_000_000, debt=930_000_000),
-    "VICR": Company("VICR", "Vicor Corporation", "Technology", "Power Electronics", ["Power Electronics", "Components", "Margin Recovery", "Industrial Power"], 44.00, 0.0, 1_950_000_000, 1_700_000_000, 28.00, 72.00, pre_market_change_percent=0.0, after_hours_change_percent=0.0, revenue_ttm=360_000_000, gross_margin=46, cash=280_000_000, debt=30_000_000, shares_outstanding=44_000_000),
-    "FBTC": Company("FBTC", "Fidelity Wise Origin Bitcoin Fund", "Digital Assets", "Bitcoin ETF", ["Bitcoin", "Crypto ETF Flows", "Digital Assets", "Liquidity"], 59.42, 3.34, 23_500_000_000, 23_500_000_000, 38.10, 71.20, pre_market_change_percent=1.1, after_hours_change_percent=0.5, revenue_ttm=None, gross_margin=None, cash=None, debt=None),
-    "NVDA": Company("NVDA", "NVIDIA Corporation", "Technology", "Semiconductors", ["AI Compute", "GPUs", "AI Data Centers", "Accelerated Computing"], 985.97, 1.14, 2_430_000_000_000, 2_390_000_000_000, 756.34, 1261.33, pre_market_change_percent=0.7, after_hours_change_percent=0.3, revenue_ttm=130_500_000_000, gross_margin=73, cash=34_800_000_000, debt=9_700_000_000),
-    "CEG": Company("CEG", "Constellation Energy Corporation", "Utilities", "Nuclear Power", ["Power Demand", "Nuclear Energy", "AI Data Centers", "Grid Demand"], 301.21, 2.08, 93_500_000_000, 101_200_000_000, 158.12, 326.44, pre_market_change_percent=0.3, after_hours_change_percent=0.1, revenue_ttm=24_900_000_000, gross_margin=41, cash=2_300_000_000, debt=9_800_000_000),
+    "IONQ": Company("IONQ", "IonQ, Inc.", "Technology", "Quantum Computing", ["Quantum Computing", "Long-Duration Growth", "Government R&D", "Speculative Technology"], 69.28, -1.02, 15_200_000_000, 14_780_000_000, 6.22, 72.00, pre_market_change_percent=-0.6, after_hours_change_percent=-0.4, revenue_ttm=45_000_000, gross_margin=54, cash=420_000_000, debt=0),
+    "MP": Company("MP", "MP Materials Corp.", "Materials", "Rare Earths", ["Critical Minerals", "Rare Earths", "Defense Supply Chain", "Reshoring"], 69.29, 1.76, 11_900_000_000, 11_830_000_000, 10.02, 75.00, pre_market_change_percent=0.2, after_hours_change_percent=0.1, revenue_ttm=238_000_000, gross_margin=22, cash=997_000_000, debt=930_000_000),
+    "VICR": Company("VICR", "Vicor Corporation", "Technology", "Power Electronics", ["Power Electronics", "Components", "Margin Recovery", "Industrial Power"], 328.85, 0.0, 14_470_000_000, 14_220_000_000, 28.00, 340.00, pre_market_change_percent=0.0, after_hours_change_percent=0.0, revenue_ttm=360_000_000, gross_margin=46, cash=280_000_000, debt=30_000_000, shares_outstanding=44_000_000),
+    "FBTC": Company("FBTC", "Fidelity Wise Origin Bitcoin Fund", "Digital Assets", "Bitcoin ETF", ["Bitcoin", "Crypto ETF Flows", "Digital Assets", "Liquidity"], 62.20, 3.34, 24_600_000_000, 24_600_000_000, 38.10, 71.20, pre_market_change_percent=1.1, after_hours_change_percent=0.5, revenue_ttm=None, gross_margin=None, cash=None, debt=None),
+    "NVDA": Company("NVDA", "NVIDIA Corporation", "Technology", "Semiconductors", ["AI Compute", "GPUs", "AI Data Centers", "Accelerated Computing"], 224.36, 1.14, 5_500_000_000_000, 5_465_000_000_000, 120.00, 230.00, pre_market_change_percent=0.7, after_hours_change_percent=0.3, revenue_ttm=130_500_000_000, gross_margin=73, cash=34_800_000_000, debt=9_700_000_000),
+    "CEG": Company("CEG", "Constellation Energy Corporation", "Utilities", "Nuclear Power", ["Power Demand", "Nuclear Energy", "AI Data Centers", "Grid Demand"], 265.70, 2.08, 82_500_000_000, 90_000_000_000, 158.12, 326.44, pre_market_change_percent=0.3, after_hours_change_percent=0.1, revenue_ttm=24_900_000_000, gross_margin=41, cash=2_300_000_000, debt=9_800_000_000),
 }
 
 
@@ -228,7 +228,7 @@ def _must_be_true(company: Company, base: ValuationScenario) -> list[WhatMustBeT
         return [
             WhatMustBeTrueItem("Revenue grows from $82M to $260M by 2028", "Tracking", "Medium", "Revenue Growth", "Base-case revenue path."),
             WhatMustBeTrueItem("Gross margin expands above 35%", "Needs Proof", "Medium", "Gross Margin", "Base-case margin path still needs evidence."),
-            WhatMustBeTrueItem("Market assigns ~7x EV/Sales", "At Risk", "Medium", "Multiple Expansion", "Current price already discounts much of the base case."),
+            WhatMustBeTrueItem("Market assigns ~7x revenue multiple", "At Risk", "Medium", "Multiple Expansion", "Current price already discounts much of the base case."),
             WhatMustBeTrueItem("Dilution remains below 15%", "Needs Monitoring", "Medium", "Dilution Risk", "Per-share value depends on controlled dilution."),
             WhatMustBeTrueItem("Customer adoption accelerates", "Tracking", "Medium", "Customer Demand", "Indirect catalysts need to convert into demand."),
         ]
@@ -236,7 +236,7 @@ def _must_be_true(company: Company, base: ValuationScenario) -> list[WhatMustBeT
     multiple = f"{base.valuation_multiple:.1f}x" if base.valuation_multiple is not None else "the selected driver"
     if base.valuation_method == "P/E":
         metric_row = (f"EPS model reaches {metric_value} by {base.year}", "Tracking", "Medium", "Earnings Growth", "Based on base-case earnings model.")
-    elif base.valuation_method == "EV/EBITDA":
+    elif base.valuation_method in {"EV/EBITDA", "EBITDA Multiple"}:
         metric_row = (f"EBITDA model reaches {metric_value} by {base.year}", "Tracking", "Medium", "Earnings Growth", "Based on base-case EBITDA model.")
     elif base.valuation_method == "Asset Price Scenario":
         metric_row = (f"Asset price scenario reaches {metric_value} by {base.year}", "Tracking", "Medium", "Asset Price", "Based on base-case asset price scenario.")
@@ -266,7 +266,7 @@ def _bridge(company: Company, base_price: float) -> list[FutureValueBridgeItem]:
         return [
             FutureValueBridgeItem("Revenue Growth Impact", 7.50, "positive", "Revenue grows toward the 2028 base case."),
             FutureValueBridgeItem("Margin Expansion Impact", 3.25, "positive", "Gross margin improves with scale and mix."),
-            FutureValueBridgeItem("Multiple Expansion Impact", 4.00, "positive", "Market assigns a premium EV/Sales framework."),
+            FutureValueBridgeItem("Multiple Expansion Impact", 4.00, "positive", "Market assigns a premium revenue multiple framework."),
             FutureValueBridgeItem("Dilution Impact", 1.75, "negative", "Additional shares reduce per-share value."),
             FutureValueBridgeItem("Execution Risk Discount", 2.00, "negative", "Manufacturing and qualification risk remain material."),
         ]

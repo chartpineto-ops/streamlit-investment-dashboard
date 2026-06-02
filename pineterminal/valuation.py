@@ -27,6 +27,15 @@ METHOD_LABELS = {
             "Future Share Price = Future Equity Value / Diluted Shares",
         ),
     },
+    "EBITDA Multiple": {
+        "metric": "EBITDA",
+        "metric_label": "EBITDA ({year})",
+        "multiple_label": "EBITDA Multiple",
+        "formula": (
+            "Future Equity Value = Future EBITDA x EBITDA Multiple, adjusted for net debt/cash",
+            "Future Share Price = Future Equity Value / Diluted Shares",
+        ),
+    },
     "P/E": {
         "metric": "EPS",
         "metric_label": "EPS ({year})",
@@ -44,7 +53,7 @@ METHOD_LABELS = {
         "metric_label": "Revenue ({year})",
         "multiple_label": "Revenue Multiple",
         "formula": (
-            "Future Equity Value = Future Revenue x Revenue Multiple",
+            "Future Equity Value = Future Revenue x Revenue Multiple, adjusted for net debt/cash",
             "Future Share Price = Future Equity Value / Diluted Shares",
         ),
     },
@@ -53,11 +62,11 @@ METHOD_LABELS = {
 
 VALUATION_SPECS: dict[str, dict[str, object]] = {
     "AMPX": {
-        "valuation_method": "EV/Sales",
+        "valuation_method": "Revenue Multiple",
         "model_year": 2028,
         "net_debt": 5_000_000,
         "shares": 90_750_000,
-        "key_assumption": "Revenue reaches $260M by 2028 at 7.0x EV / Sales.",
+        "key_assumption": "Revenue reaches $260M by 2028 at a 7.0x revenue multiple.",
         "scenarios": [
             ("Bear Case", 115_000_000, 4.0, 76_000_000, 0.25, "Growth slows and dilution increases.", "Needs proof"),
             ("Base Case", 260_000_000, 7.0, 90_750_000, 0.50, "Revenue growth continues and margins improve.", "Model assumptions"),
@@ -75,39 +84,37 @@ VALUATION_SPECS: dict[str, dict[str, object]] = {
         ],
     },
     "VICR": {
-        "valuation_method": "EV/Sales",
+        "valuation_method": "P/E",
         "model_year": 2028,
-        "net_debt": -250_000_000,
-        "shares": 44_000_000,
-        "key_assumption": "Revenue recovery and margin normalization are required for upside.",
+        "key_assumption": "Revenue recovery and margin normalization must convert into durable EPS growth.",
         "scenarios": [
-            ("Bear Case", 350_000_000, 3.0, 44_000_000, 0.25, "Power electronics demand remains uneven and margin recovery stalls.", "Needs proof"),
-            ("Base Case", 525_000_000, 4.5, 44_000_000, 0.50, "Revenue recovers as power component demand improves and margins normalize.", "Model assumptions"),
-            ("Bull Case", 720_000_000, 6.0, 44_000_000, 0.25, "High-performance power module adoption strengthens and valuation support improves.", "Upside case"),
+            ("Bear Case", 7.00, 30.0, None, 0.25, "Power electronics demand remains uneven and margin recovery stalls.", "Needs proof"),
+            ("Base Case", 10.50, 33.0, None, 0.50, "Revenue recovers as power component demand improves and margins normalize into EPS growth.", "Model assumptions"),
+            ("Bull Case", 14.00, 36.0, None, 0.25, "High-performance power module adoption strengthens and supports premium earnings power.", "Upside case"),
         ],
     },
     "IONQ": {
-        "valuation_method": "EV/Sales",
+        "valuation_method": "Revenue Multiple",
         "model_year": 2028,
         "net_debt": -420_000_000,
         "shares": 270_000_000,
         "key_assumption": "Long-term quantum adoption must accelerate enough to justify current valuation.",
         "scenarios": [
-            ("Bear Case", 420_000_000, 6.0, 270_000_000, 0.25, "Commercial quantum adoption remains slow and speculative multiples compress.", "Needs proof"),
-            ("Base Case", 690_000_000, 9.0, 270_000_000, 0.50, "Government and enterprise pilots convert gradually into early commercial revenue.", "Model assumptions"),
-            ("Bull Case", 1_100_000_000, 12.0, 290_000_000, 0.25, "Quantum adoption moves into early production workloads and premium valuation holds.", "Upside case"),
+            ("Bear Case", 420_000_000, 18.0, 270_000_000, 0.25, "Commercial quantum adoption remains slow and speculative multiples compress.", "Needs proof"),
+            ("Base Case", 690_000_000, 27.0, 270_000_000, 0.50, "Government and enterprise pilots convert gradually into early commercial revenue.", "Model assumptions"),
+            ("Bull Case", 1_100_000_000, 38.0, 290_000_000, 0.25, "Quantum adoption moves into early production workloads and premium valuation holds.", "Upside case"),
         ],
     },
     "MP": {
-        "valuation_method": "EV/EBITDA",
+        "valuation_method": "EBITDA Multiple",
         "model_year": 2028,
         "net_debt": -67_000_000,
         "shares": 174_000_000,
         "key_assumption": "Rare earth pricing and downstream magnet execution drive upside.",
         "scenarios": [
-            ("Bear Case", 180_000_000, 12.0, 174_000_000, 0.25, "Rare earth pricing remains soft and processing margins stay pressured.", "Needs monitoring"),
-            ("Base Case", 420_000_000, 12.0, 174_000_000, 0.50, "Policy support and downstream execution improve EBITDA visibility.", "Model assumptions"),
-            ("Bull Case", 700_000_000, 13.5, 180_000_000, 0.25, "Commodity pricing, defense demand, and magnet execution lift earnings power.", "Upside case"),
+            ("Bear Case", 300_000_000, 18.0, 174_000_000, 0.25, "Rare earth pricing remains soft and processing margins stay pressured.", "Needs monitoring"),
+            ("Base Case", 620_000_000, 22.0, 174_000_000, 0.50, "Policy support and downstream execution improve EBITDA visibility.", "Model assumptions"),
+            ("Bull Case", 950_000_000, 25.0, 180_000_000, 0.25, "Commodity pricing, defense demand, and magnet execution lift earnings power.", "Upside case"),
         ],
     },
     "FBTC": {
@@ -135,9 +142,9 @@ VALUATION_SPECS: dict[str, dict[str, object]] = {
         "model_year": 2028,
         "key_assumption": "AI compute demand and margin durability must support premium valuation.",
         "scenarios": [
-            ("Bear Case", 34.00, 28.0, None, 0.25, "AI demand normalizes and premium semiconductor multiples compress.", "Needs monitoring"),
-            ("Base Case", 45.00, 32.0, None, 0.50, "AI compute demand stays durable and margins remain structurally high.", "Model assumptions"),
-            ("Bull Case", 58.00, 38.0, None, 0.25, "AI platform demand expands across training, inference, networking, and software attach.", "Upside case"),
+            ("Bear Case", 3.80, 35.0, None, 0.25, "AI demand normalizes and premium semiconductor multiples compress.", "Needs monitoring"),
+            ("Base Case", 5.60, 45.0, None, 0.50, "AI compute demand stays durable and margins remain structurally high.", "Model assumptions"),
+            ("Bull Case", 7.50, 52.0, None, 0.25, "AI platform demand expands across training, inference, networking, and software attach.", "Upside case"),
         ],
     },
 }
@@ -157,7 +164,7 @@ def get_valuation_method(ticker: str) -> str:
     spec = VALUATION_SPECS.get(ticker.upper())
     if spec:
         return str(spec["valuation_method"])
-    return "EV/Sales"
+    return "Revenue Multiple"
 
 
 def getValuationMethod(ticker: str) -> str:
@@ -165,7 +172,7 @@ def getValuationMethod(ticker: str) -> str:
 
 
 def get_scenario_labels_by_method(valuation_method: str) -> dict[str, object]:
-    return METHOD_LABELS.get(valuation_method, METHOD_LABELS["EV/Sales"])
+    return METHOD_LABELS.get(valuation_method, METHOD_LABELS["Revenue Multiple"])
 
 
 def getScenarioLabelsByMethod(valuation_method: str) -> dict[str, object]:
@@ -253,7 +260,7 @@ def calculate_scenario_output(
     future_enterprise_value = 0.0
     warning = ""
 
-    if valuation_method in {"EV/Sales", "EV/EBITDA", "Revenue Multiple"}:
+    if valuation_method in {"EV/Sales", "EV/EBITDA", "Revenue Multiple", "EBITDA Multiple"}:
         if metric_value is None or metric_value <= 0 or multiple is None or multiple <= 0 or not shares:
             future_share_price = 0.0
             warning = "Missing revenue, multiple, or share-count input."
@@ -282,7 +289,7 @@ def calculate_scenario_output(
     scenario_return = calculate_expected_return(future_share_price, current_price or 0.0)
     unit = _method_unit(valuation_method)
     metric_display = format_financial_value(metric_value, unit)
-    future_revenue = metric_value if valuation_method == "EV/Sales" else None
+    future_revenue = metric_value if str(labels["metric"]) == "Revenue" else None
     return ValuationScenario(
         name=name,
         year=year,
@@ -354,7 +361,7 @@ def _fallback_spec(company: Company) -> dict[str, object]:
     current_multiple = max(1.0, min(12.0, current_multiple))
     shares = company.shares_outstanding or (company.market_cap / company.current_price if company.current_price else 100_000_000)
     return {
-        "valuation_method": "EV/Sales",
+        "valuation_method": "Revenue Multiple",
         "model_year": 2028,
         "key_assumption": f"{company.ticker} requires revenue growth and valuation support to justify upside.",
         "scenarios": [
@@ -424,7 +431,7 @@ def validate_valuation_model(model: ValuationModel) -> list[str]:
             warnings.append(f"{scenario.name}: {scenario.warning}")
         if scenario.future_share_price <= 0:
             warnings.append(f"{scenario.name}: future share price is missing.")
-        if model.valuation_method in {"EV/Sales", "EV/EBITDA", "Revenue Multiple"}:
+        if model.valuation_method in {"EV/Sales", "EV/EBITDA", "Revenue Multiple", "EBITDA Multiple"}:
             if (scenario.valuation_metric_value or 0) <= 0 or (scenario.valuation_multiple or 0) <= 0:
                 warnings.append(f"{scenario.name}: model metric or multiple is missing.")
             if scenario.diluted_shares_outstanding <= 0:
