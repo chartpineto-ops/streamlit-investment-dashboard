@@ -268,10 +268,10 @@ def _must_be_true(company: Company, base: ValuationScenario) -> list[WhatMustBeT
     if company.ticker == "AMPX":
         return [
             WhatMustBeTrueItem("Revenue grows from $82M to $260M by 2028", "Tracking", "Medium", "Revenue Growth", "Base-case revenue path."),
-            WhatMustBeTrueItem("Gross margin expands to >35%", "Tracking", "Medium", "Gross Margin", "Base-case margin path."),
-            WhatMustBeTrueItem("Market assigns 7x EV / Sales multiple", "Tracking", "Medium", "Multiple Expansion", "Base-case valuation framework."),
-            WhatMustBeTrueItem("Dilution remains below 15%", "Tracking", "Medium", "Dilution Risk", "Per-share value depends on controlled dilution."),
-            WhatMustBeTrueItem("Military drone and EV adoption accelerates", "Tracking", "Medium", "Customer Demand", "Indirect catalysts need to convert into demand."),
+            WhatMustBeTrueItem("Gross margin expands above 35%", "Needs Proof", "Medium", "Gross Margin", "Base-case margin path still needs evidence."),
+            WhatMustBeTrueItem("Market assigns ~7x EV/Sales", "At Risk", "Medium", "Multiple Expansion", "Current price already discounts much of the base case."),
+            WhatMustBeTrueItem("Dilution remains below 15%", "Needs Monitoring", "Medium", "Dilution Risk", "Per-share value depends on controlled dilution."),
+            WhatMustBeTrueItem("Customer adoption accelerates", "Tracking", "Medium", "Customer Demand", "Indirect catalysts need to convert into demand."),
         ]
     common = [
         (f"Revenue model reaches {base.revenue / 1_000_000_000:.1f}B by 2028" if base.revenue >= 1_000_000_000 else f"Revenue model reaches ${base.revenue / 1_000_000:.0f}M by 2028", "Tracking", "Medium", "Revenue Growth", "Based on base-case revenue model."),
@@ -325,9 +325,9 @@ def _bridge(company: Company, base_price: float) -> list[FutureValueBridgeItem]:
 def _risks(ticker: str) -> list[RiskItem]:
     specific = {
         "AMPX": [
-            ("Technology / Product Risk", "Silicon anode scaling and performance", "High", "Could reduce revenue assumptions and valuation multiple.", "Customer validation and backlog conversion.", "Active watch"),
-            ("Customer Concentration Risk", "Top customers drive majority revenue", "High", "Raises discount rate and lowers multiple.", "Broader customer base and diversified backlog.", "Monitoring"),
-            ("Capital Raising / Dilution Risk", "Need for additional funding", "Medium", "Reduces future per-share value.", "Improving cash flow and stronger balance sheet.", "Monitoring"),
+            ("Scaling Risk", "Silicon-anode scaling must prove commercial reliability.", "High", "Could reduce revenue assumptions and valuation multiple.", "Customer validation and backlog conversion.", "Active watch"),
+            ("Customer Concentration Risk", "Top customers still drive a large share of revenue.", "High", "Raises discount rate and lowers multiple.", "Broader customer base and diversified backlog.", "Monitoring"),
+            ("Dilution Risk", "Additional funding could reduce future per-share value.", "Medium", "Reduces future per-share value.", "Improving cash flow and stronger balance sheet.", "Monitoring"),
             ("Execution Risk", "Manufacturing ramp and quality", "Medium", "Delays revenue realization.", "Milestone tracking and quality data.", "Monitoring"),
             ("Competition Risk", "Large battery players entering space", "Medium", "Can cap margins and valuation multiple.", "IP differentiation and niche qualification.", "Monitoring"),
         ],
@@ -349,8 +349,8 @@ def _risks(ticker: str) -> list[RiskItem]:
 def _thesis_updates(company: Company, readthrough_count: int) -> list[ThesisUpdate]:
     latest = {
         "AMPX": [
-            ("Defense drone procurement funding increased", "Macro / Indirect Catalyst", "Indirect", "Positive", "Customer Demand", "Revenue Growth", "Base revenue growth +1%; conviction +0.3", "Supports demand for lightweight, high-energy-density batteries.", "Base revenue +0%", "Base revenue +1%"),
-            ("AI infrastructure capex guidance raised by hyperscalers", "Indirect Catalyst", "Indirect", "Positive", "Adjacent Demand", "Revenue Growth", "Catalyst score +0.2", "Long-term boost to data-center power and networking demand.", "Catalyst 6.8", "Catalyst 7.0"),
+            ("Defense drone procurement funding increased", "Macro / Indirect Catalyst", "Indirect", "Positive", "Customer Demand", "Revenue Growth", "Revenue confidence +0.2", "Supports demand for lightweight, high-energy-density batteries.", "Base revenue +0%", "Base revenue +1%"),
+            ("AI infrastructure capex guidance raised by hyperscalers", "Indirect Catalyst", "Indirect", "Positive", "Adjacent Demand", "Revenue Growth", "Catalyst support +0.1", "Long-term boost to data-center power and networking demand.", "Catalyst 6.8", "Catalyst 7.0"),
             ("10Y treasury yield moves higher to 4.48%", "Macro", "Indirect", "Negative", "Valuation Sensitivity", "Multiple Compression", "Risk discount +0.2", "Higher discount rates pressure long-duration growth stocks.", "Discount rate Medium", "Discount rate High"),
         ],
         "MRVL": [("Hyperscalers lift AI capex guidance", "Indirect Catalyst", "Indirect", "Positive", "Customer Demand", "Revenue Growth", "Catalyst score +0.4", "AI capex supports custom silicon and optical networking demand.", "Catalyst 7.1", "Catalyst 7.5"), ("Non-AI chip inventory digestion continues", "Sector", "Indirect", "Negative", "Cyclical Demand", "Gross Margin", "Margin confidence -0.1", "Legacy end-market softness can offset AI strength.", "GM case 51%", "GM case 50%")],
@@ -366,6 +366,47 @@ def _thesis_updates(company: Company, readthrough_count: int) -> list[ThesisUpda
     ]
     dates = ["2026-06-01", "2026-06-01", "2026-05-18"]
     return [ThesisUpdate(date=dates[idx] if idx < len(dates) else "2026-06-01", title=row[0], type=row[1], directness=row[2], impact=row[3], affected_thesis_lever=row[4], affected_valuation_lever=row[5], dashboard_adjustment=row[6], explanation=row[7], before_value=row[8], after_value=row[9]) for idx, row in enumerate(latest.get(company.ticker, fallback))]
+
+
+def _decision_drivers(company: Company, updates: list[ThesisUpdate]) -> tuple[list[str], list[str]]:
+    if company.ticker == "AMPX":
+        return (
+            [
+                "Supports demand for lightweight, high-energy-density batteries.",
+                "Defense drone adoption increases the value of battery endurance.",
+                "Revenue path to $260M depends on customer conversion.",
+            ],
+            [
+                "Higher rates pressure speculative growth multiples.",
+                "Silicon-anode scaling must prove commercial reliability.",
+                "Top customers still drive a large share of revenue.",
+            ],
+        )
+    positive = [item.explanation for item in updates if item.impact == "Positive"]
+    negative = [item.explanation for item in updates if item.impact == "Negative"]
+    return (
+        positive[:3] or ["Positive evidence needs to convert into measurable revenue and margin progress."],
+        negative[:3] or ["Risk evidence is limited, but model assumptions still need validation."],
+    )
+
+
+def _key_levers(company: Company, must_be_true: list[WhatMustBeTrueItem], bridge: list[FutureValueBridgeItem]) -> list[str]:
+    if company.ticker == "AMPX":
+        return [
+            "Revenue Growth",
+            "Gross Margin",
+            "Valuation Multiple",
+            "Dilution / Cash Runway",
+            "Customer Conversion",
+        ]
+    levers = []
+    for item in must_be_true:
+        if item.valuation_lever not in levers:
+            levers.append(item.valuation_lever)
+    for item in bridge:
+        if item.label not in levers:
+            levers.append(item.label)
+    return levers[:5]
 
 
 def _ampx_reference_readthrough() -> list[MarketReadThroughItem]:
@@ -469,6 +510,10 @@ def build_company_analysis_for_company(company: Company) -> CompanyAnalysis:
     readthrough = _ampx_reference_readthrough() if company.ticker == "AMPX" else get_theme_read_through_for_ticker(company.ticker, company.themes, MARKET_UPDATES, THEME_EXPOSURES)
     updates = _thesis_updates(company, len(readthrough))
     thesis_summary = _thesis_summary(company, readthrough, updates)
+    must_be_true = _must_be_true(company, base)
+    bridge = _bridge(company, base.future_share_price)
+    positive_drivers, negative_drivers = _decision_drivers(company, updates)
+    key_levers = _key_levers(company, must_be_true, bridge)
     fundamental_score = calculate_fundamental_score(metrics)
     expected_return = calculate_expected_return(expected_value, company.current_price)
     catalyst_score = max(3.0, min(9.0, 5.8 + calculate_net_readthrough_score(readthrough) * 0.7))
@@ -494,14 +539,17 @@ def build_company_analysis_for_company(company: Company) -> CompanyAnalysis:
         expected_value=expected_value,
         expected_value_detail=expected_detail,
         thesis_summary=thesis_summary,
-        what_must_be_true=_must_be_true(company, base),
-        future_value_bridge=_bridge(company, base.future_share_price),
+        what_must_be_true=must_be_true,
+        future_value_bridge=bridge,
         market_implied_assumptions=_market_implied(company, base.revenue, base.ev_sales_multiple),
         market_read_through=readthrough,
         thesis_updates=updates,
         risks=_risks(company.ticker),
         sensitivity_table=_sensitivity(company, base),
         investment_signal=signal,
+        positive_drivers=positive_drivers,
+        negative_drivers=negative_drivers,
+        key_levers=key_levers,
         next_events=_events_for_ticker(company.ticker),
     )
 

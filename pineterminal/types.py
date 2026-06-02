@@ -231,4 +231,7 @@ class CompanyAnalysis:
     risks: list[RiskItem]
     sensitivity_table: SensitivityTable
     investment_signal: InvestmentSignal
+    positive_drivers: list[str] = field(default_factory=list)
+    negative_drivers: list[str] = field(default_factory=list)
+    key_levers: list[str] = field(default_factory=list)
     next_events: list[dict[str, str]] = field(default_factory=list)

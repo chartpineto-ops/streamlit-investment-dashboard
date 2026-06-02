@@ -32,61 +32,6 @@ METRIC_BADGES = {
     "Execution Quality": "EQ",
 }
 
-TICKER_DECISION_OVERRIDES = {
-    "AMPX": {
-        "positive_drivers": [
-            "Supports demand for lightweight, high-energy-density batteries.",
-            "Defense drone adoption increases the value of battery endurance.",
-            "Revenue path to $260M depends on customer conversion.",
-        ],
-        "negative_drivers": [
-            "Higher rates pressure speculative growth multiples.",
-            "Silicon-anode scaling must prove commercial reliability.",
-            "Top customers still drive a large share of revenue.",
-        ],
-        "key_levers": [
-            "Revenue Growth",
-            "Gross Margin",
-            "Valuation Multiple",
-            "Dilution / Cash Runway",
-            "Customer Conversion",
-        ],
-        "must_be_true": [
-            ("Revenue grows from $82M to $260M by 2028", "Tracking"),
-            ("Gross margin expands above 35%", "Needs Proof"),
-            ("Market assigns ~7x EV/Sales", "At Risk"),
-            ("Dilution remains below 15%", "Needs Monitoring"),
-            ("Customer adoption accelerates", "Tracking"),
-        ],
-        "risks": [
-            (
-                "Scaling Risk",
-                "High",
-                "Silicon-anode scaling must prove commercial reliability.",
-                "Customer validation and backlog conversion.",
-            ),
-            (
-                "Customer Concentration Risk",
-                "High",
-                "Top customers still drive a large share of revenue.",
-                "Broader customer base and diversified backlog.",
-            ),
-            (
-                "Dilution Risk",
-                "Medium",
-                "Additional funding could reduce future per-share value.",
-                "Improving cash flow and stronger balance sheet.",
-            ),
-        ],
-        "model_impacts": [
-            "Revenue confidence +0.2",
-            "Catalyst support +0.1",
-            "Risk discount +0.2",
-            "Multiple pressure -0.2",
-        ],
-    }
-}
-
 
 def money(value: float, decimals: int = 1) -> str:
     if value is None:
@@ -535,27 +480,17 @@ def render_signal(analysis: CompanyAnalysis) -> str:
 def _key_stats_for_analysis(analysis: CompanyAnalysis) -> dict[str, str]:
     company = analysis.company
     base = next((item for item in analysis.valuation_scenarios if item.name == "Base Case"), analysis.valuation_scenarios[0])
-    overrides = {
-        "AMPX": {"shares": "56.4M", "insider": "6.1%", "cash_burn": "$46.0M"},
-        "MRVL": {"shares": "865.0M", "insider": "0.7%", "cash_burn": "FCF positive"},
-        "IONQ": {"shares": "270.0M", "insider": "11.4%", "cash_burn": "$129.0M"},
-        "MP": {"shares": "174.0M", "insider": "8.5%", "cash_burn": "$184.0M"},
-        "FBTC": {"shares": "790.0M", "insider": "N/A", "cash_burn": "N/A"},
-        "NVDA": {"shares": "2.47B", "insider": "4.2%", "cash_burn": "FCF positive"},
-        "CEG": {"shares": "311.0M", "insider": "0.5%", "cash_burn": "FCF positive"},
-    }
-    extra = overrides.get(company.ticker, {})
     if company.shares_outstanding is not None:
         shares = money(company.shares_outstanding, 1).replace("$", "")
     else:
-        shares = extra.get("shares", f"{base.diluted_shares_outstanding / 1_000_000:.1f}M")
+        shares = f"{base.diluted_shares_outstanding / 1_000_000:.1f}M"
     if company.cash_burn_ttm is not None:
         cash_burn = "FCF positive" if company.cash_burn_ttm >= 0 else money(abs(company.cash_burn_ttm))
     else:
-        cash_burn = extra.get("cash_burn", "N/A")
+        cash_burn = "N/A"
     return {
         "shares": shares,
-        "insider": extra.get("insider", "N/A"),
+        "insider": "N/A",
         "cash": money(company.cash) if company.cash is not None else "N/A",
         "revenue": money(company.revenue_ttm) if company.revenue_ttm is not None else "N/A",
         "gross_margin": percent(company.gross_margin, 0, False) if company.gross_margin is not None else "N/A",
@@ -814,10 +749,9 @@ def render_decision_future_value(analysis: CompanyAnalysis) -> str:
 
 
 def _driver_items(analysis: CompanyAnalysis, *, positive: bool) -> list[str]:
-    override = TICKER_DECISION_OVERRIDES.get(analysis.company.ticker, {})
-    key = "positive_drivers" if positive else "negative_drivers"
-    if override.get(key):
-        return list(override[key])
+    configured = analysis.positive_drivers if positive else analysis.negative_drivers
+    if configured:
+        return list(configured[:3])
     desired = []
     for item in analysis.thesis_updates:
         tone = tone_for_impact(item.impact)
@@ -841,8 +775,7 @@ def _driver_items(analysis: CompanyAnalysis, *, positive: bool) -> list[str]:
 def render_decision_thesis_drivers(analysis: CompanyAnalysis) -> str:
     positive = "".join(f'<li><span class="pt-driver-dot good">+</span>{escape(item)}</li>' for item in _driver_items(analysis, positive=True))
     negative = "".join(f'<li><span class="pt-driver-dot bad">!</span>{escape(item)}</li>' for item in _driver_items(analysis, positive=False))
-    override = TICKER_DECISION_OVERRIDES.get(analysis.company.ticker, {})
-    levers = list(override.get("key_levers", []))
+    levers = list(analysis.key_levers)
     if not levers:
         for item in analysis.what_must_be_true:
             if item.valuation_lever not in levers:
@@ -863,47 +796,23 @@ def render_decision_thesis_drivers(analysis: CompanyAnalysis) -> str:
 
 def render_decision_checklist(analysis: CompanyAnalysis) -> str:
     rows = ""
-    override = TICKER_DECISION_OVERRIDES.get(analysis.company.ticker, {})
-    items = override.get("must_be_true")
-    if items is None:
-        items = [(item.description, _must_be_true_status(item.description, idx)) for idx, item in enumerate(analysis.what_must_be_true[:5])]
-    for description, status in items[:5]:
-        tone = tone_for_impact(status)
-        rows += f'<li><span>{escape(description)}</span><b class="pt-status-badge {tone}">{escape(status)}</b></li>'
+    for item in analysis.what_must_be_true[:5]:
+        tone = tone_for_impact(item.status)
+        rows += f'<li><span>{escape(item.description)}</span><b class="pt-status-badge {tone}">{escape(item.status)}</b></li>'
     body = f'<ul class="pt-simple-checklist">{rows}</ul><p class="pt-bottom-line">Bottom line: Upside depends on execution, not just hype.</p>'
     return section("What Must Be True", "", body)
 
 
-def _must_be_true_status(description: str, idx: int) -> str:
-    value = description.casefold()
-    if "revenue" in value or "customer" in value or idx == 0:
-        return "Tracking"
-    if "gross margin" in value or "margin" in value:
-        return "Needs Proof"
-    if "multiple" in value or "ev/sales" in value or "ev / sales" in value:
-        return "At Risk"
-    if "dilution" in value or "cash" in value:
-        return "Needs Monitoring"
-    return "Needs Monitoring"
-
-
 def render_decision_risks(analysis: CompanyAnalysis) -> str:
     rows = ""
-    override = TICKER_DECISION_OVERRIDES.get(analysis.company.ticker, {})
-    risk_rows = override.get("risks")
-    if risk_rows is None:
-        risk_rows = [
-            (_plain_risk_name(item.risk_name), item.severity, item.description, item.mitigant)
-            for item in analysis.risks[:3]
-        ]
-    for idx, (name, severity, why, reducer) in enumerate(risk_rows[:3], start=1):
-        tone = tone_for_impact(severity)
+    for idx, item in enumerate(analysis.risks[:3], start=1):
+        tone = tone_for_impact(item.severity)
         rows += f"""
         <tr>
-          <td><b>{idx}</b> {escape(name)}</td>
-          <td><span class="pt-pill {tone}">{escape(severity)}</span></td>
-          <td>{escape(why)}</td>
-          <td>{escape(reducer)}</td>
+          <td><b>{idx}</b> {escape(_plain_risk_name(item.risk_name))}</td>
+          <td><span class="pt-pill {tone}">{escape(item.severity)}</span></td>
+          <td>{escape(item.description)}</td>
+          <td>{escape(item.mitigant)}</td>
         </tr>
         """
     body = f"""
@@ -929,13 +838,10 @@ def _plain_risk_name(name: str) -> str:
 
 def render_decision_recent_changes(analysis: CompanyAnalysis) -> str:
     rows = ""
-    override = TICKER_DECISION_OVERRIDES.get(analysis.company.ticker, {})
-    model_impacts = list(override.get("model_impacts", []))
-    for idx, item in enumerate(analysis.thesis_updates[:4]):
+    for item in analysis.thesis_updates[:4]:
         tone = tone_for_impact(item.impact)
         thesis_arrow = "Up" if tone == "good" else "Down" if tone == "bad" else "Flat"
         valuation_arrow = thesis_arrow
-        model_impact = model_impacts[idx] if idx < len(model_impacts) else item.dashboard_adjustment
         rows += f"""
         <tr>
           <td><span class="pt-change-dot {tone}"></span>{escape(compact_date(item.date))}</td>
@@ -945,7 +851,7 @@ def render_decision_recent_changes(analysis: CompanyAnalysis) -> str:
           <td><b class="{tone}">{thesis_arrow}</b></td>
           <td><b class="{tone}">{valuation_arrow}</b></td>
           <td>{escape(item.explanation)}</td>
-          <td>{escape(model_impact)}</td>
+          <td>{escape(item.dashboard_adjustment)}</td>
         </tr>
         """
     body = f"""
