@@ -47,7 +47,6 @@ PAGES = [
     "Market Read-Through",
     "Screener",
     "Watchlists",
-    "Thesis Tracker",
     "Portfolio",
     "News Feed",
     "Alerts",
@@ -98,6 +97,10 @@ def _init_state() -> None:
     st.session_state.setdefault("selected_ticker", "AMPX")
     st.session_state.setdefault("currency", "USD")
     st.session_state.setdefault("page", "Dashboard")
+    if st.session_state["page"] == "Thesis Tracker":
+        st.session_state["page"] = "Portfolio"
+    elif st.session_state["page"] not in PAGES:
+        st.session_state["page"] = "Dashboard"
     if "watchlist_tickers" not in st.session_state:
         st.session_state["watchlist_tickers"] = _load_persistent_watchlist_tickers()
     st.session_state.setdefault("watchlist_add_open", False)
@@ -392,7 +395,7 @@ def render_watchlist_page() -> None:
     html(section("Watchlist Groups", "", f'<div class="pt-score-breakdown">{cards}</div>'))
 
 
-def render_thesis_tracker_page() -> None:
+def _thesis_tracker_rows() -> list[dict[str, object]]:
     rows = []
     for ticker, analysis in ANALYSES.items():
         rows.append(
@@ -407,7 +410,7 @@ def render_thesis_tracker_page() -> None:
                 "Conviction Change": f"{analysis.thesis_summary.net_thesis_impact_score:+.1f}",
             }
         )
-    render_dataframe(rows, 520)
+    return rows
 
 
 def _original_thesis(ticker: str) -> str:
@@ -427,8 +430,10 @@ def render_portfolio_page() -> None:
       <div class="pt-row-card"><span class="pt-mini-label">Read-Through Coverage</span><strong class="good">Active</strong></div>
     </div>
     """
-    html(section("Portfolio", "Theme and risk monitor", cards))
-    render_dataframe(PORTFOLIO_HOLDINGS, 360)
+    html(section("Portfolio", "Holdings, thesis, theme and risk monitor", cards))
+    render_dataframe(PORTFOLIO_HOLDINGS, 300)
+    html(section("Thesis / Theme Tracker", "Thesis status, drivers, risks, and recent updates", ""))
+    render_dataframe(_thesis_tracker_rows(), 420)
 
 
 def render_news_feed_page() -> None:
@@ -497,8 +502,6 @@ def render_page(page: str, analysis) -> None:
         render_screener_page()
     elif page == "Watchlists":
         render_watchlist_page()
-    elif page == "Thesis Tracker":
-        render_thesis_tracker_page()
     elif page == "Portfolio":
         render_portfolio_page()
     elif page == "News Feed":
