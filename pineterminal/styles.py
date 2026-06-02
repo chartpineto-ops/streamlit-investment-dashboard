@@ -122,6 +122,42 @@ button, input, textarea, select {
   color: var(--muted);
   text-align: right;
 }
+.pt-watch-price,
+.pt-watch-change {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.9rem;
+  text-align: right;
+  white-space: nowrap;
+}
+.pt-watch-separator {
+  border-top: 1px solid rgba(122, 152, 184, 0.13);
+  margin: 0.08rem 0 0.18rem;
+}
+[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] [data-testid="stButton"] button {
+  min-height: 1.9rem;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text) !important;
+  padding: 0.1rem 0.15rem !important;
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-align: left;
+}
+[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] [data-testid="stButton"] button:hover {
+  background: rgba(122, 152, 184, 0.08) !important;
+  color: var(--green) !important;
+}
+[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] [data-testid="stButton"] button[title^="Remove"] {
+  color: var(--faint) !important;
+  text-align: center;
+}
+[data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"] {
+  border: 1px solid rgba(122, 152, 184, 0.22) !important;
+  background: rgba(20, 34, 53, 0.52) !important;
+}
 .good { color: var(--green) !important; }
 .bad { color: var(--red) !important; }
 .warn { color: var(--yellow) !important; }

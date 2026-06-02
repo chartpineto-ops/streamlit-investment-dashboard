@@ -15,11 +15,11 @@ from pineterminal.components import (
     render_dataframe,
     render_readthrough_table,
     render_topbar,
-    render_watchlist_sidebar,
     section,
     tone_for_value,
     value_row,
 )
+from pineterminal.calculations import calculate_expected_return, calculate_fundamental_score
 from pineterminal.demo_data import (
     ANALYSES,
     COMPANIES,
@@ -35,7 +35,10 @@ from pineterminal.demo_data import (
 )
 from pineterminal.live_data import load_dashboard_analysis
 from pineterminal.styles import apply_theme
-from utils.formatting import clean_ticker
+from storage.db import connect, init_db
+from storage.watchlist import add_ticker as store_add_ticker
+from storage.watchlist import latest_quote_snapshot, remove_ticker as store_remove_ticker
+from utils.formatting import clean_ticker, now_et
 
 
 PAGES = [
@@ -54,10 +57,37 @@ PAGES = [
 ]
 
 APP_STATE_VERSION = "pineterminal-dashboard-v3"
+DEFAULT_WATCHLIST = ["AMPX", "MRVL", "VICR", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
 
 
 st.set_page_config(page_title="PineTerminal", page_icon="P", layout="wide", initial_sidebar_state="expanded")
 apply_theme()
+
+
+def _mark_pineterminal_watchlist_ticker(ticker: str) -> None:
+    symbol = clean_ticker(ticker)
+    if not symbol:
+        return
+    init_db()
+    with connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO watchlist (ticker, added_at, category, notes) VALUES (?, ?, ?, ?)",
+            (symbol, now_et().isoformat(), "PineTerminal", ""),
+        )
+        conn.execute("UPDATE watchlist SET category = ? WHERE ticker = ?", ("PineTerminal", symbol))
+        conn.commit()
+
+
+def _load_persistent_watchlist_tickers() -> list[str]:
+    init_db()
+    with connect() as conn:
+        rows = conn.execute("SELECT ticker FROM watchlist WHERE category = ? ORDER BY id", ("PineTerminal",)).fetchall()
+    tickers = [clean_ticker(row["ticker"]) for row in rows if clean_ticker(row["ticker"])]
+    if tickers:
+        return tickers
+    for ticker in DEFAULT_WATCHLIST:
+        _mark_pineterminal_watchlist_ticker(ticker)
+    return DEFAULT_WATCHLIST.copy()
 
 
 def _init_state() -> None:
@@ -68,12 +98,142 @@ def _init_state() -> None:
     st.session_state.setdefault("selected_ticker", "AMPX")
     st.session_state.setdefault("currency", "USD")
     st.session_state.setdefault("page", "Dashboard")
+    if "watchlist_tickers" not in st.session_state:
+        st.session_state["watchlist_tickers"] = _load_persistent_watchlist_tickers()
+    st.session_state.setdefault("watchlist_add_open", False)
+    st.session_state.setdefault("watchlist_message", "")
 
 
-def _watchlist_for_sidebar() -> list[dict[str, object]]:
-    rows = all_watchlist_rows()
-    preferred = ["AMPX", "MRVL", "VICR", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
-    return sorted(rows, key=lambda row: preferred.index(str(row["Ticker"])) if str(row["Ticker"]) in preferred else 99)
+def _active_watchlist_tickers() -> list[str]:
+    cleaned = []
+    for ticker in st.session_state.get("watchlist_tickers", DEFAULT_WATCHLIST):
+        symbol = clean_ticker(str(ticker))
+        if symbol and symbol not in cleaned:
+            cleaned.append(symbol)
+    st.session_state["watchlist_tickers"] = cleaned
+    return cleaned
+
+
+def _analysis_watchlist_row(ticker: str) -> dict[str, object]:
+    analysis = load_dashboard_analysis(ticker)
+    company = analysis.company
+    return {
+        "Ticker": company.ticker,
+        "Company": company.company_name,
+        "Price": company.current_price,
+        "Daily Change": company.daily_change,
+        "Fundamental Score": calculate_fundamental_score(analysis.fundamental_metrics),
+        "Expected Return": calculate_expected_return(analysis.expected_value, company.current_price),
+        "Net Thesis Impact": analysis.thesis_summary.net_thesis_impact_score,
+        "Latest Thesis Impact": analysis.thesis_updates[0].impact if analysis.thesis_updates else "Neutral",
+        "Investment Signal": analysis.investment_signal.signal,
+        "Risk Level": analysis.investment_signal.risk_level,
+        "Theme": company.themes[0] if company.themes else "General",
+        "Market Cap": company.market_cap,
+        "Revenue Growth": analysis.fundamental_metrics[0].value if analysis.fundamental_metrics else "N/A",
+        "Gross Margin": analysis.fundamental_metrics[1].value if len(analysis.fundamental_metrics) > 1 else "N/A",
+    }
+
+
+def _watchlist_rows() -> list[dict[str, object]]:
+    built_in = {str(row["Ticker"]): row for row in all_watchlist_rows()}
+    rows = []
+    for ticker in _active_watchlist_tickers():
+        row = built_in.get(ticker)
+        if row is not None:
+            rows.append(row)
+            continue
+        try:
+            rows.append(_analysis_watchlist_row(ticker))
+        except Exception:
+            snapshot = latest_quote_snapshot(ticker) or {}
+            rows.append(
+                {
+                    "Ticker": ticker,
+                    "Company": snapshot.get("company") or ticker,
+                    "Price": snapshot.get("price") or 0.0,
+                    "Daily Change": snapshot.get("daily_move_pct") or 0.0,
+                    "Fundamental Score": 0.0,
+                    "Expected Return": 0.0,
+                    "Net Thesis Impact": 0.0,
+                    "Latest Thesis Impact": "N/A",
+                    "Investment Signal": "No Rating",
+                    "Risk Level": "N/A",
+                    "Theme": "Live",
+                    "Market Cap": snapshot.get("market_cap") or 0.0,
+                    "Revenue Growth": "N/A",
+                    "Gross Margin": "N/A",
+                }
+            )
+    return rows
+
+
+def _add_watchlist_ticker(symbol: str) -> None:
+    ticker = clean_ticker(symbol)
+    if not ticker:
+        st.session_state["watchlist_message"] = "Enter a ticker first."
+        return
+    tickers = _active_watchlist_tickers()
+    if ticker in tickers:
+        st.session_state["selected_ticker"] = ticker
+        st.session_state["watchlist_message"] = f"{ticker} is already in your watchlist."
+        return
+    if not store_add_ticker(ticker, category="PineTerminal"):
+        st.session_state["watchlist_message"] = f"Could not add {ticker}. Check the symbol and try again."
+        return
+    _mark_pineterminal_watchlist_ticker(ticker)
+    st.session_state["watchlist_tickers"] = tickers + [ticker]
+    st.session_state["selected_ticker"] = ticker
+    st.session_state["watchlist_add_open"] = False
+    st.session_state["watchlist_message"] = f"Added {ticker}."
+
+
+def _remove_watchlist_ticker(ticker: str) -> None:
+    symbol = clean_ticker(ticker)
+    remaining = [item for item in _active_watchlist_tickers() if item != symbol]
+    st.session_state["watchlist_tickers"] = remaining
+    store_remove_ticker(symbol)
+    if st.session_state.get("selected_ticker") == symbol and remaining:
+        st.session_state["selected_ticker"] = remaining[0]
+    st.session_state["watchlist_message"] = f"Removed {symbol}."
+
+
+def render_watchlist_sidebar(rows: list[dict[str, object]]) -> None:
+    html('<div class="pt-side-title">My Watchlist</div>')
+    message = st.session_state.get("watchlist_message", "")
+    if message:
+        st.caption(message)
+    for row in rows:
+        ticker = str(row["Ticker"])
+        change = float(row.get("Daily Change") or 0.0)
+        ticker_col, price_col, change_col, remove_col = st.columns([0.34, 0.28, 0.26, 0.12], gap="small", vertical_alignment="center")
+        with ticker_col:
+            if st.button(ticker, key=f"watch_select_{ticker}", use_container_width=True):
+                st.session_state["selected_ticker"] = ticker
+                st.rerun()
+        with price_col:
+            st.markdown(f'<div class="pt-watch-price">{price(float(row.get("Price") or 0.0))}</div>', unsafe_allow_html=True)
+        with change_col:
+            st.markdown(f'<div class="pt-watch-change {tone_for_value(change)}">{percent(change, 2)}</div>', unsafe_allow_html=True)
+        with remove_col:
+            if st.button("X", key=f"watch_remove_{ticker}", help=f"Remove {ticker}", use_container_width=True):
+                _remove_watchlist_ticker(ticker)
+                st.rerun()
+        html('<div class="pt-watch-separator"></div>')
+    if st.session_state.get("watchlist_add_open"):
+        new_ticker = st.text_input("Add ticker", key="watchlist_new_ticker", placeholder="Ticker", label_visibility="collapsed")
+        add_col, cancel_col = st.columns(2)
+        with add_col:
+            if st.button("Add", key="watch_add_confirm", use_container_width=True):
+                _add_watchlist_ticker(new_ticker)
+                st.rerun()
+        with cancel_col:
+            if st.button("Cancel", key="watch_add_cancel", use_container_width=True):
+                st.session_state["watchlist_add_open"] = False
+                st.rerun()
+    elif st.button("+ Add Ticker", key="watch_add_open", use_container_width=True):
+        st.session_state["watchlist_add_open"] = True
+        st.rerun()
 
 
 def render_sidebar() -> str:
@@ -81,7 +241,7 @@ def render_sidebar() -> str:
         render_brand()
         page = st.radio("Navigation", PAGES, index=PAGES.index(st.session_state.get("page", "Dashboard")), label_visibility="collapsed")
         st.session_state["page"] = page
-        render_watchlist_sidebar(_watchlist_for_sidebar())
+        render_watchlist_sidebar(_watchlist_rows())
     return page
 
 
@@ -221,7 +381,7 @@ def render_screener_page() -> None:
 
 
 def render_watchlist_page() -> None:
-    rows = all_watchlist_rows()
+    rows = _watchlist_rows()
     group_by = st.segmented_control("Group by", ["Theme", "Investment Signal", "Risk Level", "Market Cap"], default="Theme")
     render_dataframe(rows, 440)
     grouped: dict[str, list[str]] = {}
