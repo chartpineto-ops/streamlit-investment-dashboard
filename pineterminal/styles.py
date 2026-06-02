@@ -1510,6 +1510,34 @@ button, input, textarea, select {
 .pt-decision-shell .pt-status-pill {
   color: var(--yellow);
 }
+.pt-source-link {
+  color: var(--blue);
+  font-size: 0.68rem;
+  font-weight: 850;
+  border: 1px solid rgba(91, 182, 255, 0.22);
+  background: rgba(91, 182, 255, 0.07);
+  border-radius: 999px;
+  padding: 0.18rem 0.45rem;
+}
+.pt-decision-shell .pt-header-signal {
+  border: 1px solid rgba(122, 152, 184, 0.2);
+  border-radius: 7px;
+  background: rgba(20, 34, 53, 0.36);
+  padding: 0.62rem;
+}
+.pt-signal-kpi strong {
+  font-size: 1.22rem;
+}
+.pt-gauge.good {
+  background: conic-gradient(from 270deg, var(--green) 0deg, var(--green) 72deg, var(--yellow) 72deg, var(--yellow) 112deg, #26354a 112deg, #26354a 180deg);
+}
+.pt-gauge.warn,
+.pt-gauge.neutral {
+  background: conic-gradient(from 270deg, #26354a 0deg, #26354a 48deg, var(--yellow) 48deg, var(--yellow) 108deg, #26354a 108deg, #26354a 180deg);
+}
+.pt-gauge.bad {
+  background: conic-gradient(from 270deg, #26354a 0deg, #26354a 72deg, var(--yellow) 72deg, var(--yellow) 116deg, var(--red) 116deg, var(--red) 180deg);
+}
 .pt-decision-card {
   padding: 1rem 1.1rem;
 }
@@ -1534,6 +1562,14 @@ button, input, textarea, select {
   background: rgba(49, 209, 124, 0.09);
   box-shadow: inset 0 0 0 1px rgba(49, 209, 124, 0.08);
 }
+.pt-decision-icon.warn {
+  border-color: rgba(240, 194, 74, 0.36);
+  background: rgba(240, 194, 74, 0.09);
+}
+.pt-decision-icon.bad {
+  border-color: rgba(255, 92, 112, 0.36);
+  background: rgba(255, 92, 112, 0.09);
+}
 .pt-decision-icon span {
   width: 2rem;
   height: 1.35rem;
@@ -1542,6 +1578,12 @@ button, input, textarea, select {
   border-top: 3px solid var(--green);
   transform: skew(-14deg) rotate(42deg);
   border-radius: 2px;
+}
+.pt-decision-icon.warn span {
+  border-color: var(--yellow);
+}
+.pt-decision-icon.bad span {
+  border-color: var(--red);
 }
 .pt-decision-copy strong {
   display: block;
@@ -1554,6 +1596,16 @@ button, input, textarea, select {
   max-width: 54rem;
   font-size: 0.88rem;
   line-height: 1.45;
+}
+.pt-bottom-line-callout {
+  border: 1px solid rgba(240, 194, 74, 0.22);
+  border-radius: 7px;
+  background: rgba(240, 194, 74, 0.065);
+  color: #d9e2ec;
+  margin-top: 0.72rem;
+  padding: 0.56rem 0.65rem;
+  font-size: 0.76rem;
+  line-height: 1.38;
 }
 .pt-decision-quick {
   display: grid;
@@ -1770,7 +1822,7 @@ button, input, textarea, select {
 }
 .pt-expected-strip {
   display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr;
+  grid-template-columns: 1.15fr 0.78fr 0.78fr minmax(220px, 1.55fr);
   gap: 0;
   border: 1px solid rgba(49, 209, 124, 0.18);
   border-radius: 7px;
@@ -1799,6 +1851,12 @@ button, input, textarea, select {
 }
 .pt-expected-strip .pt-kv-row:first-child b {
   font-size: 1.45rem;
+}
+.pt-expected-strip .pt-kv-row:last-child b {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+  text-align: left;
 }
 .pt-scenario-footer {
   display: flex;
@@ -1880,6 +1938,33 @@ button, input, textarea, select {
 .pt-simple-checklist li {
   align-items: center;
   font-size: 0.82rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.pt-simple-checklist li > span {
+  min-width: 0;
+}
+.pt-status-badge {
+  border: 1px solid rgba(122, 152, 184, 0.25);
+  border-radius: 999px;
+  padding: 0.16rem 0.45rem;
+  font-size: 0.66rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+.pt-status-badge.good {
+  border-color: rgba(49, 209, 124, 0.35);
+  background: rgba(49, 209, 124, 0.1);
+  color: var(--green);
+}
+.pt-status-badge.warn {
+  border-color: rgba(240, 194, 74, 0.38);
+  background: rgba(240, 194, 74, 0.1);
+  color: var(--yellow);
+}
+.pt-status-badge.bad {
+  border-color: rgba(255, 92, 112, 0.38);
+  background: rgba(255, 92, 112, 0.1);
+  color: var(--red);
 }
 .pt-bottom-line {
   color: var(--muted);
@@ -1917,21 +2002,28 @@ button, input, textarea, select {
   table-layout: fixed;
 }
 .pt-changes-table th:nth-child(1) {
-  width: 8.2rem;
+  width: 7.2rem;
 }
 .pt-changes-table th:nth-child(3) {
-  width: 9rem;
+  width: 8.2rem;
 }
 .pt-changes-table th:nth-child(4),
 .pt-changes-table th:nth-child(5),
 .pt-changes-table th:nth-child(6) {
-  width: 7.5rem;
+  width: 6.6rem;
   text-align: center;
 }
 .pt-changes-table td:nth-child(4),
 .pt-changes-table td:nth-child(5),
 .pt-changes-table td:nth-child(6) {
   text-align: center;
+}
+.pt-changes-table th:nth-child(8) {
+  width: 8.5rem;
+}
+.pt-changes-table td:nth-child(8) {
+  color: var(--blue);
+  font-weight: 850;
 }
 .pt-change-dot {
   width: 0.7rem;
