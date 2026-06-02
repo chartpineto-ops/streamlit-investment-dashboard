@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+from math import cos, pi, sin
 
 import pandas as pd
 import streamlit as st
@@ -35,43 +36,90 @@ METRIC_BADGES = {
 
 def signal_visual(signal: str) -> dict[str, str]:
     states = {
-        "Strong Buy": {"slug": "strong-buy", "tone": "good", "fill": "162deg", "angle": "-18deg"},
-        "Buy": {"slug": "buy", "tone": "good", "fill": "140deg", "angle": "-38deg"},
-        "Speculative Buy": {"slug": "speculative-buy", "tone": "good", "fill": "115deg", "angle": "-58deg"},
-        "Hold": {"slug": "hold", "tone": "warn", "fill": "90deg", "angle": "-90deg"},
-        "Avoid": {"slug": "avoid", "tone": "bad", "fill": "58deg", "angle": "-122deg"},
-        "Sell": {"slug": "sell", "tone": "bad", "fill": "30deg", "angle": "-154deg"},
+        "Strong Buy": {"slug": "strong-buy", "tone": "good", "icon": "double-up"},
+        "Buy": {"slug": "buy", "tone": "good", "icon": "up"},
+        "Speculative Buy": {"slug": "speculative-buy", "tone": "good", "icon": "up-right"},
+        "Hold": {"slug": "hold", "tone": "warn", "icon": "flat"},
+        "Avoid": {"slug": "avoid", "tone": "bad", "icon": "down-right"},
+        "Sell": {"slug": "sell", "tone": "bad", "icon": "down"},
     }
-    return states.get(signal, {"slug": "neutral", "tone": "neutral", "fill": "90deg", "angle": "-90deg"})
+    return states.get(signal, {"slug": "neutral", "tone": "neutral", "icon": "flat"})
 
 
-def signal_gauge(signal: str) -> str:
+def svg_icon(name: str, extra_class: str = "") -> str:
+    paths = {
+        "double-up": '<path d="M7 13l5-5 5 5"/><path d="M7 19l5-5 5 5"/>',
+        "up": '<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>',
+        "up-right": '<path d="M7 17L17 7"/><path d="M9 7h8v8"/>',
+        "flat": '<path d="M5 12h14"/>',
+        "down-right": '<path d="M7 7l10 10"/><path d="M17 9v8H9"/>',
+        "down": '<path d="M12 5v14"/><path d="M5 12l7 7 7-7"/>',
+        "growth": '<path d="M4 18h16"/><path d="M5 15l5-5 4 3 6-8"/><path d="M16 5h4v4"/>',
+        "percent": '<path d="M19 5L5 19"/><circle cx="7" cy="7" r="2"/><circle cx="17" cy="17" r="2"/>',
+        "shield": '<path d="M12 3l7 3v5c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6l7-3z"/>',
+        "target": '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M17 7l3-3"/><path d="M18 4h2v2"/>',
+        "bear": '<path d="M12 5v14"/><path d="M5 12l7 7 7-7"/>',
+        "base": '<circle cx="12" cy="12" r="7"/><path d="M12 5v14"/><path d="M5 12h14"/>',
+        "bull": '<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>',
+        "check": '<path d="M5 12l4 4 10-10"/>',
+        "minus": '<path d="M5 12h14"/>',
+        "node": '<circle cx="7" cy="12" r="2"/><circle cx="17" cy="7" r="2"/><circle cx="17" cy="17" r="2"/><path d="M9 11l6-4"/><path d="M9 13l6 4"/>',
+        "wrench": '<path d="M14 6a4 4 0 0 0 5 5l-8 8a3 3 0 0 1-4-4l8-8z"/>',
+        "users": '<circle cx="9" cy="8" r="3"/><path d="M3 19a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2"/><path d="M15 17a4 4 0 0 1 6 2"/>',
+        "droplet": '<path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z"/>',
+        "info": '<circle cx="12" cy="12" r="9"/><path d="M12 10v6"/><path d="M12 7h.01"/>',
+    }
+    body = paths.get(name, paths["info"])
+    return f'<svg class="pt-svg-icon {escape(extra_class)}" viewBox="0 0 24 24" aria-hidden="true">{body}</svg>'
+
+
+def signal_gauge(signal: str, score: float) -> str:
     visual = signal_visual(signal)
-    return (
-        f'<div class="pt-gauge {visual["tone"]} {visual["slug"]}" '
-        f'style="--gauge-fill:{visual["fill"]}; --needle-angle:{visual["angle"]}" '
-        'title="Signal gauge"><span></span></div>'
-    )
+    safe_score = max(0.0, min(10.0, score or 0.0))
+    fill = max(2.0, safe_score * 10.0)
+    theta = pi - (safe_score / 10.0) * pi
+    needle_x = 60 + 42 * cos(theta)
+    needle_y = 60 - 42 * sin(theta)
+    return f"""
+    <svg class="pt-gauge {visual["tone"]} {visual["slug"]}" viewBox="0 0 120 72" aria-label="Signal gauge">
+      <path class="pt-gauge-track" pathLength="100" d="M12 60 A48 48 0 0 1 108 60"></path>
+      <path class="pt-gauge-fill" pathLength="100" style="stroke-dasharray:{fill:.1f} 100" d="M12 60 A48 48 0 0 1 108 60"></path>
+      <line class="pt-gauge-needle" x1="60" y1="60" x2="{needle_x:.1f}" y2="{needle_y:.1f}"></line>
+      <circle class="pt-gauge-hub" cx="60" cy="60" r="4"></circle>
+    </svg>
+    """
 
 
 def signal_badge_icon(signal: str) -> str:
     visual = signal_visual(signal)
-    return f'<div class="pt-decision-icon {visual["tone"]} {visual["slug"]}"><span class="pt-signal-arrow"><i></i></span></div>'
+    return f'<div class="pt-decision-icon {visual["tone"]} {visual["slug"]}">{svg_icon(visual["icon"], "pt-signal-svg")}</div>'
 
 
 def business_quality_icon(category: str) -> str:
     key = {
         "Growth": "growth",
-        "Profitability": "profitability",
-        "Balance Sheet": "balance",
-        "Execution": "execution",
+        "Profitability": "percent",
+        "Balance Sheet": "shield",
+        "Execution": "target",
     }.get(category, "generic")
-    return f'<span class="pt-line-icon pt-quality-icon {key}"><i></i></span>'
+    return f'<span class="pt-line-icon pt-quality-icon">{svg_icon(key, "pt-quality-svg")}</span>'
 
 
 def scenario_icon(name: str) -> str:
     key = "bear" if "Bear" in name else "bull" if "Bull" in name else "base"
-    return f'<span class="pt-scenario-icon {key}"><i></i></span>'
+    return f'<span class="pt-scenario-icon {key}">{svg_icon(key, "pt-scenario-svg")}</span>'
+
+
+def driver_icon(kind: str) -> str:
+    icon = "check" if kind == "positive" else "minus" if kind == "negative" else "node"
+    tone = "good" if kind == "positive" else "bad" if kind == "negative" else "info"
+    return f'<span class="pt-driver-dot {tone}">{svg_icon(icon)}</span>'
+
+
+def risk_icon(name: str) -> str:
+    cls = risk_icon_class(name)
+    icon = {"scaling": "wrench", "customer": "users", "dilution": "droplet"}.get(cls, "info")
+    return f'<span class="pt-risk-icon {cls}">{svg_icon(icon)}</span>'
 
 
 def risk_icon_class(name: str) -> str:
@@ -181,6 +229,10 @@ def value_row(label: str, value: str, tone: str = "neutral") -> str:
     return f'<div class="pt-kv-row"><span>{escape(label)}</span><b class="{escape(tone)}">{escape(value)}</b></div>'
 
 
+def detail_row(label: str, value: str) -> str:
+    return f'<div class="pt-detail-row"><span>{escape(label)}</span><b>{escape(value)}</b></div>'
+
+
 def render_brand() -> None:
     html(
         """
@@ -274,7 +326,7 @@ def company_profile_from_analysis(analysis: CompanyAnalysis) -> CompanyProfile:
 def render_company_header(profile: CompanyProfile) -> str:
     primary_theme = profile.themes[0] if profile.themes else profile.industry
     signal_tone = tone_for_signal(profile.investment_signal)
-    gauge = signal_gauge(profile.investment_signal)
+    gauge = signal_gauge(profile.investment_signal, profile.fundamental_score)
     day_change = profile.day_change_dollar
     if day_change is None:
         day_change_label = "N/A"
@@ -298,7 +350,7 @@ def render_company_header(profile: CompanyProfile) -> str:
           </div>
           <span class="pt-header-star">*</span>
         </div>
-        <div class="pt-tags">{tags}<a class="pt-source-link" title="{escape(source_title)}">Data Sources</a></div>
+        <div class="pt-tags">{tags}{render_data_sources_details(profile, source_title)}</div>
       </div>
       <div class="pt-header-market">
         <div class="pt-kpi pt-current-price"><span>Current Price</span><strong>{price(profile.current_price)}</strong><b class="{tone_for_value(profile.day_change_percent)}">{day_change_label} ({percent(profile.day_change_percent, 2)})</b>{price_detail}</div>
@@ -309,10 +361,32 @@ def render_company_header(profile: CompanyProfile) -> str:
       <div class="pt-header-signal">
         <div class="pt-kpi pt-score-big"><span>Fundamental Score</span><strong>{profile.fundamental_score:.1f}</strong><b>/10</b><small class="good">{escape(profile.fundamental_label)}</small></div>
         <div class="pt-kpi"><span>Expected 36M Return</span><strong class="{tone_for_value(profile.expected36m_return)}">{percent(profile.expected36m_return, 0)}</strong><b>{escape(profile.expected_return_label)}</b></div>
-        <div class="pt-kpi pt-signal-kpi"><span>Investment Signal</span><strong class="{signal_tone}">{escape(profile.investment_signal)}</strong><b>Confidence: {escape(profile.confidence)} | Risk: {escape(profile.risk_level)}</b></div>
-        {gauge}
+        <div class="pt-kpi pt-signal-kpi">
+          <div><span>Investment Signal</span><strong class="{signal_tone}">{escape(profile.investment_signal)}</strong><b>Conf: {escape(profile.confidence)}<br>Risk: {escape(profile.risk_level)}</b></div>
+          {gauge}
+        </div>
       </div>
     </div>
+    """
+
+
+def render_data_sources_details(profile: CompanyProfile, source_title: str) -> str:
+    source = profile.data_source or "N/A"
+    market_source = "Yahoo Finance" if "Yahoo" in source else source
+    filing_source = "SEC XBRL" if "SEC" in source or "XBRL" in source else "N/A"
+    return f"""
+    <details class="pt-data-sources">
+      <summary title="{escape(source_title)}">Data Sources</summary>
+      <div class="pt-floating-panel pt-data-sources-panel">
+        <strong>Data Sources</strong>
+        {detail_row("Market price", market_source)}
+        {detail_row("Financial statements", filing_source)}
+        {detail_row("Filing source", filing_source)}
+        {detail_row("Derived metrics", "PineTerminal internal model")}
+        {detail_row("Data mode", profile.data_mode)}
+        {detail_row("Last updated", profile.last_updated)}
+      </div>
+    </details>
     """
 
 
@@ -488,18 +562,7 @@ def render_risks(analysis: CompanyAnalysis) -> str:
 
 
 def render_sensitivity_table(table: SensitivityTable, current_price: float) -> str:
-    header = "".join(f"<th>{money(value, 0)}</th>" for value in table.revenue_columns)
-    rows = ""
-    for multiple in table.multiple_rows:
-        cells = ""
-        for revenue in table.revenue_columns:
-            classes = ["base"] if (revenue, multiple) == table.highlighted_cell else []
-            classes.append("upside" if table.values[(revenue, multiple)] > current_price else "downside")
-            cls = " ".join(classes)
-            cells += f'<td class="{cls}">{price(table.values[(revenue, multiple)])}</td>'
-        rows += f"<tr><th>{multiple:.1f}x</th>{cells}</tr>"
-    footer = f"Blue box = Base Case revenue x multiple estimate. Current price marker: {price(current_price)}."
-    body = f'<div class="pt-sensitivity"><table class="pt-table pt-sensitivity-table"><thead><tr><th>EV / Sales Multiple</th>{header}</tr></thead><tbody>{rows}</tbody></table></div><small class="pt-table-note">{escape(footer)}</small>'
+    body = sensitivity_table_markup(table, current_price)
     return section("Sensitivity Table", "2028 Price Target", body)
 
 
@@ -644,6 +707,13 @@ def _score_breakdown_rows(analysis: CompanyAnalysis) -> str:
 
 
 def render_methodology_details() -> str:
+    sections = [
+        ("Business Quality", "Revenue quality, margin quality, balance sheet strength, and execution credibility."),
+        ("Future Value / Valuation Upside", "Bear/base/bull scenario analysis, expected value versus current price, and whether the market already prices in execution."),
+        ("Catalyst Support", "Forward demand drivers, company catalysts, and sector or macro tailwinds and headwinds."),
+        ("Risk Adjustment", "Execution risk, dilution risk, customer concentration, financing risk, and multiple compression risk."),
+        ("Thesis Momentum", "Whether recent updates are strengthening or weakening confidence and whether model inputs are moving in the right direction."),
+    ]
     definitions = [
         ("Strong Buy", "Exceptional risk/reward with strong business quality, attractive forward value, and supportive catalysts."),
         ("Buy", "Positive setup with meaningful upside and manageable risks."),
@@ -652,20 +722,18 @@ def render_methodology_details() -> str:
         ("Avoid", "Risk/reward is not attractive given current evidence and valuation."),
         ("Sell", "Thesis is deteriorating or valuation/risk is materially unfavorable."),
     ]
+    section_rows = "".join(f"<li><b>{escape(label)}</b><span>{escape(copy)}</span></li>" for label, copy in sections)
     definition_rows = "".join(f"<li><b>{escape(label)}</b><span>{escape(copy)}</span></li>" for label, copy in definitions)
     return f"""
     <details class="pt-methodology">
       <summary>View Methodology</summary>
       <div class="pt-methodology-panel">
-        <strong>Forward Decision Framework</strong>
+        <strong>PineTerminal Forward Decision Framework</strong>
         <p>The PineTerminal signal is forward-looking. It combines present business quality with scenario-based valuation, catalyst strength, risk adjustment, and thesis momentum. The goal is not just to score the company today, but to assess where the thesis is heading and whether the current stock price appropriately reflects that path.</p>
-        <div class="pt-methodology-pillars">
-          <span>Business Quality</span>
-          <span>Future Value</span>
-          <span>Catalyst Support</span>
-          <span>Risk Adjustment</span>
-          <span>Thesis Momentum</span>
-        </div>
+        <div class="pt-methodology-pillars"><span>Business Quality</span><span>Future Value</span><span>Catalyst Support</span><span>Risk Adjustment</span><span>Thesis Momentum</span></div>
+        <em>Core methodology pillars</em>
+        <ul>{section_rows}</ul>
+        <em>Signal definitions</em>
         <ul>{definition_rows}</ul>
       </div>
     </details>
@@ -742,6 +810,43 @@ def _quality_interpretation(name: str, analysis: CompanyAnalysis) -> str:
     return "Needs continued evidence."
 
 
+def _metric_interpretation(metric: FundamentalMetric) -> str:
+    trend = {"up": "improving", "down": "deteriorating", "flat": "stable"}.get(metric.trend, "tracked")
+    return f"{metric.status}. Current evidence is {metric.value} ({metric.label}); trend is {trend}."
+
+
+def render_fundamental_engine_panel(analysis: CompanyAnalysis) -> str:
+    rows = ""
+    for metric in analysis.fundamental_metrics:
+        tone = _score_tone(metric.score)
+        rows += f"""
+        <tr>
+          <td><strong>{escape(metric.name)}</strong></td>
+          <td><span class="{tone}">{metric.score:.1f}/10</span></td>
+          <td>{escape(metric.value)} <small>{escape(metric.label)}</small></td>
+          <td>{escape(_metric_interpretation(metric))}</td>
+        </tr>
+        """
+    return f"""
+    <div class="pt-detail-panel">
+      <div class="pt-detail-heading"><strong>Full Fundamental Engine</strong><span>8 Metrics</span></div>
+      <table class="pt-table pt-detail-table">
+        <thead><tr><th>Metric</th><th>Score</th><th>Current Metric</th><th>Interpretation</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+    """
+
+
+def render_fundamental_engine_details(analysis: CompanyAnalysis) -> str:
+    return f"""
+    <details class="pt-inline-details pt-full-engine-details">
+      <summary>View Full Fundamental Engine (8 Metrics)</summary>
+      {render_fundamental_engine_panel(analysis)}
+    </details>
+    """
+
+
 def render_decision_business_quality(analysis: CompanyAnalysis) -> str:
     metrics = {
         "Growth": _metric_by_name(analysis, "Revenue Growth"),
@@ -766,7 +871,7 @@ def render_decision_business_quality(analysis: CompanyAnalysis) -> str:
           </div>
         </div>
         """
-    body = f'<div class="pt-quality-pillars">{cards}</div><div class="pt-subtle-link">View Full Fundamental Engine (8 Metrics) v</div>'
+    body = f'<div class="pt-quality-pillars">{cards}</div>{render_fundamental_engine_details(analysis)}'
     return section("Business Quality", "", body)
 
 
@@ -809,6 +914,101 @@ def _valuation_interpretation(analysis: CompanyAnalysis) -> str:
     return "Base case supports some upside, but the setup still needs confirming evidence."
 
 
+def render_bridge_panel(analysis: CompanyAnalysis) -> str:
+    rows = f'{detail_row("Current Price", price(analysis.company.current_price))}'
+    for item in analysis.future_value_bridge:
+        tone = "bad" if item.type == "negative" else "good"
+        sign = "-" if item.type == "negative" else "+"
+        rows += f'<div class="pt-detail-row"><span>{escape(item.label)}<small>{escape(item.explanation)}</small></span><b class="{tone}">{sign}{price(abs(item.value_impact))}</b></div>'
+    final_value = calculate_future_value_bridge(analysis.company.current_price, analysis.future_value_bridge)
+    rows += f'<div class="pt-detail-row total"><span>Base Case Future Value</span><b class="info">{price(final_value)}</b></div>'
+    return f'<div class="pt-detail-card"><strong>Future Value Bridge</strong>{rows}</div>'
+
+
+def render_market_implied_panel(analysis: CompanyAnalysis) -> str:
+    item = analysis.market_implied_assumptions
+    return f"""
+    <div class="pt-detail-card">
+      <strong>Market-Implied Assumptions</strong>
+      {detail_row("Implied 2028 Revenue", money(item.implied_revenue, 0))}
+      {detail_row("Implied EV / Sales", f"{item.implied_ev_sales:.1f}x")}
+      {detail_row("Implied Gross Margin", percent(item.implied_gross_margin, 0, False))}
+      {detail_row("Base Revenue", money(item.base_revenue, 0))}
+      {detail_row("Base EV / Sales", f"{item.base_ev_sales:.1f}x")}
+      <p class="pt-detail-note {escape(item.tone)}">{escape(item.conclusion)}</p>
+    </div>
+    """
+
+
+def sensitivity_table_markup(table: SensitivityTable, current_price: float) -> str:
+    header = "".join(f"<th>{money(value, 0)}</th>" for value in table.revenue_columns)
+    rows = ""
+    for multiple in table.multiple_rows:
+        cells = ""
+        for revenue in table.revenue_columns:
+            classes = ["base"] if (revenue, multiple) == table.highlighted_cell else []
+            classes.append("upside" if table.values[(revenue, multiple)] > current_price else "downside")
+            cells += f'<td class="{" ".join(classes)}">{price(table.values[(revenue, multiple)])}</td>'
+        rows += f"<tr><th>{multiple:.1f}x</th>{cells}</tr>"
+    return f"""
+    <div class="pt-sensitivity">
+      <table class="pt-table pt-sensitivity-table">
+        <thead><tr><th>EV / Sales Multiple</th>{header}</tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+    <small class="pt-table-note">{escape(table.note)} Current price: {price(current_price)}.</small>
+    """
+
+
+def render_valuation_details(analysis: CompanyAnalysis) -> str:
+    scenario_rows = ""
+    math_rows = ""
+    for scenario in analysis.valuation_scenarios:
+        scenario_return = calculate_expected_return(scenario.future_share_price, analysis.company.current_price)
+        contribution = scenario.future_share_price * scenario.probability
+        scenario_rows += f"""
+        <tr>
+          <td><strong>{escape(scenario.name)}</strong></td>
+          <td>{money(scenario.revenue, 0)}</td>
+          <td>{scenario.ev_sales_multiple:.1f}x</td>
+          <td>{price(scenario.future_share_price)}</td>
+          <td>{percent(scenario_return, 1)}</td>
+          <td>{scenario.probability:.0%}</td>
+          <td>{escape(scenario.assumption)}</td>
+        </tr>
+        """
+        math_rows += detail_row(f"{scenario.name} contribution", f"{price(scenario.future_share_price)} x {scenario.probability:.0%} = {price(contribution)}")
+    expected_return = analysis.expected_value_detail.expected_return
+    return f"""
+    <details class="pt-inline-details pt-valuation-details">
+      <summary>View valuation details</summary>
+      <div class="pt-detail-panel">
+        <div class="pt-detail-heading"><strong>Valuation Details</strong><span>Scenario-derived expected value</span></div>
+        <table class="pt-table pt-detail-table">
+          <thead><tr><th>Scenario</th><th>Revenue</th><th>EV/Sales</th><th>Future Price</th><th>Return</th><th>Probability</th><th>Assumption</th></tr></thead>
+          <tbody>{scenario_rows}</tbody>
+        </table>
+        <div class="pt-detail-grid two">
+          <div class="pt-detail-card">
+            <strong>Expected Value Math</strong>
+            {math_rows}
+            {detail_row("Probability-weighted value", price(analysis.expected_value))}
+            {detail_row("Current price", price(analysis.company.current_price))}
+            {detail_row("Expected return", percent(expected_return, 1))}
+          </div>
+          {render_bridge_panel(analysis)}
+          {render_market_implied_panel(analysis)}
+        </div>
+        <div class="pt-detail-card wide">
+          <strong>Sensitivity Matrix</strong>
+          {sensitivity_table_markup(analysis.sensitivity_table, analysis.company.current_price)}
+        </div>
+      </div>
+    </details>
+    """
+
+
 def render_decision_future_value(analysis: CompanyAnalysis) -> str:
     scenarios = "".join(render_decision_scenario_card(item, analysis.company.current_price) for item in analysis.valuation_scenarios)
     expected_return = analysis.expected_value_detail.expected_return
@@ -823,7 +1023,7 @@ def render_decision_future_value(analysis: CompanyAnalysis) -> str:
     </div>
     <div class="pt-scenario-footer">
       <span>Key assumption: Revenue reaches {money(base.revenue, 0)} by {base.year} at {base.ev_sales_multiple:.1f}x EV / Sales</span>
-      <b>View valuation details -></b>
+      {render_valuation_details(analysis)}
     </div>
     """
     return section("Future Value Scenarios", "", body)
@@ -854,8 +1054,8 @@ def _driver_items(analysis: CompanyAnalysis, *, positive: bool) -> list[str]:
 
 
 def render_decision_thesis_drivers(analysis: CompanyAnalysis) -> str:
-    positive = "".join(f'<li><span class="pt-driver-dot good check"></span>{escape(item)}</li>' for item in _driver_items(analysis, positive=True))
-    negative = "".join(f'<li><span class="pt-driver-dot bad alert"></span>{escape(item)}</li>' for item in _driver_items(analysis, positive=False))
+    positive = "".join(f"<li>{driver_icon('positive')}{escape(item)}</li>" for item in _driver_items(analysis, positive=True))
+    negative = "".join(f"<li>{driver_icon('negative')}{escape(item)}</li>" for item in _driver_items(analysis, positive=False))
     levers = list(analysis.key_levers)
     if not levers:
         for item in analysis.what_must_be_true:
@@ -864,7 +1064,7 @@ def render_decision_thesis_drivers(analysis: CompanyAnalysis) -> str:
         for item in analysis.future_value_bridge:
             if item.label not in levers:
                 levers.append(item.label)
-    lever_rows = "".join(f'<li><span class="pt-lever-icon"></span>{escape(item)}</li>' for item in levers[:5])
+    lever_rows = "".join(f"<li>{driver_icon('lever')}{escape(item)}</li>" for item in levers[:5])
     body = f"""
     <div class="pt-drivers-grid">
       <div><h4 class="good">Positive Drivers</h4><ul>{positive}</ul></div>
@@ -898,7 +1098,7 @@ def render_decision_risks(analysis: CompanyAnalysis) -> str:
         risk_name = _plain_risk_name(item.risk_name)
         rows += f"""
         <tr>
-          <td><span class="pt-risk-name"><b>{idx}</b><span class="pt-risk-icon {risk_icon_class(risk_name)}"></span><span>{escape(risk_name)}</span></span></td>
+          <td><span class="pt-risk-name"><b>{idx}</b>{risk_icon(risk_name)}<span>{escape(risk_name)}</span></span></td>
           <td><span class="pt-pill {tone}">{escape(item.severity)}</span></td>
           <td>{escape(item.description)}</td>
           <td>{escape(item.mitigant)}</td>
@@ -909,9 +1109,37 @@ def render_decision_risks(analysis: CompanyAnalysis) -> str:
       <thead><tr><th>Risk</th><th>Severity</th><th>Why it matters</th><th>What would reduce this risk</th></tr></thead>
       <tbody>{rows}</tbody>
     </table>
-    <div class="pt-subtle-link right">View All Risks & Mitigants -></div>
+    {render_all_risks_details(analysis)}
     """
     return section("Key Risks", "Top 3", body)
+
+
+def render_all_risks_details(analysis: CompanyAnalysis) -> str:
+    rows = ""
+    for idx, item in enumerate(analysis.risks, start=1):
+        tone = tone_for_impact(item.severity)
+        risk_name = _plain_risk_name(item.risk_name)
+        rows += f"""
+        <tr>
+          <td><span class="pt-risk-name"><b>{idx}</b>{risk_icon(risk_name)}<span>{escape(risk_name)}</span></span></td>
+          <td><span class="pt-pill {tone}">{escape(item.severity)}</span></td>
+          <td>{escape(item.description)}</td>
+          <td>{escape(item.mitigant)}</td>
+          <td>{escape(item.current_status)}</td>
+        </tr>
+        """
+    return f"""
+    <details class="pt-inline-details right">
+      <summary>View All Risks & Mitigants</summary>
+      <div class="pt-detail-panel">
+        <div class="pt-detail-heading"><strong>All Tracked Risks</strong><span>{len(analysis.risks)} risks</span></div>
+        <table class="pt-table pt-detail-table">
+          <thead><tr><th>Risk</th><th>Severity</th><th>Why it matters</th><th>What would reduce this risk</th><th>Status / Trend</th></tr></thead>
+          <tbody>{rows}</tbody>
+        </table>
+      </div>
+    </details>
+    """
 
 
 def _plain_risk_name(name: str) -> str:
@@ -925,9 +1153,10 @@ def _plain_risk_name(name: str) -> str:
     return name
 
 
-def render_decision_recent_changes(analysis: CompanyAnalysis) -> str:
+def render_thesis_update_rows(analysis: CompanyAnalysis, limit: int | None = None) -> str:
     rows = ""
-    for item in analysis.thesis_updates[:4]:
+    updates = analysis.thesis_updates if limit is None else analysis.thesis_updates[:limit]
+    for item in updates:
         tone = tone_for_impact(item.impact)
         thesis_arrow = "Up" if tone == "good" else "Down" if tone == "bad" else "Flat"
         valuation_arrow = thesis_arrow
@@ -943,26 +1172,88 @@ def render_decision_recent_changes(analysis: CompanyAnalysis) -> str:
           <td>{escape(item.dashboard_adjustment)}</td>
         </tr>
         """
+    return rows
+
+
+def render_all_updates_details(analysis: CompanyAnalysis) -> str:
+    rows = render_thesis_update_rows(analysis)
+    return f"""
+    <details class="pt-inline-details centered">
+      <summary>View All Updates & Thesis Impact</summary>
+      <div class="pt-detail-panel">
+        <div class="pt-detail-heading"><strong>Full Thesis Update Feed</strong><span>{len(analysis.thesis_updates)} updates</span></div>
+        <table class="pt-table pt-changes-table pt-detail-table">
+          <thead><tr><th>Date</th><th>Update</th><th>Type</th><th>Impact</th><th>Thesis Impact</th><th>Valuation Impact</th><th>Why it matters</th><th>Model Impact</th></tr></thead>
+          <tbody>{rows}</tbody>
+        </table>
+      </div>
+    </details>
+    """
+
+
+def render_decision_recent_changes(analysis: CompanyAnalysis) -> str:
+    rows = render_thesis_update_rows(analysis, 4)
     body = f"""
     <table class="pt-table pt-changes-table">
       <thead><tr><th>Date</th><th>Update</th><th>Type</th><th>Impact</th><th>Thesis Impact</th><th>Valuation Impact</th><th>Why it matters</th><th>Model Impact</th></tr></thead>
       <tbody>{rows}</tbody>
     </table>
-    <div class="pt-subtle-link centered">View All Updates & Thesis Impact -></div>
+    {render_all_updates_details(analysis)}
     """
     return section("Recent Thesis Changes", "", body)
 
 
-def render_advanced_model_details() -> str:
-    return """
-    <div class="pt-section pt-advanced-details">
-      <span class="pt-lock-icon"></span>
-      <div>
-        <strong>Advanced Model Details <small>(Expand)</small></strong>
-        <p>Full fundamental engine, sensitivity tables, valuation bridge, market-implied assumptions, full read-through feed, key stats, next events, and more.</p>
-      </div>
-      <b class="pt-accordion-caret"></b>
+def render_key_stats_panel(analysis: CompanyAnalysis) -> str:
+    values = _key_stats_for_analysis(analysis)
+    return f"""
+    <div class="pt-detail-card">
+      <strong>Key Stats</strong>
+      {detail_row("Shares Outstanding (Dil.)", values["shares"])}
+      {detail_row("Insider Ownership", values["insider"])}
+      {detail_row("Cash & Equivalents", values["cash"])}
+      {detail_row("Revenue Run-Rate / TTM", values["revenue"])}
+      {detail_row("Gross Margin", values["gross_margin"])}
+      {detail_row("Cash Burn Run-Rate / TTM", values["cash_burn"])}
     </div>
+    """
+
+
+def render_next_events_panel(analysis: CompanyAnalysis) -> str:
+    rows = "".join(detail_row(item["event"], item["date"]) for item in analysis.next_events)
+    if not rows:
+        rows = detail_row("Next events", "N/A")
+    return f'<div class="pt-detail-card"><strong>Next Events</strong>{rows}</div>'
+
+
+def render_advanced_model_details(analysis: CompanyAnalysis) -> str:
+    return f"""
+    <details class="pt-section pt-advanced-details">
+      <summary>
+        <span class="pt-lock-icon"></span>
+        <span>
+          <strong>Advanced Model Details <small>(Expand)</small></strong>
+          <p>Full fundamental engine, sensitivity table, valuation bridge, market-implied assumptions, full read-through feed, key stats, next events, and more.</p>
+        </span>
+        <b class="pt-accordion-caret"></b>
+      </summary>
+      <div class="pt-advanced-content">
+        {render_fundamental_engine_panel(analysis)}
+        <div class="pt-detail-grid two">
+          {render_bridge_panel(analysis)}
+          {render_market_implied_panel(analysis)}
+          {render_key_stats_panel(analysis)}
+          {render_next_events_panel(analysis)}
+        </div>
+        <div class="pt-detail-card wide">
+          <strong>Sensitivity Table</strong>
+          {sensitivity_table_markup(analysis.sensitivity_table, analysis.company.current_price)}
+        </div>
+        <div class="pt-detail-card wide">
+          <strong>Full Read-Through Feed</strong>
+          {render_readthrough_table(analysis.market_read_through)}
+        </div>
+      </div>
+    </details>
     """
 
 
@@ -976,7 +1267,7 @@ def render_company_dashboard(analysis: CompanyAnalysis) -> None:
         + render_decision_thesis_drivers(analysis)
         + f'<div class="pt-decision-row pt-risk-decision-row">{render_decision_checklist(analysis)}{render_decision_risks(analysis)}</div>'
         + render_decision_recent_changes(analysis)
-        + render_advanced_model_details()
+        + render_advanced_model_details(analysis)
         + "</div>"
     )
 
