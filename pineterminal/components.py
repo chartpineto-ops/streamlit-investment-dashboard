@@ -152,7 +152,7 @@ def render_topbar(page: str, ticker: str, currency: str, data_mode: str = "Demo"
     html(
         f"""
         <div class="pt-topbar">
-          <div class="pt-breadcrumb">Dashboard / <b>{escape(ticker)}</b></div>
+          <div class="pt-breadcrumb">Dashboard / Company Analysis / <b>{escape(ticker)}</b></div>
           <div class="pt-actions">
             <span class="pt-action">+ Add to Watchlist</span>
             <span class="pt-action">Share</span>
@@ -529,16 +529,298 @@ def render_next_events(analysis: CompanyAnalysis) -> str:
     return section("Next Events", "", events_body)
 
 
+def _metric_by_name(analysis: CompanyAnalysis, name: str) -> FundamentalMetric | None:
+    return next((metric for metric in analysis.fundamental_metrics if metric.name == name), None)
+
+
+def _score_tone(score: float, *, risk: bool = False) -> str:
+    if risk and score < 5:
+        return "bad"
+    if score >= 7:
+        return "good"
+    if score >= 5:
+        return "warn"
+    return "bad"
+
+
+def _decision_summary(signal: str, risk_level: str) -> str:
+    if signal in {"Strong Buy", "Buy", "Speculative Buy"}:
+        return f"High-upside, high-risk setup. The future value case is attractive, but execution, dilution, and the {risk_level.casefold()} risk profile still need monitoring."
+    if signal == "Hold":
+        return "Balanced setup. Upside and risk are roughly matched, so new evidence matters more than the headline valuation."
+    return "Risk/reward is unfavorable at the current setup. Better evidence or a lower entry price would be needed."
+
+
+def _thesis_status(analysis: CompanyAnalysis) -> tuple[str, str]:
+    score = analysis.thesis_summary.net_thesis_impact_score
+    if score > 0.8:
+        return "Strengthening", "good"
+    if score < -0.3:
+        return "Weakening", "bad"
+    return "Tracking", "warn"
+
+
+def _score_breakdown_rows(analysis: CompanyAnalysis) -> str:
+    label_map = {
+        "Fundamental Score": "Business Quality",
+        "Valuation / Upside": "Valuation Upside",
+        "Catalyst / Momentum": "Catalyst Support",
+        "Risk Adjustment": "Risk Adjustment",
+    }
+    rows = ""
+    for label, (score, _weight) in analysis.investment_signal.score_breakdown.items():
+        display = label_map.get(label, label)
+        tone = _score_tone(score, risk="Risk" in label)
+        rows += f"""
+        <div class="pt-decision-score">
+          <span>{escape(display)}</span>
+          <strong class="{tone}">{score:.1f}<small>/10</small></strong>
+          <i class="{tone}" style="--score:{max(0, min(100, score * 10)):.0f}%"></i>
+        </div>
+        """
+    total_tone = tone_for_signal(analysis.investment_signal.signal)
+    rows += f"""
+    <div class="pt-decision-score total">
+      <span>Total Score</span>
+      <strong class="{total_tone}">{analysis.investment_signal.total_score:.1f}<small>/10</small></strong>
+      <i class="{total_tone}" style="--score:{max(0, min(100, analysis.investment_signal.total_score * 10)):.0f}%"></i>
+    </div>
+    """
+    return rows
+
+
+def render_investment_decision(analysis: CompanyAnalysis) -> str:
+    signal = analysis.investment_signal
+    expected_return = analysis.expected_value_detail.expected_return
+    status, status_tone = _thesis_status(analysis)
+    return f"""
+    <div class="pt-section pt-decision-card">
+      <div class="pt-decision-main">
+        <div class="pt-decision-icon"><span></span></div>
+        <div class="pt-decision-copy">
+          <div class="pt-section-title flat"><span>Investment Decision</span></div>
+          <strong class="{tone_for_signal(signal.signal)}">{escape(signal.signal)}</strong>
+          <p>{escape(_decision_summary(signal.signal, signal.risk_level))}</p>
+        </div>
+        <div class="pt-decision-quick">
+          {value_row("Expected 36M Return", percent(expected_return, 0), tone_for_value(expected_return))}
+          {value_row("Thesis Status", status, status_tone)}
+          {value_row("Conviction", signal.conviction, "warn")}
+          {value_row("Risk Level", signal.risk_level, tone_for_impact(signal.risk_level))}
+        </div>
+      </div>
+      <div class="pt-decision-breakdown">
+        <span class="pt-mini-label">Score Breakdown</span>
+        <div class="pt-decision-score-grid">{_score_breakdown_rows(analysis)}</div>
+        <span class="pt-methodology">View Methodology</span>
+      </div>
+    </div>
+    """
+
+
+def render_decision_business_quality(analysis: CompanyAnalysis) -> str:
+    metrics = {
+        "Growth": _metric_by_name(analysis, "Revenue Growth"),
+        "Profitability": _metric_by_name(analysis, "Gross Margin"),
+        "Balance Sheet": _metric_by_name(analysis, "Balance Sheet"),
+        "Execution": _metric_by_name(analysis, "Execution Quality"),
+    }
+    descriptions = {
+        "Growth": "Demand is scaling from the current revenue base.",
+        "Profitability": "Margins are improving, but cash burn remains important.",
+        "Balance Sheet": "Liquidity and leverage frame dilution risk.",
+        "Execution": "Management progress against near-term milestones.",
+    }
+    icons = {"Growth": "GR", "Profitability": "PF", "Balance Sheet": "BS", "Execution": "EX"}
+    cards = ""
+    for name, metric in metrics.items():
+        score = metric.score if metric else 0.0
+        tone = _score_tone(score)
+        headline = f"{metric.value} - {metric.label}" if metric else "N/A"
+        cards += f"""
+        <div class="pt-quality-pillar">
+          <span class="pt-line-icon">{escape(icons[name])}</span>
+          <div>
+            <strong>{escape(name)}</strong>
+            <b class="{tone}">{score:.1f}<small>/10</small></b>
+            <em>{escape(headline)}</em>
+            <p>{escape(descriptions[name])}</p>
+          </div>
+        </div>
+        """
+    body = f'<div class="pt-quality-pillars">{cards}</div><div class="pt-subtle-link">View Full Fundamental Engine (8 Metrics) v</div>'
+    return section("Business Quality", "", body)
+
+
+def _scenario_tone(name: str) -> str:
+    if "Bear" in name:
+        return "bad"
+    if "Bull" in name:
+        return "good"
+    return "info"
+
+
+def render_decision_scenario_card(scenario: ValuationScenario, current_price: float) -> str:
+    tone = _scenario_tone(scenario.name)
+    scenario_return = calculate_expected_return(scenario.future_share_price, current_price)
+    return f"""
+    <div class="pt-decision-scenario {tone}">
+      <h4 class="{tone}">{escape(scenario.name)}</h4>
+      <strong>{price(scenario.future_share_price)}</strong>
+      <b class="{tone_for_value(scenario_return)}">{percent(scenario_return, 0)}</b>
+      <span>{scenario.probability:.0%} Probability</span>
+      <div class="pt-data-list">
+        {value_row(f"Revenue ({scenario.year})", money(scenario.revenue, 0))}
+        {value_row("EV / Sales", f"{scenario.ev_sales_multiple:.1f}x")}
+      </div>
+      <p>{escape(scenario.assumption)}</p>
+    </div>
+    """
+
+
+def render_decision_future_value(analysis: CompanyAnalysis) -> str:
+    scenarios = "".join(render_decision_scenario_card(item, analysis.company.current_price) for item in analysis.valuation_scenarios)
+    expected_return = analysis.expected_value_detail.expected_return
+    base = next((item for item in analysis.valuation_scenarios if item.name == "Base Case"), analysis.valuation_scenarios[0])
+    body = f"""
+    <div class="pt-decision-scenarios">{scenarios}</div>
+    <div class="pt-expected-strip">
+      {value_row("Probability-Weighted Expected Value", price(analysis.expected_value), "good")}
+      {value_row("Expected Return", percent(expected_return, 1), tone_for_value(expected_return))}
+      {value_row("Current Price", price(analysis.company.current_price))}
+    </div>
+    <div class="pt-scenario-footer">
+      <span>Key assumption: Revenue reaches {money(base.revenue, 0)} by {base.year} at {base.ev_sales_multiple:.1f}x EV / Sales</span>
+      <b>View valuation details -></b>
+    </div>
+    """
+    return section("Future Value Scenarios", "", body)
+
+
+def _driver_items(analysis: CompanyAnalysis, *, positive: bool) -> list[str]:
+    desired = []
+    for item in analysis.thesis_updates:
+        tone = tone_for_impact(item.impact)
+        if positive and tone == "good":
+            desired.append(item.explanation)
+        elif not positive and tone == "bad":
+            desired.append(item.explanation)
+    if positive:
+        for item in analysis.what_must_be_true:
+            desired.append(item.description)
+    else:
+        for item in analysis.risks:
+            desired.append(item.description)
+    cleaned = []
+    for text in desired:
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned[:3] or ["N/A"]
+
+
+def render_decision_thesis_drivers(analysis: CompanyAnalysis) -> str:
+    positive = "".join(f'<li><span class="pt-driver-dot good">+</span>{escape(item)}</li>' for item in _driver_items(analysis, positive=True))
+    negative = "".join(f'<li><span class="pt-driver-dot bad">!</span>{escape(item)}</li>' for item in _driver_items(analysis, positive=False))
+    levers = []
+    for item in analysis.what_must_be_true:
+        if item.valuation_lever not in levers:
+            levers.append(item.valuation_lever)
+    for item in analysis.future_value_bridge:
+        if item.label not in levers:
+            levers.append(item.label)
+    lever_rows = "".join(f'<li><span class="pt-lever-icon"></span>{escape(item)}</li>' for item in levers[:4])
+    body = f"""
+    <div class="pt-drivers-grid">
+      <div><h4 class="good">Positive Drivers</h4><ul>{positive}</ul></div>
+      <div><h4 class="bad">Negative Drivers</h4><ul>{negative}</ul></div>
+      <div class="pt-key-levers"><h4>Key Levers</h4><ul>{lever_rows}</ul></div>
+    </div>
+    """
+    return section("Thesis Drivers", "", body)
+
+
+def render_decision_checklist(analysis: CompanyAnalysis) -> str:
+    rows = "".join(
+        f'<li><span class="pt-check good">OK</span>{escape(item.description)}</li>'
+        for item in analysis.what_must_be_true[:5]
+    )
+    body = f'<ul class="pt-simple-checklist">{rows}</ul><p class="pt-bottom-line">Bottom line: Upside depends on execution, not just hype.</p>'
+    return section("What Must Be True", "", body)
+
+
+def render_decision_risks(analysis: CompanyAnalysis) -> str:
+    rows = ""
+    for item in analysis.risks[:3]:
+        tone = tone_for_impact(item.severity)
+        rows += f"""
+        <tr>
+          <td><b>{item.rank}</b> {escape(item.risk_name)}</td>
+          <td><span class="pt-pill {tone}">{escape(item.severity)}</span></td>
+          <td>{escape(item.description)}</td>
+          <td>{escape(item.mitigant)}</td>
+        </tr>
+        """
+    body = f"""
+    <table class="pt-table pt-key-risk-table">
+      <thead><tr><th>Risk</th><th>Severity</th><th>Why it matters</th><th>What would reduce this risk</th></tr></thead>
+      <tbody>{rows}</tbody>
+    </table>
+    <div class="pt-subtle-link right">View All Risks & Mitigants -></div>
+    """
+    return section("Key Risks", "Top 3", body)
+
+
+def render_decision_recent_changes(analysis: CompanyAnalysis) -> str:
+    rows = ""
+    for item in analysis.thesis_updates[:4]:
+        tone = tone_for_impact(item.impact)
+        thesis_arrow = "Up" if tone == "good" else "Down" if tone == "bad" else "Flat"
+        valuation_arrow = thesis_arrow
+        rows += f"""
+        <tr>
+          <td><span class="pt-change-dot {tone}"></span>{escape(compact_date(item.date))}</td>
+          <td><strong>{escape(item.title)}</strong></td>
+          <td>{escape(item.type)}</td>
+          <td><span class="pt-pill {tone}">{escape(item.impact)}</span></td>
+          <td><b class="{tone}">{thesis_arrow}</b></td>
+          <td><b class="{tone}">{valuation_arrow}</b></td>
+          <td>{escape(item.explanation)}</td>
+        </tr>
+        """
+    body = f"""
+    <table class="pt-table pt-changes-table">
+      <thead><tr><th>Date</th><th>Update</th><th>Type</th><th>Impact</th><th>Thesis Impact</th><th>Valuation Impact</th><th>Why it matters</th></tr></thead>
+      <tbody>{rows}</tbody>
+    </table>
+    <div class="pt-subtle-link centered">View All Updates & Thesis Impact -></div>
+    """
+    return section("Recent Thesis Changes", "", body)
+
+
+def render_advanced_model_details() -> str:
+    return """
+    <div class="pt-section pt-advanced-details">
+      <span class="pt-lock-icon"></span>
+      <div>
+        <strong>Advanced Model Details <small>(Expand)</small></strong>
+        <p>Full fundamental engine, sensitivity tables, valuation bridge, market-implied assumptions, full read-through feed, key stats, next events, and more.</p>
+      </div>
+      <b>></b>
+    </div>
+    """
+
+
 def render_company_dashboard(analysis: CompanyAnalysis) -> None:
     company_profile = company_profile_from_analysis(analysis)
     html(
-        '<div class="pt-shell">'
+        '<div class="pt-shell pt-decision-shell">'
         + render_company_header(company_profile)
-        + render_business_quality(analysis)
-        + f'<div class="pt-row-valuation">{render_future_value_model(analysis)}{render_market_readthrough(analysis)}</div>'
-        + f'<div class="pt-row-assumptions">{render_must_be_true(analysis)}{render_bridge(analysis)}{render_market_implied(analysis)}</div>'
-        + f'<div class="pt-row-impact">{render_sensitivity_table(analysis.sensitivity_table, analysis.company.current_price)}{render_risks(analysis)}{render_updates(analysis)}</div>'
-        + f'<div class="pt-row-bottom">{render_signal(analysis)}{render_key_stats(analysis)}{render_next_events(analysis)}</div>'
+        + render_investment_decision(analysis)
+        + f'<div class="pt-decision-row">{render_decision_business_quality(analysis)}{render_decision_future_value(analysis)}</div>'
+        + render_decision_thesis_drivers(analysis)
+        + f'<div class="pt-decision-row pt-risk-decision-row">{render_decision_checklist(analysis)}{render_decision_risks(analysis)}</div>'
+        + render_decision_recent_changes(analysis)
+        + render_advanced_model_details()
         + "</div>"
     )
 
