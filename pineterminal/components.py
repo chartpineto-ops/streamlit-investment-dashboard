@@ -33,6 +33,58 @@ METRIC_BADGES = {
 }
 
 
+def signal_visual(signal: str) -> dict[str, str]:
+    states = {
+        "Strong Buy": {"slug": "strong-buy", "tone": "good", "fill": "162deg", "angle": "-18deg"},
+        "Buy": {"slug": "buy", "tone": "good", "fill": "140deg", "angle": "-38deg"},
+        "Speculative Buy": {"slug": "speculative-buy", "tone": "good", "fill": "115deg", "angle": "-58deg"},
+        "Hold": {"slug": "hold", "tone": "warn", "fill": "90deg", "angle": "-90deg"},
+        "Avoid": {"slug": "avoid", "tone": "bad", "fill": "58deg", "angle": "-122deg"},
+        "Sell": {"slug": "sell", "tone": "bad", "fill": "30deg", "angle": "-154deg"},
+    }
+    return states.get(signal, {"slug": "neutral", "tone": "neutral", "fill": "90deg", "angle": "-90deg"})
+
+
+def signal_gauge(signal: str) -> str:
+    visual = signal_visual(signal)
+    return (
+        f'<div class="pt-gauge {visual["tone"]} {visual["slug"]}" '
+        f'style="--gauge-fill:{visual["fill"]}; --needle-angle:{visual["angle"]}" '
+        'title="Signal gauge"><span></span></div>'
+    )
+
+
+def signal_badge_icon(signal: str) -> str:
+    visual = signal_visual(signal)
+    return f'<div class="pt-decision-icon {visual["tone"]} {visual["slug"]}"><span class="pt-signal-arrow"><i></i></span></div>'
+
+
+def business_quality_icon(category: str) -> str:
+    key = {
+        "Growth": "growth",
+        "Profitability": "profitability",
+        "Balance Sheet": "balance",
+        "Execution": "execution",
+    }.get(category, "generic")
+    return f'<span class="pt-line-icon pt-quality-icon {key}"><i></i></span>'
+
+
+def scenario_icon(name: str) -> str:
+    key = "bear" if "Bear" in name else "bull" if "Bull" in name else "base"
+    return f'<span class="pt-scenario-icon {key}"><i></i></span>'
+
+
+def risk_icon_class(name: str) -> str:
+    value = name.casefold()
+    if "customer" in value:
+        return "customer"
+    if "dilution" in value or "capital" in value:
+        return "dilution"
+    if "scaling" in value or "technology" in value or "product" in value or "execution" in value:
+        return "scaling"
+    return "generic"
+
+
 def money(value: float, decimals: int = 1) -> str:
     if value is None:
         return "N/A"
@@ -222,6 +274,7 @@ def company_profile_from_analysis(analysis: CompanyAnalysis) -> CompanyProfile:
 def render_company_header(profile: CompanyProfile) -> str:
     primary_theme = profile.themes[0] if profile.themes else profile.industry
     signal_tone = tone_for_signal(profile.investment_signal)
+    gauge = signal_gauge(profile.investment_signal)
     day_change = profile.day_change_dollar
     if day_change is None:
         day_change_label = "N/A"
@@ -257,7 +310,7 @@ def render_company_header(profile: CompanyProfile) -> str:
         <div class="pt-kpi pt-score-big"><span>Fundamental Score</span><strong>{profile.fundamental_score:.1f}</strong><b>/10</b><small class="good">{escape(profile.fundamental_label)}</small></div>
         <div class="pt-kpi"><span>Expected 36M Return</span><strong class="{tone_for_value(profile.expected36m_return)}">{percent(profile.expected36m_return, 0)}</strong><b>{escape(profile.expected_return_label)}</b></div>
         <div class="pt-kpi pt-signal-kpi"><span>Investment Signal</span><strong class="{signal_tone}">{escape(profile.investment_signal)}</strong><b>Confidence: {escape(profile.confidence)} | Risk: {escape(profile.risk_level)}</b></div>
-        <div class="pt-gauge {signal_tone}" title="Signal gauge"></div>
+        {gauge}
       </div>
     </div>
     """
@@ -590,6 +643,35 @@ def _score_breakdown_rows(analysis: CompanyAnalysis) -> str:
     return rows
 
 
+def render_methodology_details() -> str:
+    definitions = [
+        ("Strong Buy", "Exceptional risk/reward with strong business quality, attractive forward value, and supportive catalysts."),
+        ("Buy", "Positive setup with meaningful upside and manageable risks."),
+        ("Speculative Buy", "Attractive upside, but execution and uncertainty remain elevated."),
+        ("Hold", "Balanced setup. Upside exists, but the current price already reflects much of the thesis."),
+        ("Avoid", "Risk/reward is not attractive given current evidence and valuation."),
+        ("Sell", "Thesis is deteriorating or valuation/risk is materially unfavorable."),
+    ]
+    definition_rows = "".join(f"<li><b>{escape(label)}</b><span>{escape(copy)}</span></li>" for label, copy in definitions)
+    return f"""
+    <details class="pt-methodology">
+      <summary>View Methodology</summary>
+      <div class="pt-methodology-panel">
+        <strong>Forward Decision Framework</strong>
+        <p>The PineTerminal signal is forward-looking. It combines present business quality with scenario-based valuation, catalyst strength, risk adjustment, and thesis momentum. The goal is not just to score the company today, but to assess where the thesis is heading and whether the current stock price appropriately reflects that path.</p>
+        <div class="pt-methodology-pillars">
+          <span>Business Quality</span>
+          <span>Future Value</span>
+          <span>Catalyst Support</span>
+          <span>Risk Adjustment</span>
+          <span>Thesis Momentum</span>
+        </div>
+        <ul>{definition_rows}</ul>
+      </div>
+    </details>
+    """
+
+
 def render_investment_decision(analysis: CompanyAnalysis) -> str:
     signal = analysis.investment_signal
     expected_return = analysis.expected_value_detail.expected_return
@@ -598,7 +680,7 @@ def render_investment_decision(analysis: CompanyAnalysis) -> str:
     return f"""
     <div class="pt-section pt-decision-card">
       <div class="pt-decision-main">
-        <div class="pt-decision-icon {signal_tone}"><span></span></div>
+        {signal_badge_icon(signal.signal)}
         <div class="pt-decision-copy">
           <div class="pt-section-title flat"><span>Investment Decision</span></div>
           <strong class="{signal_tone}">{escape(signal.signal)}</strong>
@@ -613,9 +695,9 @@ def render_investment_decision(analysis: CompanyAnalysis) -> str:
         </div>
       </div>
       <div class="pt-decision-breakdown">
-        <span class="pt-mini-label">Score Breakdown</span>
+        <div class="pt-score-label"><span class="pt-mini-label">Score Breakdown</span><small>Scores reflect both current evidence and expected future trajectory.</small></div>
         <div class="pt-decision-score-grid">{_score_breakdown_rows(analysis)}</div>
-        <span class="pt-methodology">View Methodology</span>
+        {render_methodology_details()}
       </div>
     </div>
     """
@@ -667,7 +749,6 @@ def render_decision_business_quality(analysis: CompanyAnalysis) -> str:
         "Balance Sheet": _metric_by_name(analysis, "Balance Sheet"),
         "Execution": _metric_by_name(analysis, "Execution Quality"),
     }
-    icons = {"Growth": "GR", "Profitability": "PF", "Balance Sheet": "BS", "Execution": "EX"}
     cards = ""
     for name, metric in metrics.items():
         score = metric.score if metric else 0.0
@@ -676,7 +757,7 @@ def render_decision_business_quality(analysis: CompanyAnalysis) -> str:
         interpretation = _quality_interpretation(name, analysis)
         cards += f"""
         <div class="pt-quality-pillar">
-          <span class="pt-line-icon">{escape(icons[name])}</span>
+          {business_quality_icon(name)}
           <div>
             <strong>{escape(name)}</strong>
             <b class="{tone}">{score:.1f}<small>/10</small></b>
@@ -702,7 +783,7 @@ def render_decision_scenario_card(scenario: ValuationScenario, current_price: fl
     scenario_return = calculate_expected_return(scenario.future_share_price, current_price)
     return f"""
     <div class="pt-decision-scenario {tone}">
-      <h4 class="{tone}">{escape(scenario.name)}</h4>
+      <h4 class="{tone}">{scenario_icon(scenario.name)}<span>{escape(scenario.name)}</span></h4>
       <strong>{price(scenario.future_share_price)}</strong>
       <b class="{tone_for_value(scenario_return)}">{percent(scenario_return, 0)}</b>
       <span>{scenario.probability:.0%} Probability</span>
@@ -720,11 +801,11 @@ def _valuation_interpretation(analysis: CompanyAnalysis) -> str:
     base = next((item for item in analysis.valuation_scenarios if item.name == "Base Case"), analysis.valuation_scenarios[0])
     base_return = calculate_expected_return(base.future_share_price, analysis.company.current_price)
     if base_return < 0 and expected_return < 15:
-        return "Base case is slightly below today's price; upside depends on bull-case execution, so the signal stays Hold at today's price."
+        return "Base case sits below today's price; upside depends on stronger execution."
     if expected_return < 15:
-        return "Expected return is modest at today's price, which supports a Hold signal despite an attractive bull case."
+        return "Expected return is modest, so the signal stays balanced despite bull-case upside."
     if expected_return > 40:
-        return "Probability-weighted upside is meaningful, but execution and dilution determine whether the bull case is reachable."
+        return "Upside is meaningful, but execution and dilution decide the path."
     return "Base case supports some upside, but the setup still needs confirming evidence."
 
 
@@ -773,8 +854,8 @@ def _driver_items(analysis: CompanyAnalysis, *, positive: bool) -> list[str]:
 
 
 def render_decision_thesis_drivers(analysis: CompanyAnalysis) -> str:
-    positive = "".join(f'<li><span class="pt-driver-dot good">+</span>{escape(item)}</li>' for item in _driver_items(analysis, positive=True))
-    negative = "".join(f'<li><span class="pt-driver-dot bad">!</span>{escape(item)}</li>' for item in _driver_items(analysis, positive=False))
+    positive = "".join(f'<li><span class="pt-driver-dot good check"></span>{escape(item)}</li>' for item in _driver_items(analysis, positive=True))
+    negative = "".join(f'<li><span class="pt-driver-dot bad alert"></span>{escape(item)}</li>' for item in _driver_items(analysis, positive=False))
     levers = list(analysis.key_levers)
     if not levers:
         for item in analysis.what_must_be_true:
@@ -799,7 +880,14 @@ def render_decision_checklist(analysis: CompanyAnalysis) -> str:
     for item in analysis.what_must_be_true[:5]:
         tone = tone_for_impact(item.status)
         rows += f'<li><span>{escape(item.description)}</span><b class="pt-status-badge {tone}">{escape(item.status)}</b></li>'
-    body = f'<ul class="pt-simple-checklist">{rows}</ul><p class="pt-bottom-line">Bottom line: Upside depends on execution, not just hype.</p>'
+    legend = (
+        '<div class="pt-status-legend">'
+        '<span><i class="good"></i>Tracking</span>'
+        '<span><i class="warn"></i>Needs Proof / Monitoring</span>'
+        '<span><i class="bad"></i>At Risk</span>'
+        '</div>'
+    )
+    body = f'{legend}<ul class="pt-simple-checklist">{rows}</ul><p class="pt-bottom-line">Bottom line: Upside depends on execution, not just hype.</p>'
     return section("What Must Be True", "", body)
 
 
@@ -807,9 +895,10 @@ def render_decision_risks(analysis: CompanyAnalysis) -> str:
     rows = ""
     for idx, item in enumerate(analysis.risks[:3], start=1):
         tone = tone_for_impact(item.severity)
+        risk_name = _plain_risk_name(item.risk_name)
         rows += f"""
         <tr>
-          <td><b>{idx}</b> {escape(_plain_risk_name(item.risk_name))}</td>
+          <td><span class="pt-risk-name"><b>{idx}</b><span class="pt-risk-icon {risk_icon_class(risk_name)}"></span><span>{escape(risk_name)}</span></span></td>
           <td><span class="pt-pill {tone}">{escape(item.severity)}</span></td>
           <td>{escape(item.description)}</td>
           <td>{escape(item.mitigant)}</td>
@@ -872,7 +961,7 @@ def render_advanced_model_details() -> str:
         <strong>Advanced Model Details <small>(Expand)</small></strong>
         <p>Full fundamental engine, sensitivity tables, valuation bridge, market-implied assumptions, full read-through feed, key stats, next events, and more.</p>
       </div>
-      <b>></b>
+      <b class="pt-accordion-caret"></b>
     </div>
     """
 

@@ -1491,7 +1491,7 @@ button, input, textarea, select {
   border-color: rgba(80, 111, 148, 0.52);
 }
 .pt-decision-shell .pt-header {
-  grid-template-columns: minmax(260px, 1.15fr) minmax(460px, 1.95fr) minmax(460px, 1.7fr);
+  grid-template-columns: minmax(250px, 1.12fr) minmax(420px, 1.86fr) minmax(390px, 1.5fr);
   padding: 1rem 1.1rem;
 }
 .pt-decision-shell .pt-ticker {
@@ -1511,32 +1511,97 @@ button, input, textarea, select {
   color: var(--yellow);
 }
 .pt-source-link {
-  color: var(--blue);
-  font-size: 0.68rem;
-  font-weight: 850;
-  border: 1px solid rgba(91, 182, 255, 0.22);
-  background: rgba(91, 182, 255, 0.07);
+  color: #8fb7da;
+  font-size: 0.66rem;
+  font-weight: 800;
+  border: 1px solid rgba(122, 152, 184, 0.18);
+  background: rgba(122, 152, 184, 0.045);
   border-radius: 999px;
-  padding: 0.18rem 0.45rem;
+  padding: 0.14rem 0.38rem;
 }
 .pt-decision-shell .pt-header-signal {
-  border: 1px solid rgba(122, 152, 184, 0.2);
+  grid-template-columns: minmax(82px, 0.72fr) minmax(96px, 0.78fr) minmax(130px, 1fr) 4.2rem;
+  gap: 0.42rem;
+  border: 1px solid rgba(122, 152, 184, 0.28);
   border-radius: 7px;
-  background: rgba(20, 34, 53, 0.36);
-  padding: 0.62rem;
+  background:
+    radial-gradient(circle at 96% 8%, rgba(91, 182, 255, 0.08), transparent 5rem),
+    rgba(20, 34, 53, 0.44);
+  padding: 0.64rem;
+  overflow: hidden;
 }
 .pt-signal-kpi strong {
-  font-size: 1.22rem;
+  font-size: 1.3rem;
 }
-.pt-gauge.good {
-  background: conic-gradient(from 270deg, var(--green) 0deg, var(--green) 72deg, var(--yellow) 72deg, var(--yellow) 112deg, #26354a 112deg, #26354a 180deg);
+.pt-decision-shell .pt-gauge {
+  --gauge-color: var(--green);
+  --gauge-track: #26354a;
+  width: 3.95rem;
+  height: 2.15rem;
+  border-radius: 5rem 5rem 0 0;
+  background: conic-gradient(from 270deg at 50% 100%, var(--gauge-color) 0 var(--gauge-fill), var(--gauge-track) var(--gauge-fill) 180deg, transparent 180deg);
+  box-shadow: inset 0 0 0 1px rgba(122, 152, 184, 0.08);
+  margin-top: 0.08rem;
 }
-.pt-gauge.warn,
-.pt-gauge.neutral {
-  background: conic-gradient(from 270deg, #26354a 0deg, #26354a 48deg, var(--yellow) 48deg, var(--yellow) 108deg, #26354a 108deg, #26354a 180deg);
+.pt-decision-shell .pt-gauge.strong-buy {
+  --gauge-color: #20d86b;
 }
-.pt-gauge.bad {
-  background: conic-gradient(from 270deg, #26354a 0deg, #26354a 72deg, var(--yellow) 72deg, var(--yellow) 116deg, var(--red) 116deg, var(--red) 180deg);
+.pt-decision-shell .pt-gauge.buy,
+.pt-decision-shell .pt-gauge.speculative-buy {
+  --gauge-color: var(--green);
+}
+.pt-decision-shell .pt-gauge.hold,
+.pt-decision-shell .pt-gauge.warn,
+.pt-decision-shell .pt-gauge.neutral {
+  --gauge-color: var(--yellow);
+}
+.pt-decision-shell .pt-gauge.avoid {
+  --gauge-color: #ff9d43;
+}
+.pt-decision-shell .pt-gauge.sell,
+.pt-decision-shell .pt-gauge.bad {
+  --gauge-color: var(--red);
+}
+.pt-decision-shell .pt-gauge:after {
+  left: 0.58rem;
+  right: 0.58rem;
+  bottom: -1px;
+  height: 1.3rem;
+  z-index: 1;
+}
+.pt-decision-shell .pt-gauge:before {
+  content: "";
+  position: absolute;
+  left: calc(50% - 0.17rem);
+  bottom: 0.08rem;
+  width: 0.34rem;
+  height: 0.34rem;
+  border-radius: 999px;
+  background: var(--gauge-color);
+  box-shadow: 0 0 0 3px rgba(7, 16, 27, 0.95);
+  z-index: 3;
+}
+.pt-decision-shell .pt-gauge span {
+  position: absolute;
+  left: 50%;
+  bottom: 0.24rem;
+  width: 1.68rem;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--gauge-color);
+  transform-origin: 0 50%;
+  transform: rotate(var(--needle-angle));
+  z-index: 2;
+}
+.pt-decision-shell .pt-gauge span:after {
+  content: "";
+  position: absolute;
+  right: -0.05rem;
+  top: -0.16rem;
+  width: 0.36rem;
+  height: 0.36rem;
+  border-radius: 999px;
+  background: var(--gauge-color);
 }
 .pt-decision-card {
   padding: 1rem 1.1rem;
@@ -1552,6 +1617,7 @@ button, input, textarea, select {
   align-items: center;
 }
 .pt-decision-icon {
+  --signal-color: var(--green);
   width: 4rem;
   height: 4rem;
   display: inline-flex;
@@ -1561,29 +1627,81 @@ button, input, textarea, select {
   border-radius: 999px;
   background: rgba(49, 209, 124, 0.09);
   box-shadow: inset 0 0 0 1px rgba(49, 209, 124, 0.08);
+  color: var(--signal-color);
 }
 .pt-decision-icon.warn {
+  --signal-color: var(--yellow);
   border-color: rgba(240, 194, 74, 0.36);
   background: rgba(240, 194, 74, 0.09);
 }
 .pt-decision-icon.bad {
+  --signal-color: var(--red);
   border-color: rgba(255, 92, 112, 0.36);
   background: rgba(255, 92, 112, 0.09);
 }
-.pt-decision-icon span {
+.pt-decision-icon.avoid {
+  --signal-color: #ff9d43;
+  border-color: rgba(255, 157, 67, 0.36);
+  background: rgba(255, 157, 67, 0.09);
+}
+.pt-decision-icon .pt-signal-arrow {
+  --icon-angle: -42deg;
   width: 2rem;
-  height: 1.35rem;
+  height: 2rem;
   display: block;
-  border-left: 3px solid var(--green);
-  border-top: 3px solid var(--green);
-  transform: skew(-14deg) rotate(42deg);
-  border-radius: 2px;
+  position: relative;
+  transform: rotate(var(--icon-angle));
 }
-.pt-decision-icon.warn span {
-  border-color: var(--yellow);
+.pt-decision-icon.strong-buy .pt-signal-arrow {
+  --icon-angle: -54deg;
 }
-.pt-decision-icon.bad span {
-  border-color: var(--red);
+.pt-decision-icon.buy .pt-signal-arrow {
+  --icon-angle: -46deg;
+}
+.pt-decision-icon.speculative-buy .pt-signal-arrow {
+  --icon-angle: -28deg;
+}
+.pt-decision-icon.hold .pt-signal-arrow {
+  --icon-angle: 0deg;
+}
+.pt-decision-icon.avoid .pt-signal-arrow {
+  --icon-angle: 28deg;
+}
+.pt-decision-icon.sell .pt-signal-arrow {
+  --icon-angle: 86deg;
+}
+.pt-signal-arrow:before,
+.pt-signal-arrow i {
+  content: "";
+  position: absolute;
+  left: 0.22rem;
+  top: calc(50% - 1.5px);
+  width: 1.42rem;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.pt-signal-arrow:after {
+  content: "";
+  position: absolute;
+  right: 0.28rem;
+  top: 0.58rem;
+  width: 0.54rem;
+  height: 0.54rem;
+  border-top: 3px solid currentColor;
+  border-right: 3px solid currentColor;
+  transform: rotate(45deg);
+  border-radius: 1px;
+}
+.pt-decision-icon.hold .pt-signal-arrow:after {
+  display: none;
+}
+.pt-decision-icon.strong-buy .pt-signal-arrow i {
+  display: block;
+  transform: translateY(-0.45rem);
+}
+.pt-decision-icon:not(.strong-buy) .pt-signal-arrow i {
+  display: none;
 }
 .pt-decision-copy strong {
   display: block;
@@ -1635,12 +1753,22 @@ button, input, textarea, select {
 }
 .pt-decision-breakdown {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(130px, 0.45fr) minmax(0, 1fr) auto;
   gap: 0.9rem;
   align-items: center;
   border-top: 1px solid rgba(122, 152, 184, 0.18);
   margin-top: 1rem;
   padding-top: 0.85rem;
+}
+.pt-score-label {
+  display: grid;
+  gap: 0.18rem;
+}
+.pt-score-label small {
+  color: var(--muted);
+  font-size: 0.67rem;
+  line-height: 1.28;
+  max-width: 12rem;
 }
 .pt-decision-score-grid {
   display: grid;
@@ -1678,6 +1806,10 @@ button, input, textarea, select {
   background: linear-gradient(90deg, currentColor var(--score), #18283b var(--score));
 }
 .pt-methodology {
+  position: relative;
+  justify-self: end;
+}
+.pt-methodology summary {
   border: 1px solid rgba(122, 152, 184, 0.42);
   border-radius: 7px;
   padding: 0.56rem 1.1rem;
@@ -1685,6 +1817,81 @@ button, input, textarea, select {
   font-size: 0.75rem;
   font-weight: 850;
   white-space: nowrap;
+  cursor: pointer;
+  list-style: none;
+}
+.pt-methodology summary::-webkit-details-marker {
+  display: none;
+}
+.pt-methodology summary:after {
+  content: "";
+  display: inline-block;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  margin-left: 0.65rem;
+  transform: rotate(45deg) translateY(-0.1rem);
+}
+.pt-methodology[open] summary:after {
+  transform: rotate(225deg) translate(-0.05rem, -0.1rem);
+}
+.pt-methodology-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.55rem);
+  z-index: 20;
+  width: min(36rem, 82vw);
+  border: 1px solid rgba(91, 182, 255, 0.28);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(13, 25, 40, 0.99), rgba(7, 16, 27, 0.99));
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
+  padding: 0.85rem;
+}
+.pt-methodology-panel strong {
+  color: var(--text);
+  display: block;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+.pt-methodology-panel p {
+  color: #c6d2df;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  margin: 0.5rem 0 0.65rem;
+}
+.pt-methodology-pillars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.65rem;
+}
+.pt-methodology-pillars span {
+  color: var(--blue);
+  border: 1px solid rgba(91, 182, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(91, 182, 255, 0.06);
+  padding: 0.18rem 0.42rem;
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+.pt-methodology-panel ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.32rem;
+}
+.pt-methodology-panel li {
+  display: grid;
+  grid-template-columns: 7.8rem minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.pt-methodology-panel li b {
+  color: var(--text);
 }
 .pt-decision-row {
   display: grid;
@@ -1724,6 +1931,87 @@ button, input, textarea, select {
   background: rgba(49, 209, 124, 0.1);
   font-size: 0.68rem;
   font-weight: 950;
+}
+.pt-quality-icon {
+  position: relative;
+  font-size: 0;
+}
+.pt-quality-icon:before,
+.pt-quality-icon:after,
+.pt-quality-icon i:before,
+.pt-quality-icon i:after {
+  content: "";
+  position: absolute;
+  display: block;
+}
+.pt-quality-icon.growth:before {
+  left: 0.58rem;
+  bottom: 0.62rem;
+  width: 1.05rem;
+  height: 0.76rem;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+}
+.pt-quality-icon.growth:after {
+  left: 0.72rem;
+  top: 0.76rem;
+  width: 1rem;
+  height: 0.55rem;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  transform: rotate(-35deg);
+}
+.pt-quality-icon.growth i:after {
+  right: 0.5rem;
+  top: 0.55rem;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  transform: rotate(12deg);
+}
+.pt-quality-icon.profitability:before {
+  content: "%";
+  color: currentColor;
+  font-size: 1.05rem;
+  font-weight: 950;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -52%);
+}
+.pt-quality-icon.balance:before {
+  left: 0.62rem;
+  top: 0.46rem;
+  width: 1.06rem;
+  height: 1.28rem;
+  border: 2px solid currentColor;
+  border-radius: 0.5rem 0.5rem 0.58rem 0.58rem;
+  clip-path: polygon(50% 0, 100% 22%, 92% 78%, 50% 100%, 8% 78%, 0 22%);
+}
+.pt-quality-icon.execution:before {
+  left: 0.57rem;
+  top: 0.57rem;
+  width: 1.14rem;
+  height: 1.14rem;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+}
+.pt-quality-icon.execution:after {
+  left: 0.9rem;
+  top: 0.9rem;
+  width: 0.48rem;
+  height: 0.48rem;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+}
+.pt-quality-icon.execution i:after {
+  right: 0.42rem;
+  top: 0.42rem;
+  width: 0.58rem;
+  height: 2px;
+  background: currentColor;
+  transform: rotate(-35deg);
+  transform-origin: right center;
 }
 .pt-quality-pillar strong,
 .pt-quality-pillar b,
@@ -1780,19 +2068,105 @@ button, input, textarea, select {
   background: linear-gradient(180deg, rgba(20, 34, 53, 0.62), rgba(7, 16, 27, 0.78));
   padding: 0.78rem;
   min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+.pt-decision-scenario:before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: rgba(122, 152, 184, 0.35);
 }
 .pt-decision-scenario.bad {
   border-color: rgba(255, 92, 112, 0.35);
 }
+.pt-decision-scenario.bad:before {
+  background: var(--red);
+}
 .pt-decision-scenario.info {
   border-color: rgba(91, 182, 255, 0.35);
+}
+.pt-decision-scenario.info:before {
+  background: var(--blue);
 }
 .pt-decision-scenario.good {
   border-color: rgba(49, 209, 124, 0.35);
 }
+.pt-decision-scenario.good:before {
+  background: var(--green);
+}
 .pt-decision-scenario h4 {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
   margin: 0 0 0.62rem;
   font-size: 0.84rem;
+}
+.pt-scenario-icon {
+  width: 1.18rem;
+  height: 1.18rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex: 0 0 auto;
+}
+.pt-scenario-icon:before,
+.pt-scenario-icon:after,
+.pt-scenario-icon i:before,
+.pt-scenario-icon i:after {
+  content: "";
+  position: absolute;
+  display: block;
+}
+.pt-scenario-icon.bear:before,
+.pt-scenario-icon.bull:before {
+  left: 0.34rem;
+  top: 0.3rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid currentColor;
+  border-top: 2px solid currentColor;
+}
+.pt-scenario-icon.bear:before {
+  transform: rotate(135deg);
+}
+.pt-scenario-icon.bull:before {
+  transform: rotate(-45deg);
+}
+.pt-scenario-icon.bear:after,
+.pt-scenario-icon.bull:after {
+  left: 0.54rem;
+  top: 0.32rem;
+  width: 2px;
+  height: 0.58rem;
+  background: currentColor;
+}
+.pt-scenario-icon.bear:after {
+  transform: rotate(-45deg);
+}
+.pt-scenario-icon.bull:after {
+  transform: rotate(45deg);
+}
+.pt-scenario-icon.base:before {
+  left: 0.32rem;
+  top: 0.32rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+}
+.pt-scenario-icon.base:after {
+  left: 0.52rem;
+  top: 0.18rem;
+  width: 2px;
+  height: 0.82rem;
+  background: currentColor;
 }
 .pt-decision-scenario strong {
   display: block;
@@ -1916,6 +2290,8 @@ button, input, textarea, select {
   border: 1px solid currentColor;
   font-size: 0.65rem;
   font-weight: 950;
+  position: relative;
+  flex: 0 0 auto;
 }
 .pt-driver-dot.good {
   color: var(--green);
@@ -1925,6 +2301,23 @@ button, input, textarea, select {
   color: var(--red);
   background: rgba(255, 92, 112, 0.1);
 }
+.pt-driver-dot.check:before {
+  content: "";
+  width: 0.5rem;
+  height: 0.28rem;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  margin-top: -0.08rem;
+}
+.pt-driver-dot.alert:before {
+  content: "";
+  position: absolute;
+  width: 0.48rem;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+}
 .pt-key-levers li {
   color: var(--muted);
 }
@@ -1932,8 +2325,53 @@ button, input, textarea, select {
   color: var(--blue);
   background: rgba(91, 182, 255, 0.08);
 }
+.pt-lever-icon:before {
+  content: "";
+  width: 0.36rem;
+  height: 0.36rem;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  background: rgba(91, 182, 255, 0.08);
+}
+.pt-lever-icon:after {
+  content: "";
+  position: absolute;
+  left: 0.18rem;
+  right: 0.18rem;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.75;
+}
 .pt-simple-checklist {
   gap: 0.5rem;
+}
+.pt-status-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.7rem;
+  margin: 0 0 0.62rem;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+.pt-status-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+.pt-status-legend i {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  display: inline-block;
+}
+.pt-status-legend i.good {
+  background: var(--green);
+}
+.pt-status-legend i.warn {
+  background: var(--yellow);
+}
+.pt-status-legend i.bad {
+  background: var(--red);
 }
 .pt-simple-checklist li {
   align-items: center;
@@ -1987,6 +2425,12 @@ button, input, textarea, select {
 .pt-key-risk-table td {
   line-height: 1.35;
 }
+.pt-risk-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  min-width: 0;
+}
 .pt-key-risk-table td:first-child b {
   display: inline-flex;
   align-items: center;
@@ -1996,7 +2440,74 @@ button, input, textarea, select {
   border-radius: 999px;
   color: var(--text);
   background: rgba(255, 92, 112, 0.48);
-  margin-right: 0.45rem;
+  flex: 0 0 auto;
+}
+.pt-risk-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 1px solid rgba(122, 152, 184, 0.3);
+  border-radius: 999px;
+  color: var(--blue);
+  background: rgba(91, 182, 255, 0.06);
+  position: relative;
+  flex: 0 0 auto;
+}
+.pt-risk-icon:before,
+.pt-risk-icon:after {
+  content: "";
+  position: absolute;
+  display: block;
+}
+.pt-risk-icon.scaling:before {
+  left: 0.34rem;
+  top: 0.32rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+.pt-risk-icon.scaling:after {
+  left: 0.56rem;
+  top: 0.17rem;
+  width: 2px;
+  height: 0.9rem;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+.pt-risk-icon.customer:before,
+.pt-risk-icon.customer:after {
+  width: 0.36rem;
+  height: 0.36rem;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  top: 0.24rem;
+}
+.pt-risk-icon.customer:before {
+  left: 0.24rem;
+}
+.pt-risk-icon.customer:after {
+  right: 0.24rem;
+}
+.pt-risk-icon.customer {
+  box-shadow: inset 0 -0.42rem 0 -0.25rem currentColor;
+}
+.pt-risk-icon.dilution:before {
+  left: 0.36rem;
+  top: 0.3rem;
+  width: 0.52rem;
+  height: 0.68rem;
+  border: 2px solid currentColor;
+  border-radius: 0.45rem 0.45rem 0.45rem 0.08rem;
+  transform: rotate(45deg);
+}
+.pt-risk-icon.generic:before {
+  left: 0.34rem;
+  top: 0.34rem;
+  width: 0.52rem;
+  height: 0.52rem;
+  border: 2px solid currentColor;
+  border-radius: 999px;
 }
 .pt-changes-table {
   table-layout: fixed;
@@ -2026,21 +2537,25 @@ button, input, textarea, select {
   font-weight: 850;
 }
 .pt-change-dot {
-  width: 0.7rem;
-  height: 0.7rem;
+  width: 0.78rem;
+  height: 0.78rem;
   display: inline-block;
   border-radius: 999px;
   margin-right: 0.55rem;
   vertical-align: -0.05rem;
+  box-shadow: 0 0 0 3px rgba(122, 152, 184, 0.08);
 }
 .pt-change-dot.good {
   background: var(--green);
+  box-shadow: 0 0 0 3px rgba(49, 209, 124, 0.14);
 }
 .pt-change-dot.bad {
   background: var(--red);
+  box-shadow: 0 0 0 3px rgba(255, 92, 112, 0.14);
 }
 .pt-change-dot.warn {
   background: var(--yellow);
+  box-shadow: 0 0 0 3px rgba(240, 194, 74, 0.14);
 }
 .pt-advanced-details {
   display: grid;
@@ -2093,9 +2608,13 @@ button, input, textarea, select {
   margin: 0.2rem 0 0;
   font-size: 0.72rem;
 }
-.pt-advanced-details > b {
-  color: var(--muted);
-  font-size: 1.25rem;
+.pt-accordion-caret {
+  width: 0.68rem;
+  height: 0.68rem;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  opacity: 0.72;
 }
 @media (max-width: 1280px) {
   .pt-quality-grid {
