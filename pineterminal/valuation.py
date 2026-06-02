@@ -65,15 +65,13 @@ VALUATION_SPECS: dict[str, dict[str, object]] = {
         ],
     },
     "MRVL": {
-        "valuation_method": "EV/Sales",
+        "valuation_method": "P/E",
         "model_year": 2028,
-        "net_debt": 3_100_000_000,
-        "shares": 865_000_000,
-        "key_assumption": "AI data-center, custom silicon, and networking growth must offset cyclical pressure in legacy segments.",
+        "key_assumption": "AI data-center, custom silicon, and networking growth must translate into durable earnings growth.",
         "scenarios": [
-            ("Bear Case", 8_200_000_000, 5.0, 865_000_000, 0.25, "AI infrastructure demand slows, legacy semiconductor weakness persists, and valuation multiple compresses.", "Needs monitoring"),
-            ("Base Case", 10_400_000_000, 7.6, 865_000_000, 0.50, "Data-center and custom silicon growth offset cyclical weakness, with valuation multiple broadly holding.", "Model assumptions"),
-            ("Bull Case", 13_200_000_000, 9.2, 865_000_000, 0.25, "AI custom silicon and networking demand accelerate, supporting revenue growth and premium multiple.", "Upside case"),
+            ("Bear Case", 5.80, 26.0, None, 0.25, "AI infrastructure demand slows, legacy semiconductor weakness persists, and earnings multiple compresses.", "Needs monitoring"),
+            ("Base Case", 8.60, 27.0, None, 0.50, "Data-center and custom silicon growth offset cyclical weakness, supporting higher earnings power.", "Model assumptions"),
+            ("Bull Case", 11.50, 30.0, None, 0.25, "AI custom silicon and networking demand accelerate, supporting earnings growth and a premium multiple.", "Upside case"),
         ],
     },
     "VICR": {
@@ -379,8 +377,10 @@ def _interpretation(
     symbol = ticker.upper()
     if symbol == "MRVL":
         if expected_return < 0:
-            return "Base case sits below today's price; upside depends on stronger AI data-center growth and multiple support."
-        return "Expected value is above today's price, supported by AI data-center growth assumptions."
+            return "Base case sits below today's price; upside depends on stronger AI data-center earnings growth and multiple support."
+        if expected_return < 15:
+            return "Expected value is only modestly above today's price; upside depends on AI earnings growth converting into durable EPS."
+        return "Expected value is above today's price, supported by AI data-center earnings growth assumptions."
     if symbol == "AMPX" and (base_return or 0) < 0:
         return "Base case is slightly below today's price; upside depends on bull-case execution."
     if valuation_method == "Asset Price Scenario":
