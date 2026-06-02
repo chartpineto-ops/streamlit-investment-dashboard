@@ -18,8 +18,10 @@ from pineterminal.types import (
     FundamentalMetric,
     MarketReadThroughItem,
     SensitivityTable,
+    ValuationModel,
     ValuationScenario,
 )
+from pineterminal.valuation import format_financial_value, get_scenario_labels_by_method, get_valuation_model
 
 
 METRIC_BADGES = {
@@ -420,8 +422,8 @@ def render_scenario_card(scenario: ValuationScenario, current_price: float) -> s
         {data_label("Model")}
       </div>
       <dl>
-        {value_row(str(scenario.year) + " Revenue", money(scenario.revenue, 0))}
-        {value_row("EV / Sales Multiple", f"{scenario.ev_sales_multiple:.1f}x")}
+        {_scenario_metric_row(scenario)}
+        {_scenario_driver_row(scenario)}
         {value_row("Future Price", price(scenario.future_share_price), "info" if name_tone == "info" else name_tone)}
         {value_row("Return", percent(implied_return, 0), tone_for_value(implied_return))}
       </dl>
@@ -431,22 +433,23 @@ def render_scenario_card(scenario: ValuationScenario, current_price: float) -> s
 
 
 def render_future_value_model(analysis: CompanyAnalysis) -> str:
-    cards = "".join(render_scenario_card(item, analysis.company.current_price) for item in analysis.valuation_scenarios)
-    expected_return = analysis.expected_value_detail.expected_return
+    model = _valuation_model_for_analysis(analysis)
+    cards = "".join(render_scenario_card(item, model.current_price or analysis.company.current_price) for item in model.scenarios)
+    expected_return = model.expected_return
     probability_rows = "".join(
         value_row(f"{item.name} ({item.probability:.0%})", price(item.future_share_price))
-        for item in analysis.valuation_scenarios
+        for item in model.scenarios
     )
     body = f"""
       <div class="pt-fv-grid">
         <div class="pt-scenario-grid">{cards}</div>
         <div class="pt-expected-card">
           <div class="pt-expected-head"><span class="pt-mini-label">Probability-Weighted Expected Value</span>{data_label("Derived")}</div>
-          <strong>{price(analysis.expected_value)}</strong>
+          <strong>{price(model.expected_value) if model.expected_value is not None else "N/A"}</strong>
           <div class="pt-data-list pt-expected-list">
-            {value_row("Upside / Downside", percent(expected_return, 1), tone_for_value(expected_return))}
+            {value_row("Upside / Downside", percent(expected_return, 1) if expected_return is not None else "N/A", tone_for_value(expected_return or 0.0))}
             {probability_rows}
-            {value_row("Current Price", price(analysis.company.current_price))}
+            {value_row("Current Price", price(model.current_price) if model.current_price is not None else "N/A")}
           </div>
         </div>
       </div>
@@ -511,6 +514,29 @@ def render_bridge(analysis: CompanyAnalysis) -> str:
 
 
 def render_market_implied(analysis: CompanyAnalysis) -> str:
+    model = _valuation_model_for_analysis(analysis)
+    if model.valuation_method != "EV/Sales":
+        base = next((item for item in model.scenarios if item.name == "Base Case"), model.scenarios[0])
+        labels = get_scenario_labels_by_method(model.valuation_method)
+        driver_value = price(base.future_share_price) if model.valuation_method == "Asset Price Scenario" else f"{base.valuation_multiple:.1f}x" if base.valuation_multiple is not None else "N/A"
+        body = f"""
+        <div class="pt-implied-grid">
+          <div class="pt-data-list pt-implied-side">
+            <span class="pt-mini-label">Selected Model</span>
+            {value_row("Ticker", model.ticker)}
+            {value_row("Valuation Method", model.valuation_method)}
+            {value_row(str(labels["metric_label"]).format(year=model.model_year), base.valuation_metric_display)}
+          </div>
+          <div class="pt-data-list pt-implied-side">
+            <span class="pt-mini-label">Expected Value</span>
+            {value_row(base.valuation_multiple_label, driver_value, "good")}
+            {value_row("Probability-Weighted Value", price(model.expected_value) if model.expected_value is not None else "N/A", "good")}
+            {value_row("Expected Return", percent(model.expected_return, 1) if model.expected_return is not None else "N/A", tone_for_value(model.expected_return or 0.0))}
+          </div>
+        </div>
+        <div class="pt-banner neutral">{escape(model.interpretation)} {data_label(model.data_status)}</div>
+        """
+        return section("Model-Implied Assumptions", "What the selected valuation model prices in", body)
     item = analysis.market_implied_assumptions
     body = f"""
     <div class="pt-implied-grid">
@@ -883,9 +909,41 @@ def _scenario_tone(name: str) -> str:
     return "info"
 
 
-def render_decision_scenario_card(scenario: ValuationScenario, current_price: float) -> str:
+def _valuation_model_for_analysis(analysis: CompanyAnalysis) -> ValuationModel:
+    return analysis.valuation_model or get_valuation_model(analysis.company)
+
+
+def _scenario_metric_row(scenario: ValuationScenario) -> str:
+    labels = get_scenario_labels_by_method(scenario.valuation_method)
+    label = str(labels["metric_label"]).format(year=scenario.year)
+    value = scenario.valuation_metric_display or format_financial_value(scenario.valuation_metric_value, "dollars")
+    return value_row(label, value)
+
+
+def _scenario_driver_row(scenario: ValuationScenario) -> str:
+    if scenario.valuation_method == "Asset Price Scenario":
+        return value_row("NAV / Share Estimate", price(scenario.future_share_price))
+    if scenario.valuation_multiple is None:
+        return value_row(scenario.valuation_multiple_label, "N/A")
+    return value_row(scenario.valuation_multiple_label, f"{scenario.valuation_multiple:.1f}x")
+
+
+def _model_warning_markup(model: ValuationModel) -> str:
+    if not model.warnings:
+        return ""
+    warning_text = " ".join(model.warnings[:2])
+    return f"""
+    <div class="pt-model-warning">
+      {svg_icon("info")}
+      <span>Valuation model inputs are incomplete or stale. Review assumptions.</span>
+      <small>{escape(warning_text)}</small>
+    </div>
+    """
+
+
+def render_decision_scenario_card(scenario: ValuationScenario, current_price: float | None) -> str:
     tone = _scenario_tone(scenario.name)
-    scenario_return = calculate_expected_return(scenario.future_share_price, current_price)
+    scenario_return = calculate_expected_return(scenario.future_share_price, current_price or 0.0)
     return f"""
     <div class="pt-decision-scenario {tone}">
       <h4 class="{tone}">{scenario_icon(scenario.name)}<span>{escape(scenario.name)}</span></h4>
@@ -893,8 +951,8 @@ def render_decision_scenario_card(scenario: ValuationScenario, current_price: fl
       <b class="{tone_for_value(scenario_return)}">{percent(scenario_return, 0)}</b>
       <span>{scenario.probability:.0%} Probability</span>
       <div class="pt-data-list">
-        {value_row(f"Revenue ({scenario.year})", money(scenario.revenue, 0))}
-        {value_row("EV / Sales", f"{scenario.ev_sales_multiple:.1f}x")}
+        {_scenario_metric_row(scenario)}
+        {_scenario_driver_row(scenario)}
       </div>
       <p>{escape(scenario.assumption)}</p>
     </div>
@@ -902,16 +960,7 @@ def render_decision_scenario_card(scenario: ValuationScenario, current_price: fl
 
 
 def _valuation_interpretation(analysis: CompanyAnalysis) -> str:
-    expected_return = analysis.expected_value_detail.expected_return
-    base = next((item for item in analysis.valuation_scenarios if item.name == "Base Case"), analysis.valuation_scenarios[0])
-    base_return = calculate_expected_return(base.future_share_price, analysis.company.current_price)
-    if base_return < 0 and expected_return < 15:
-        return "Base case sits below today's price; upside depends on stronger execution."
-    if expected_return < 15:
-        return "Expected return is modest, so the signal stays balanced despite bull-case upside."
-    if expected_return > 40:
-        return "Upside is meaningful, but execution and dilution decide the path."
-    return "Base case supports some upside, but the setup still needs confirming evidence."
+    return _valuation_model_for_analysis(analysis).interpretation
 
 
 def render_bridge_panel(analysis: CompanyAnalysis) -> str:
@@ -926,6 +975,21 @@ def render_bridge_panel(analysis: CompanyAnalysis) -> str:
 
 
 def render_market_implied_panel(analysis: CompanyAnalysis) -> str:
+    model = _valuation_model_for_analysis(analysis)
+    if model.valuation_method != "EV/Sales":
+        base = next((item for item in model.scenarios if item.name == "Base Case"), model.scenarios[0])
+        driver_value = price(base.future_share_price) if model.valuation_method == "Asset Price Scenario" else f"{base.valuation_multiple:.1f}x" if base.valuation_multiple is not None else "N/A"
+        return f"""
+        <div class="pt-detail-card">
+          <strong>Model-Implied Assumptions</strong>
+          {detail_row("Selected ticker", model.ticker)}
+          {detail_row("Valuation method", model.valuation_method)}
+          {detail_row(str(get_scenario_labels_by_method(model.valuation_method)["metric_label"]).format(year=model.model_year), base.valuation_metric_display)}
+          {detail_row(base.valuation_multiple_label, driver_value)}
+          {detail_row("Probability-weighted value", price(model.expected_value) if model.expected_value is not None else "N/A")}
+          <p class="pt-detail-note neutral">{escape(model.interpretation)}</p>
+        </div>
+        """
     item = analysis.market_implied_assumptions
     return f"""
     <div class="pt-detail-card">
@@ -940,8 +1004,16 @@ def render_market_implied_panel(analysis: CompanyAnalysis) -> str:
     """
 
 
-def sensitivity_table_markup(table: SensitivityTable, current_price: float) -> str:
-    header = "".join(f"<th>{money(value, 0)}</th>" for value in table.revenue_columns)
+def sensitivity_table_markup(
+    table: SensitivityTable,
+    current_price: float,
+    *,
+    valuation_method: str = "EV/Sales",
+    metric_label: str = "Revenue",
+    multiple_label: str = "EV / Sales Multiple",
+) -> str:
+    unit = "eps" if valuation_method == "P/E" else "asset_price" if valuation_method == "Asset Price Scenario" else "dollars"
+    header = "".join(f"<th>{format_financial_value(value, unit)}</th>" for value in table.revenue_columns)
     rows = ""
     for multiple in table.multiple_rows:
         cells = ""
@@ -949,60 +1021,78 @@ def sensitivity_table_markup(table: SensitivityTable, current_price: float) -> s
             classes = ["base"] if (revenue, multiple) == table.highlighted_cell else []
             classes.append("upside" if table.values[(revenue, multiple)] > current_price else "downside")
             cells += f'<td class="{" ".join(classes)}">{price(table.values[(revenue, multiple)])}</td>'
-        rows += f"<tr><th>{multiple:.1f}x</th>{cells}</tr>"
+        row_label = f"{multiple:.2f}x" if valuation_method == "Asset Price Scenario" else f"{multiple:.1f}x"
+        rows += f"<tr><th>{row_label}</th>{cells}</tr>"
     return f"""
     <div class="pt-sensitivity">
       <table class="pt-table pt-sensitivity-table">
-        <thead><tr><th>EV / Sales Multiple</th>{header}</tr></thead>
+        <thead><tr><th>{escape(multiple_label)}</th>{header}</tr></thead>
         <tbody>{rows}</tbody>
       </table>
     </div>
-    <small class="pt-table-note">{escape(table.note)} Current price: {price(current_price)}.</small>
+    <small class="pt-table-note">{escape(metric_label)} across columns. {escape(table.note)} Current price: {price(current_price)}.</small>
     """
 
 
-def render_valuation_details(analysis: CompanyAnalysis) -> str:
+def render_valuation_details(analysis: CompanyAnalysis, model: ValuationModel) -> str:
+    labels = get_scenario_labels_by_method(model.valuation_method)
+    metric_header = str(labels["metric_label"]).format(year=model.model_year)
+    driver_header = str(labels["multiple_label"])
+    formula_rows = "".join(detail_row(f"Step {idx}", str(row)) for idx, row in enumerate(labels["formula"], start=1))
     scenario_rows = ""
     math_rows = ""
-    for scenario in analysis.valuation_scenarios:
-        scenario_return = calculate_expected_return(scenario.future_share_price, analysis.company.current_price)
+    for scenario in model.scenarios:
+        scenario_return = calculate_expected_return(scenario.future_share_price, model.current_price or 0.0)
         contribution = scenario.future_share_price * scenario.probability
+        driver_value = price(scenario.future_share_price) if model.valuation_method == "Asset Price Scenario" else f"{scenario.valuation_multiple:.1f}x" if scenario.valuation_multiple is not None else "N/A"
         scenario_rows += f"""
         <tr>
           <td><strong>{escape(scenario.name)}</strong></td>
-          <td>{money(scenario.revenue, 0)}</td>
-          <td>{scenario.ev_sales_multiple:.1f}x</td>
+          <td>{escape(scenario.valuation_metric_display)}</td>
+          <td>{escape(driver_value)}</td>
           <td>{price(scenario.future_share_price)}</td>
           <td>{percent(scenario_return, 1)}</td>
           <td>{scenario.probability:.0%}</td>
+          <td>{escape(scenario.assumption_quality)}</td>
           <td>{escape(scenario.assumption)}</td>
         </tr>
         """
         math_rows += detail_row(f"{scenario.name} contribution", f"{price(scenario.future_share_price)} x {scenario.probability:.0%} = {price(contribution)}")
-    expected_return = analysis.expected_value_detail.expected_return
+    expected_value = model.expected_value
+    expected_return = model.expected_return
+    warnings = "".join(f"<li>{escape(item)}</li>" for item in model.warnings)
+    warning_block = f'<div class="pt-detail-card wide warn"><strong>Model Warnings</strong><ul class="pt-detail-list">{warnings}</ul></div>' if warnings else ""
     return f"""
     <details class="pt-inline-details pt-valuation-details">
       <summary>View valuation details</summary>
       <div class="pt-detail-panel">
-        <div class="pt-detail-heading"><strong>Valuation Details</strong><span>Scenario-derived expected value</span></div>
+        <div class="pt-detail-heading"><strong>Valuation Details</strong><span>{escape(model.ticker)} | {escape(model.valuation_method)} | {escape(model.data_status)}</span></div>
         <table class="pt-table pt-detail-table">
-          <thead><tr><th>Scenario</th><th>Revenue</th><th>EV/Sales</th><th>Future Price</th><th>Return</th><th>Probability</th><th>Assumption</th></tr></thead>
+          <thead><tr><th>Scenario</th><th>{escape(metric_header)}</th><th>{escape(driver_header)}</th><th>Future Price</th><th>Return</th><th>Probability</th><th>Quality</th><th>Assumption</th></tr></thead>
           <tbody>{scenario_rows}</tbody>
         </table>
         <div class="pt-detail-grid two">
           <div class="pt-detail-card">
             <strong>Expected Value Math</strong>
             {math_rows}
-            {detail_row("Probability-weighted value", price(analysis.expected_value))}
-            {detail_row("Current price", price(analysis.company.current_price))}
-            {detail_row("Expected return", percent(expected_return, 1))}
+            {detail_row("Probability-weighted value", price(expected_value) if expected_value is not None else "N/A")}
+            {detail_row("Current price", price(model.current_price) if model.current_price is not None else "N/A")}
+            {detail_row("Expected return", percent(expected_return, 1) if expected_return is not None else "N/A")}
+          </div>
+          <div class="pt-detail-card">
+            <strong>Calculation Formula</strong>
+            {formula_rows}
+            {detail_row("Key assumption", model.key_assumption)}
+            {detail_row("Interpretation", model.interpretation)}
+            {detail_row("Freshness / Source", model.data_status)}
           </div>
           {render_bridge_panel(analysis)}
           {render_market_implied_panel(analysis)}
         </div>
+        {warning_block}
         <div class="pt-detail-card wide">
           <strong>Sensitivity Matrix</strong>
-          {sensitivity_table_markup(analysis.sensitivity_table, analysis.company.current_price)}
+          {sensitivity_table_markup(analysis.sensitivity_table, analysis.company.current_price, valuation_method=model.valuation_method, metric_label=metric_header, multiple_label=driver_header)}
         </div>
       </div>
     </details>
@@ -1010,20 +1100,21 @@ def render_valuation_details(analysis: CompanyAnalysis) -> str:
 
 
 def render_decision_future_value(analysis: CompanyAnalysis) -> str:
-    scenarios = "".join(render_decision_scenario_card(item, analysis.company.current_price) for item in analysis.valuation_scenarios)
-    expected_return = analysis.expected_value_detail.expected_return
-    base = next((item for item in analysis.valuation_scenarios if item.name == "Base Case"), analysis.valuation_scenarios[0])
+    model = _valuation_model_for_analysis(analysis)
+    scenarios = "".join(render_decision_scenario_card(item, model.current_price) for item in model.scenarios)
+    expected_return = model.expected_return
     body = f"""
+    {_model_warning_markup(model)}
     <div class="pt-decision-scenarios">{scenarios}</div>
     <div class="pt-expected-strip">
-      {value_row("Probability-Weighted Expected Value", price(analysis.expected_value), "good")}
-      {value_row("Current Price", price(analysis.company.current_price))}
-      {value_row("Expected Return", percent(expected_return, 1), tone_for_value(expected_return))}
-      {value_row("Interpretation", _valuation_interpretation(analysis), "neutral")}
+      {value_row("Probability-Weighted Expected Value", price(model.expected_value) if model.expected_value is not None else "N/A", "good")}
+      {value_row("Current Price", price(model.current_price) if model.current_price is not None else "N/A")}
+      {value_row("Expected Return", percent(expected_return, 1) if expected_return is not None else "N/A", tone_for_value(expected_return or 0.0))}
+      {value_row("Interpretation", model.interpretation, "neutral")}
     </div>
     <div class="pt-scenario-footer">
-      <span>Key assumption: Revenue reaches {money(base.revenue, 0)} by {base.year} at {base.ev_sales_multiple:.1f}x EV / Sales</span>
-      {render_valuation_details(analysis)}
+      <span>Key assumption: {escape(model.key_assumption)} <small>{escape(model.data_status)}</small></span>
+      {render_valuation_details(analysis, model)}
     </div>
     """
     return section("Future Value Scenarios", "", body)
@@ -1226,6 +1317,10 @@ def render_next_events_panel(analysis: CompanyAnalysis) -> str:
 
 
 def render_advanced_model_details(analysis: CompanyAnalysis) -> str:
+    model = _valuation_model_for_analysis(analysis)
+    labels = get_scenario_labels_by_method(model.valuation_method)
+    metric_label = str(labels["metric_label"]).format(year=model.model_year)
+    multiple_label = str(labels["multiple_label"])
     return f"""
     <details class="pt-section pt-advanced-details">
       <summary>
@@ -1246,7 +1341,7 @@ def render_advanced_model_details(analysis: CompanyAnalysis) -> str:
         </div>
         <div class="pt-detail-card wide">
           <strong>Sensitivity Table</strong>
-          {sensitivity_table_markup(analysis.sensitivity_table, analysis.company.current_price)}
+          {sensitivity_table_markup(analysis.sensitivity_table, analysis.company.current_price, valuation_method=model.valuation_method, metric_label=metric_label, multiple_label=multiple_label)}
         </div>
         <div class="pt-detail-card wide">
           <strong>Full Read-Through Feed</strong>

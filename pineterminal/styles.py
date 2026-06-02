@@ -1576,6 +1576,10 @@ button, input, textarea, select {
 .pt-detail-row b {
   color: var(--text);
   text-align: right;
+  overflow-wrap: anywhere;
+}
+.pt-detail-row span {
+  min-width: 0;
 }
 .pt-detail-row.total {
   border-top: 1px solid rgba(122, 152, 184, 0.24);
@@ -2093,8 +2097,46 @@ button, input, textarea, select {
   background: rgba(20, 34, 53, 0.42);
   padding: 0.7rem;
 }
+.pt-detail-card.warn {
+  border-color: rgba(240, 194, 74, 0.35);
+  background: rgba(240, 194, 74, 0.06);
+}
 .pt-detail-card.wide {
   margin-top: 0.72rem;
+}
+.pt-detail-list {
+  margin: 0.45rem 0 0;
+  padding-left: 1rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+.pt-model-warning {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  gap: 0.42rem 0.55rem;
+  align-items: start;
+  border: 1px solid rgba(240, 194, 74, 0.28);
+  border-radius: 7px;
+  background: rgba(240, 194, 74, 0.07);
+  color: var(--yellow);
+  margin-bottom: 0.62rem;
+  padding: 0.56rem 0.66rem;
+  font-size: 0.75rem;
+}
+.pt-model-warning .pt-svg-icon {
+  width: 0.92rem;
+  height: 0.92rem;
+  margin-top: 0.08rem;
+}
+.pt-model-warning span {
+  color: var(--text);
+  font-weight: 800;
+}
+.pt-model-warning small {
+  grid-column: 2;
+  color: var(--muted);
+  line-height: 1.35;
 }
 .pt-detail-note {
   border-radius: 6px;

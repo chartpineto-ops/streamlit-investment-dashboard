@@ -72,7 +72,7 @@ def _init_state() -> None:
 
 def _watchlist_for_sidebar() -> list[dict[str, object]]:
     rows = all_watchlist_rows()
-    preferred = ["AMPX", "MRVL", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
+    preferred = ["AMPX", "MRVL", "VICR", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
     return sorted(rows, key=lambda row: preferred.index(str(row["Ticker"])) if str(row["Ticker"]) in preferred else 99)
 
 

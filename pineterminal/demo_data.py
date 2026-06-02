@@ -4,10 +4,8 @@ from collections import Counter
 
 from pineterminal.calculations import (
     calculate_expected_return,
-    calculate_expected_value,
     calculate_expected_value_detail,
     calculate_fundamental_score,
-    calculate_future_enterprise_value,
     calculate_future_share_price,
     calculate_future_value_bridge,
     calculate_investment_signal,
@@ -34,6 +32,7 @@ from pineterminal.types import (
     ValuationScenario,
     WhatMustBeTrueItem,
 )
+from pineterminal.valuation import format_financial_value, get_valuation_model
 
 
 FUNDAMENTAL_WEIGHTS = {
@@ -53,6 +52,7 @@ COMPANIES: dict[str, Company] = {
     "MRVL": Company("MRVL", "Marvell Technology, Inc.", "Technology", "Semiconductors", ["AI Data Centers", "Custom Silicon", "Networking", "Optical Connectivity"], 68.32, 2.11, 59_200_000_000, 61_600_000_000, 47.09, 127.48, pre_market_change_percent=0.4, after_hours_change_percent=0.2, revenue_ttm=5_600_000_000, gross_margin=47, cash=950_000_000, debt=4_100_000_000),
     "IONQ": Company("IONQ", "IonQ, Inc.", "Technology", "Quantum Computing", ["Quantum Computing", "Long-Duration Growth", "Government R&D", "Speculative Technology"], 18.67, -1.02, 4_100_000_000, 3_650_000_000, 6.22, 54.74, pre_market_change_percent=-0.6, after_hours_change_percent=-0.4, revenue_ttm=45_000_000, gross_margin=54, cash=420_000_000, debt=0),
     "MP": Company("MP", "MP Materials Corp.", "Materials", "Rare Earths", ["Critical Minerals", "Rare Earths", "Defense Supply Chain", "Reshoring"], 25.11, 1.76, 4_300_000_000, 4_000_000_000, 10.02, 29.88, pre_market_change_percent=0.2, after_hours_change_percent=0.1, revenue_ttm=238_000_000, gross_margin=22, cash=997_000_000, debt=930_000_000),
+    "VICR": Company("VICR", "Vicor Corporation", "Technology", "Power Electronics", ["Power Electronics", "Components", "Margin Recovery", "Industrial Power"], 44.00, 0.0, 1_950_000_000, 1_700_000_000, 28.00, 72.00, pre_market_change_percent=0.0, after_hours_change_percent=0.0, revenue_ttm=360_000_000, gross_margin=46, cash=280_000_000, debt=30_000_000, shares_outstanding=44_000_000),
     "FBTC": Company("FBTC", "Fidelity Wise Origin Bitcoin Fund", "Digital Assets", "Bitcoin ETF", ["Bitcoin", "Crypto ETF Flows", "Digital Assets", "Liquidity"], 59.42, 3.34, 23_500_000_000, 23_500_000_000, 38.10, 71.20, pre_market_change_percent=1.1, after_hours_change_percent=0.5, revenue_ttm=None, gross_margin=None, cash=None, debt=None),
     "NVDA": Company("NVDA", "NVIDIA Corporation", "Technology", "Semiconductors", ["AI Compute", "GPUs", "AI Data Centers", "Accelerated Computing"], 985.97, 1.14, 2_430_000_000_000, 2_390_000_000_000, 756.34, 1261.33, pre_market_change_percent=0.7, after_hours_change_percent=0.3, revenue_ttm=130_500_000_000, gross_margin=73, cash=34_800_000_000, debt=9_700_000_000),
     "CEG": Company("CEG", "Constellation Energy Corporation", "Utilities", "Nuclear Power", ["Power Demand", "Nuclear Energy", "AI Data Centers", "Grid Demand"], 301.21, 2.08, 93_500_000_000, 101_200_000_000, 158.12, 326.44, pre_market_change_percent=0.3, after_hours_change_percent=0.1, revenue_ttm=24_900_000_000, gross_margin=41, cash=2_300_000_000, debt=9_800_000_000),
@@ -147,6 +147,7 @@ UPCOMING_EVENTS = [
     {"ticker": "MRVL", "event": "AI Infrastructure Update", "date": "Jun 11, 2025"},
     {"ticker": "IONQ", "event": "Quantum Systems Roadmap", "date": "Jun 20, 2025"},
     {"ticker": "MP", "event": "Rare Earths Policy Forum", "date": "Jun 24, 2025"},
+    {"ticker": "VICR", "event": "Power Electronics Investor Update", "date": "Jun 19, 2025"},
     {"ticker": "FBTC", "event": "Digital Asset Flows Report", "date": "Jun 07, 2025"},
     {"ticker": "NVDA", "event": "AI Compute Platform Update", "date": "Jun 12, 2025"},
     {"ticker": "CEG", "event": "Power Demand Investor Day", "date": "Jun 26, 2025"},
@@ -182,6 +183,7 @@ def _base_metrics(ticker: str) -> list[FundamentalMetric]:
         "NVDA": [("+78%", "TTM YoY", 9.2, "up", "Positive"), ("73%", "TTM", 9.4, "up", "Positive"), ("Strong", "Operating leverage", 8.8, "up", "Positive"), ("Positive", "FCF generation", 9.0, "up", "Positive"), ("Fortress", "Net cash", 9.1, "up", "Positive"), ("AI Backlog", "Hyperscaler demand", 9.3, "up", "Positive"), ("Dominant", "GPU ecosystem", 9.6, "up", "Positive"), ("Excellent", "Platform execution", 9.0, "up", "Positive")],
         "IONQ": [("+88%", "TTM YoY", 8.2, "up", "Positive"), ("54%", "TTM", 7.0, "flat", "Positive"), ("Early", "Pre-scale losses", 5.3, "flat", "Neutral"), ("Negative", "Cash burn", 4.2, "down", "Negative"), ("Net Cash", "No debt", 8.0, "up", "Positive"), ("Developing", "Govt and enterprise pilots", 6.4, "up", "Neutral"), ("Emerging", "Trapped-ion approach", 7.1, "flat", "Positive"), ("Tracking", "Roadmap execution", 6.3, "flat", "Neutral")],
         "MP": [("+18%", "TTM YoY", 6.4, "up", "Positive"), ("22%", "TTM", 5.8, "down", "Neutral"), ("Cyclical", "Commodity sensitivity", 5.7, "flat", "Neutral"), ("Neutral", "Expansion capex", 4.8, "down", "Negative"), ("Improving", "Liquidity available", 6.9, "up", "Neutral"), ("Strategic", "Defense offtake", 7.0, "up", "Positive"), ("Domestic Asset", "US rare earth exposure", 7.7, "up", "Positive"), ("Processing Ramp", "Execution tracking", 6.4, "flat", "Neutral")],
+        "VICR": [("Recovering", "Revenue base reset", 5.8, "flat", "Neutral"), ("46%", "TTM", 6.8, "up", "Positive"), ("Improving", "Margin recovery", 6.1, "up", "Neutral"), ("Positive", "Cash generation", 6.2, "flat", "Positive"), ("Net Cash", "Low debt", 7.2, "up", "Positive"), ("Developing", "Power module demand", 6.0, "flat", "Neutral"), ("Niche Components", "High-performance power", 6.7, "flat", "Positive"), ("Needs Proof", "Scaling consistency", 5.8, "flat", "Neutral")],
         "FBTC": [("Asset flows", "ETF flow sensitivity", 6.5, "up", "Positive"), ("N/A", "Fund structure", 5.5, "flat", "Neutral"), ("N/A", "Fund structure", 5.0, "flat", "Neutral"), ("N/A", "Fund structure", 5.0, "flat", "Neutral"), ("Custody", "Fund structure", 6.0, "flat", "Neutral"), ("ETF Demand", "Institutional allocation", 6.8, "up", "Positive"), ("Distribution", "Issuer scale", 7.0, "up", "Positive"), ("Tracking", "Tracking and liquidity", 6.6, "flat", "Neutral")],
         "CEG": [("+7%", "TTM YoY", 6.5, "up", "Positive"), ("41%", "TTM", 7.9, "up", "Positive"), ("Stable", "Power pricing", 7.4, "flat", "Positive"), ("Positive", "FCF after capex", 7.2, "up", "Positive"), ("Durable", "Utility leverage", 7.1, "flat", "Positive"), ("Power Contracts", "Data-center demand", 8.0, "up", "Positive"), ("Scarce Assets", "Nuclear fleet", 8.2, "up", "Positive"), ("Strong", "Operational execution", 7.7, "up", "Positive")],
     }
@@ -190,51 +192,8 @@ def _base_metrics(ticker: str) -> list[FundamentalMetric]:
     return [_metric(name, *values) for name, values in zip(names, profiles.get(ticker, fallback))]
 
 
-SCENARIO_SPECS = {
-    "AMPX": [(115_000_000, 4.0, 5_000_000, 76_000_000, 0.25, "Growth slows and dilution increases"), (260_000_000, 7.0, 5_000_000, 90_750_000, 0.50, "Strong revenue growth and margin expansion"), (500_000_000, 10.0, 5_000_000, 111_000_000, 0.25, "Major customer adoption and premium multiple")],
-    "MRVL": [(8_200_000_000, 5.0, 3_100_000_000, 865_000_000, 0.25, "AI growth offsets only part of non-AI softness"), (10_400_000_000, 7.6, 3_100_000_000, 865_000_000, 0.50, "Custom silicon and optical networking ramp continue"), (13_200_000_000, 9.2, 3_100_000_000, 865_000_000, 0.25, "AI ASIC demand accelerates and premium multiple holds")],
-    "IONQ": [(420_000_000, 6.0, -420_000_000, 270_000_000, 0.25, "Commercial adoption remains slow"), (690_000_000, 9.0, -420_000_000, 270_000_000, 0.50, "Government and enterprise pilots convert gradually"), (1_100_000_000, 12.0, -420_000_000, 290_000_000, 0.25, "Quantum adoption moves into early production workloads")],
-    "MP": [(980_000_000, 4.0, -67_000_000, 174_000_000, 0.25, "Commodity weakness persists"), (1_420_000_000, 6.5, -67_000_000, 174_000_000, 0.50, "Policy support and processing ramp improve margins"), (1_900_000_000, 8.0, -67_000_000, 180_000_000, 0.25, "Supply chain urgency lifts domestic rare earth multiples")],
-    "FBTC": [(48_000_000_000, 1.0, 0, 790_000_000, 0.25, "Bitcoin drawdown and outflows pressure NAV"), (72_000_000_000, 1.0, 0, 790_000_000, 0.50, "ETF inflows and Bitcoin appreciation continue"), (96_000_000_000, 1.0, 0, 790_000_000, 0.25, "Institutional allocation expands sharply")],
-    "NVDA": [(325_000_000_000, 10.0, -25_100_000_000, 2_465_000_000, 0.25, "AI demand normalizes and multiple compresses"), (382_000_000_000, 13.5, -25_100_000_000, 2_465_000_000, 0.50, "AI compute demand stays durable"), (465_000_000_000, 16.0, -25_100_000_000, 2_465_000_000, 0.25, "AI platform ecosystem expands across inference")],
-    "CEG": [(37_000_000_000, 2.8, 7_500_000_000, 311_000_000, 0.25, "Power pricing cools and grid delays persist"), (44_500_000_000, 3.6, 7_500_000_000, 311_000_000, 0.50, "Data-center power contracts support durable growth"), (52_000_000_000, 4.2, 7_500_000_000, 311_000_000, 0.25, "Nuclear scarcity earns a premium multiple")],
-}
-
-
 def _scenarios(company: Company) -> list[ValuationScenario]:
-    names = ["Bear Case", "Base Case", "Bull Case"]
-    rows: list[ValuationScenario] = []
-    scenario_specs = SCENARIO_SPECS.get(company.ticker)
-    if scenario_specs is None:
-        revenue_anchor = company.revenue_ttm or max(company.market_cap / 8, 50_000_000)
-        current_multiple = company.enterprise_value / revenue_anchor if revenue_anchor else 5.0
-        current_multiple = max(1.0, min(12.0, current_multiple))
-        net_debt = (company.debt or 0) - (company.cash or 0)
-        shares = company.shares_outstanding or (company.market_cap / company.current_price if company.current_price else 100_000_000)
-        scenario_specs = [
-            (revenue_anchor * 0.85, max(0.8, current_multiple * 0.65), net_debt, shares * 1.03, 0.25, "Growth slows and valuation multiple compresses"),
-            (revenue_anchor * 1.35, current_multiple, net_debt, shares * 1.07, 0.50, "Revenue improves and the current multiple holds"),
-            (revenue_anchor * 1.90, current_multiple * 1.25, net_debt, shares * 1.12, 0.25, "Growth accelerates and market awards a premium multiple"),
-        ]
-    for name, spec in zip(names, scenario_specs):
-        revenue, multiple, net_debt, diluted_shares, probability, assumption = spec
-        price = calculate_future_share_price(revenue=revenue, multiple=multiple, net_debt=net_debt, diluted_shares_outstanding=diluted_shares)
-        rows.append(
-            ValuationScenario(
-                name=name,
-                year=2028,
-                revenue=revenue,
-                ev_sales_multiple=multiple,
-                future_enterprise_value=calculate_future_enterprise_value(revenue, multiple),
-                net_debt=net_debt,
-                diluted_shares_outstanding=diluted_shares,
-                future_share_price=price,
-                implied_return=calculate_expected_return(price, company.current_price),
-                probability=probability,
-                assumption=assumption,
-            )
-        )
-    return rows
+    return get_valuation_model(company).scenarios
 
 
 def _market_implied(company: Company, base_revenue: float, base_multiple: float) -> MarketImpliedAssumptions:
@@ -273,9 +232,20 @@ def _must_be_true(company: Company, base: ValuationScenario) -> list[WhatMustBeT
             WhatMustBeTrueItem("Dilution remains below 15%", "Needs Monitoring", "Medium", "Dilution Risk", "Per-share value depends on controlled dilution."),
             WhatMustBeTrueItem("Customer adoption accelerates", "Tracking", "Medium", "Customer Demand", "Indirect catalysts need to convert into demand."),
         ]
+    metric_value = base.valuation_metric_display or format_financial_value(base.valuation_metric_value, "dollars")
+    multiple = f"{base.valuation_multiple:.1f}x" if base.valuation_multiple is not None else "the selected driver"
+    if base.valuation_method == "P/E":
+        metric_row = (f"EPS model reaches {metric_value} by {base.year}", "Tracking", "Medium", "Earnings Growth", "Based on base-case earnings model.")
+    elif base.valuation_method == "EV/EBITDA":
+        metric_row = (f"EBITDA model reaches {metric_value} by {base.year}", "Tracking", "Medium", "Earnings Growth", "Based on base-case EBITDA model.")
+    elif base.valuation_method == "Asset Price Scenario":
+        metric_row = (f"Asset price scenario reaches {metric_value} by {base.year}", "Tracking", "Medium", "Asset Price", "Based on base-case asset price scenario.")
+    else:
+        metric_row = (f"Revenue model reaches {metric_value} by {base.year}", "Tracking", "Medium", "Revenue Growth", "Based on base-case revenue model.")
+    multiple_label = base.valuation_multiple_label if base.valuation_multiple is not None else "NAV/share scenario"
     common = [
-        (f"Revenue model reaches {base.revenue / 1_000_000_000:.1f}B by 2028" if base.revenue >= 1_000_000_000 else f"Revenue model reaches ${base.revenue / 1_000_000:.0f}M by 2028", "Tracking", "Medium", "Revenue Growth", "Based on base-case revenue model."),
-        (f"Market sustains a {base.ev_sales_multiple:.1f}x EV/Sales framework", "Tracking", "Medium", "Multiple Expansion", "Derived from base-case valuation framework."),
+        metric_row,
+        (f"Market sustains {multiple} {multiple_label}", "Tracking", "Medium", "Valuation Multiple", "Derived from base-case valuation framework."),
         ("Balance sheet risk does not force unfavorable dilution", "Tracking", "Medium", "Dilution Risk", "Based on cash, debt, and cash burn assumptions."),
         ("High-confidence read-through stays net positive", "Tracking", "Medium", "Catalyst / Momentum", "Based on theme exposure map."),
     ]
@@ -334,6 +304,7 @@ def _risks(ticker: str) -> list[RiskItem]:
         "IONQ": [("Commercialization Risk", "Quantum revenue may take longer to materialize.", "High", "Lowers future revenue and multiple.", "Pilot conversion and government demand.", "Active watch"), ("Duration Risk", "Cash flows are far in the future.", "High", "Higher rates compress valuation.", "More near-term customer traction.", "Elevated"), ("Technical Roadmap Risk", "Milestones may not translate to commercial value.", "Medium", "Reduces confidence and multiple.", "Independent benchmarks and customer wins.", "Monitoring")],
         "MRVL": [("Customer Concentration", "Large cloud customers can shift roadmaps.", "Medium", "Creates revenue volatility.", "Multiple ASIC programs.", "Monitoring"), ("Non-AI Cycle Risk", "Legacy end markets remain soft.", "Medium", "Offsets AI growth.", "Mix shift toward data center.", "Monitoring"), ("Execution Risk", "AI ramp timing may slip.", "Medium", "Delays revenue recognition.", "Design-win tracking.", "Monitoring")],
         "MP": [("Commodity Price Risk", "Rare earth prices can remain weak.", "High", "Pressures gross margin.", "Downstream processing and offtake contracts.", "Active watch"), ("Ramp Risk", "Processing expansion may take longer than planned.", "Medium", "Delays revenue realization.", "Milestone tracking.", "Monitoring"), ("Policy Risk", "Supportive policy can change.", "Medium", "Reduces strategic premium.", "Diversified commercial demand.", "Monitoring")],
+        "VICR": [("Revenue Recovery Risk", "Power component demand may recover more slowly than modeled.", "Medium", "Lowers revenue assumptions and valuation support.", "Order growth and backlog conversion.", "Monitoring"), ("Margin Normalization Risk", "Gross margin improvement may lag volume recovery.", "Medium", "Reduces future earnings confidence.", "Sustained utilization and mix improvement.", "Monitoring"), ("Customer Timing Risk", "Industrial and data-center power programs can shift timing.", "Medium", "Creates revenue volatility.", "Broader design-win conversion.", "Monitoring")],
         "FBTC": [("Bitcoin Drawdown Risk", "ETF value remains tied to Bitcoin volatility.", "High", "Directly lowers NAV.", "Sizing discipline.", "Elevated"), ("Liquidity Risk", "ETF flows can reverse quickly.", "Medium", "Raises risk premium.", "Track weekly flows.", "Monitoring"), ("Regulatory Risk", "Custody and market rules can change.", "Medium", "Limits institutional adoption.", "Regulatory clarity.", "Monitoring")],
         "NVDA": [("AI Demand Normalization", "Customers may digest capacity after a capex wave.", "Medium", "Compresses revenue growth and multiple.", "Inference demand and platform breadth.", "Monitoring"), ("Gross Margin Peak Risk", "Competition or mix can pressure margins.", "Medium", "Lowers earnings power.", "Software and networking attach.", "Monitoring"), ("Export Control Risk", "Restrictions can limit addressable markets.", "Medium", "Reduces revenue assumptions.", "Compliant product roadmap.", "Monitoring")],
         "CEG": [("Regulatory Risk", "Power pricing and nuclear policy can change.", "Medium", "Reduces multiple and cash flow confidence.", "Long-term contracts.", "Monitoring"), ("Grid Execution Risk", "Interconnection bottlenecks can delay load growth.", "Medium", "Pushes demand realization outward.", "Contract discipline and grid investment.", "Monitoring"), ("Commodity / Fuel Risk", "Fuel and power market volatility can affect margins.", "Low", "Adds earnings volatility.", "Hedging and diversified fleet.", "Contained")],
@@ -356,6 +327,7 @@ def _thesis_updates(company: Company, readthrough_count: int) -> list[ThesisUpda
         "MRVL": [("Hyperscalers lift AI capex guidance", "Indirect Catalyst", "Indirect", "Positive", "Customer Demand", "Revenue Growth", "Catalyst score +0.4", "AI capex supports custom silicon and optical networking demand.", "Catalyst 7.1", "Catalyst 7.5"), ("Non-AI chip inventory digestion continues", "Sector", "Indirect", "Negative", "Cyclical Demand", "Gross Margin", "Margin confidence -0.1", "Legacy end-market softness can offset AI strength.", "GM case 51%", "GM case 50%")],
         "IONQ": [("Quantum R&D awards expand pilot funding", "Policy / Indirect Catalyst", "Indirect", "Positive", "Customer Demand", "Revenue Growth", "Catalyst score +0.2", "Government funding validates early-stage quantum demand.", "Revenue confidence Low", "Revenue confidence Medium"), ("Treasury yields move higher", "Macro", "Indirect", "Negative", "Valuation Sensitivity", "Multiple Compression", "Risk discount +0.2; catalyst score -0.4", "Higher rates reduce present value of long-duration growth companies.", "Multiple 9.5x", "Multiple 9.0x")],
         "MP": [("Rare earth export controls tighten", "Policy / Indirect Catalyst", "Indirect", "Positive", "Strategic Value", "Multiple Expansion", "Multiple support +0.3", "Supply chain stress increases strategic value of domestic assets.", "Base multiple 6.2x", "Base multiple 6.5x"), ("Rare earth prices remain soft", "Commodity", "Indirect", "Negative", "Margin Trend", "Gross Margin", "Margin score -0.2", "Weak spot pricing can pressure near-term earnings.", "GM case 30%", "GM case 28%")],
+        "VICR": [("Power module demand shows early recovery signs", "Company / Sector", "Indirect", "Positive", "Customer Demand", "Revenue Growth", "Revenue confidence +0.2", "Improving power electronics demand supports the revenue recovery case.", "Revenue confidence Low", "Revenue confidence Medium"), ("Margin recovery remains the proof point", "Company / Operating", "Direct", "Neutral", "Profitability", "Gross Margin", "Keep risk adjustment unchanged", "Upside requires utilization and mix to normalize, not just revenue growth.", "GM case 45%", "GM case 46%")],
         "FBTC": [("Spot Bitcoin ETF inflows continue", "Market Flow", "Indirect", "Positive", "Asset Demand", "Asset Price", "Catalyst score +0.5", "Institutional demand supports Bitcoin-linked fund flows.", "Flow trend Neutral", "Flow trend Positive"), ("Real yields rise", "Macro", "Indirect", "Negative", "Liquidity Sensitivity", "Risk Premium", "Risk score -0.2", "Higher real yields can reduce appetite for volatile crypto exposure.", "Risk premium Medium", "Risk premium High")],
         "NVDA": [("AI compute clusters keep expanding", "Sector / Indirect Catalyst", "Indirect", "Positive", "Customer Demand", "Revenue Growth", "Revenue confidence +0.3", "AI workloads support GPU and platform demand.", "Demand High", "Demand Very High"), ("Export-control risk remains active", "Regulatory", "Indirect", "Negative", "Market Access", "Revenue Growth", "Risk score -0.1", "Restrictions can limit addressable markets.", "Risk Medium", "Risk Medium")],
         "CEG": [("Data-center power contracts lengthen", "Indirect Catalyst", "Indirect", "Positive", "Customer Demand", "Revenue Growth", "Catalyst score +0.4", "Long-duration contracts improve revenue visibility.", "Contract visibility Medium", "Contract visibility High"), ("Grid queues remain a bottleneck", "Infrastructure", "Indirect", "Negative", "Execution Timing", "Execution Risk", "Timing confidence -0.2", "Interconnection delays can slow customer additions.", "Execution risk Medium", "Execution risk Medium")],
@@ -421,49 +393,30 @@ def _ampx_reference_readthrough() -> list[MarketReadThroughItem]:
 
 
 def _sensitivity(company: Company, base: ValuationScenario) -> SensitivityTable:
-    if company.ticker == "AMPX":
-        revenues = [150_000_000, 200_000_000, 250_000_000, 300_000_000, 400_000_000, 500_000_000]
-        multiples = [4.0, 6.0, 8.0, 10.0, 12.0]
-        values = {
-            (150_000_000, 4.0): 4.20,
-            (200_000_000, 4.0): 5.60,
-            (250_000_000, 4.0): 7.00,
-            (300_000_000, 4.0): 8.40,
-            (400_000_000, 4.0): 11.20,
-            (500_000_000, 4.0): 14.00,
-            (150_000_000, 6.0): 6.30,
-            (200_000_000, 6.0): 8.40,
-            (250_000_000, 6.0): 10.50,
-            (300_000_000, 6.0): 12.60,
-            (400_000_000, 6.0): 16.80,
-            (500_000_000, 6.0): 21.00,
-            (150_000_000, 8.0): 8.40,
-            (200_000_000, 8.0): 11.20,
-            (250_000_000, 8.0): 14.00,
-            (300_000_000, 8.0): 16.80,
-            (400_000_000, 8.0): 22.40,
-            (500_000_000, 8.0): 28.00,
-            (150_000_000, 10.0): 10.50,
-            (200_000_000, 10.0): 14.00,
-            (250_000_000, 10.0): 17.50,
-            (300_000_000, 10.0): 21.00,
-            (400_000_000, 10.0): 28.00,
-            (500_000_000, 10.0): 35.00,
-            (150_000_000, 12.0): 12.60,
-            (200_000_000, 12.0): 16.80,
-            (250_000_000, 12.0): 21.00,
-            (300_000_000, 12.0): 25.20,
-            (400_000_000, 12.0): 33.60,
-            (500_000_000, 12.0): 42.00,
-        }
-        return SensitivityTable(revenues, multiples, values, (250_000_000, 8.0), "Blue box = Base Case revenue x multiple estimate.")
-    revenues = [base.revenue * factor for factor in (0.6, 0.8, 1.0, 1.2, 1.5)]
-    multiples = [max(0.5, base.ev_sales_multiple + offset) for offset in (-3, -1.5, 0, 1.5, 3)]
+    metric_value = base.valuation_metric_value or base.revenue
+    if base.valuation_method == "P/E":
+        revenues = [metric_value * factor for factor in (0.75, 0.9, 1.0, 1.1, 1.25)]
+        multiples = [max(1.0, (base.valuation_multiple or base.ev_sales_multiple) + offset) for offset in (-6, -3, 0, 3, 6)]
+        values = {}
+        for multiple in multiples:
+            for metric in revenues:
+                values[(metric, multiple)] = round(metric * multiple, 2)
+        return SensitivityTable(revenues, multiples, values, (metric_value, base.valuation_multiple or base.ev_sales_multiple), "Highlighted cell is the base-case EPS x P/E assumption.")
+    if base.valuation_method == "Asset Price Scenario":
+        revenues = [metric_value * factor for factor in (0.65, 0.85, 1.0, 1.2, 1.5)]
+        multiples = [0.90, 1.00, 1.10]
+        values = {}
+        for nav_factor in multiples:
+            for asset_price in revenues:
+                values[(asset_price, nav_factor)] = round(company.current_price * (asset_price / metric_value) * nav_factor, 2) if metric_value else 0.0
+        return SensitivityTable(revenues, multiples, values, (metric_value, 1.00), "Highlighted cell is the base-case asset price and NAV/share sensitivity.")
+    revenues = [metric_value * factor for factor in (0.6, 0.8, 1.0, 1.2, 1.5)]
+    multiples = [max(0.5, (base.valuation_multiple or base.ev_sales_multiple) + offset) for offset in (-3, -1.5, 0, 1.5, 3)]
     values: dict[tuple[float, float], float] = {}
     for multiple in multiples:
         for revenue in revenues:
             values[(revenue, multiple)] = calculate_future_share_price(revenue=revenue, multiple=multiple, net_debt=base.net_debt, diluted_shares_outstanding=base.diluted_shares_outstanding)
-    return SensitivityTable(revenues, multiples, values, (base.revenue, base.ev_sales_multiple), "Highlighted cell is the exact base-case valuation assumption. Values are future share price estimates.")
+    return SensitivityTable(revenues, multiples, values, (metric_value, base.valuation_multiple or base.ev_sales_multiple), "Highlighted cell is the exact base-case valuation assumption. Values are future share price estimates.")
 
 
 def _events_for_ticker(ticker: str) -> list[dict[str, str]]:
@@ -503,8 +456,9 @@ def _valuation_score(expected_return: float) -> float:
 
 def build_company_analysis_for_company(company: Company) -> CompanyAnalysis:
     metrics = _base_metrics(company.ticker)
-    scenarios = _scenarios(company)
-    expected_value = calculate_expected_value(scenarios)
+    valuation_model = get_valuation_model(company)
+    scenarios = valuation_model.scenarios
+    expected_value = valuation_model.expected_value or 0.0
     expected_detail = calculate_expected_value_detail(scenarios, company.current_price)
     base = next(item for item in scenarios if item.name == "Base Case")
     readthrough = _ampx_reference_readthrough() if company.ticker == "AMPX" else get_theme_read_through_for_ticker(company.ticker, company.themes, MARKET_UPDATES, THEME_EXPOSURES)
@@ -551,6 +505,7 @@ def build_company_analysis_for_company(company: Company) -> CompanyAnalysis:
         negative_drivers=negative_drivers,
         key_levers=key_levers,
         next_events=_events_for_ticker(company.ticker),
+        valuation_model=valuation_model,
     )
 
 

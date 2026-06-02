@@ -89,6 +89,37 @@ class ValuationScenario:
     probability: float
     assumption: str
     data_type: str = "Model Assumption / Derived Output"
+    valuation_method: str = "EV/Sales"
+    valuation_metric: str = "Revenue"
+    future_revenue: float | None = None
+    future_revenue_display: str = ""
+    valuation_metric_value: float | None = None
+    valuation_metric_display: str = ""
+    valuation_multiple: float | None = None
+    valuation_multiple_label: str = "EV / Sales"
+    net_debt_adjustment: float | None = None
+    assumption_quality: str = "Model assumptions"
+    warning: str = ""
+
+
+@dataclass(frozen=True)
+class ValuationModel:
+    ticker: str
+    current_price: float | None
+    model_year: int
+    currency: str
+    revenue_unit: str
+    diluted_shares_outstanding: float | None
+    net_debt: float | None
+    scenarios: list[ValuationScenario]
+    expected_value: float | None
+    expected_return: float | None
+    key_assumption: str
+    interpretation: str
+    data_status: str
+    last_updated: str
+    valuation_method: str
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -235,3 +266,4 @@ class CompanyAnalysis:
     negative_drivers: list[str] = field(default_factory=list)
     key_levers: list[str] = field(default_factory=list)
     next_events: list[dict[str, str]] = field(default_factory=list)
+    valuation_model: ValuationModel | None = None
