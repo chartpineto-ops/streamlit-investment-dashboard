@@ -89,6 +89,10 @@ def _load_persistent_watchlist_tickers() -> list[str]:
     return DEFAULT_WATCHLIST.copy()
 
 
+def _default_portfolio_holdings() -> list[dict[str, object]]:
+    return [dict(row) for row in PORTFOLIO_HOLDINGS]
+
+
 def _init_state() -> None:
     if st.session_state.get("_pt_app_state_version") != APP_STATE_VERSION:
         for key in ("currency", "page"):
@@ -105,6 +109,10 @@ def _init_state() -> None:
         st.session_state["watchlist_tickers"] = _load_persistent_watchlist_tickers()
     st.session_state.setdefault("watchlist_add_open", False)
     st.session_state.setdefault("watchlist_message", "")
+    if "portfolio_holdings" not in st.session_state:
+        st.session_state["portfolio_holdings"] = _default_portfolio_holdings()
+    st.session_state.setdefault("portfolio_add_open", False)
+    st.session_state.setdefault("portfolio_message", "")
 
 
 def _active_watchlist_tickers() -> list[str]:
@@ -199,6 +207,102 @@ def _remove_watchlist_ticker(ticker: str) -> None:
     if st.session_state.get("selected_ticker") == symbol and remaining:
         st.session_state["selected_ticker"] = remaining[0]
     st.session_state["watchlist_message"] = f"Removed {symbol}."
+
+
+def _portfolio_key(ticker: object) -> str:
+    raw = str(ticker or "").strip()
+    if raw.casefold() == "cash":
+        return "CASH"
+    return clean_ticker(raw)
+
+
+def _portfolio_weight(value: object) -> float:
+    try:
+        return round(float(value or 0.0), 1)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _active_portfolio_holdings() -> list[dict[str, object]]:
+    holdings = []
+    seen = set()
+    for row in st.session_state.get("portfolio_holdings", _default_portfolio_holdings()):
+        key = _portfolio_key(row.get("ticker") if isinstance(row, dict) else "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        holdings.append(
+            {
+                "ticker": "Cash" if key == "CASH" else key,
+                "weight": _portfolio_weight(row.get("weight") if isinstance(row, dict) else 0.0),
+                "signal": str(row.get("signal") or "No Rating") if isinstance(row, dict) else "No Rating",
+                "risk": str(row.get("risk") or "N/A") if isinstance(row, dict) else "N/A",
+                "theme": str(row.get("theme") or "General") if isinstance(row, dict) else "General",
+            }
+        )
+    st.session_state["portfolio_holdings"] = holdings
+    return holdings
+
+
+def _portfolio_row_for_ticker(symbol: str, weight: float) -> dict[str, object]:
+    ticker = clean_ticker(symbol)
+    try:
+        analysis = ANALYSES.get(ticker) or load_dashboard_analysis(ticker)
+        return {
+            "ticker": ticker,
+            "weight": _portfolio_weight(weight),
+            "signal": analysis.investment_signal.signal,
+            "risk": analysis.investment_signal.risk_level,
+            "theme": analysis.company.themes[0] if analysis.company.themes else "General",
+        }
+    except Exception:
+        snapshot = latest_quote_snapshot(ticker) or {}
+        return {
+            "ticker": ticker,
+            "weight": _portfolio_weight(weight),
+            "signal": "No Rating",
+            "risk": "N/A",
+            "theme": str(snapshot.get("sector") or "Live"),
+        }
+
+
+def _portfolio_tickers(rows: list[dict[str, object]]) -> list[str]:
+    return [key for row in rows if (key := _portfolio_key(row.get("ticker"))) and key != "CASH"]
+
+
+def _add_portfolio_ticker(symbol: str, weight: float) -> None:
+    ticker = clean_ticker(symbol)
+    if not ticker:
+        st.session_state["portfolio_message"] = "Enter a ticker first."
+        return
+    if ticker == "CASH":
+        st.session_state["portfolio_message"] = "Cash is already tracked as the reserve row."
+        return
+    holdings = _active_portfolio_holdings()
+    if ticker in _portfolio_tickers(holdings):
+        st.session_state["selected_ticker"] = ticker
+        st.session_state["portfolio_message"] = f"{ticker} is already in the portfolio."
+        return
+    insert_at = next((index for index, row in enumerate(holdings) if _portfolio_key(row.get("ticker")) == "CASH"), len(holdings))
+    holdings.insert(insert_at, _portfolio_row_for_ticker(ticker, weight))
+    st.session_state["portfolio_holdings"] = holdings
+    st.session_state["selected_ticker"] = ticker
+    st.session_state["portfolio_add_open"] = False
+    st.session_state["portfolio_message"] = f"Added {ticker} to the portfolio."
+
+
+def _remove_portfolio_ticker(ticker: str) -> None:
+    key = _portfolio_key(ticker)
+    if key == "CASH":
+        st.session_state["portfolio_message"] = "Cash reserve stays in the portfolio."
+        return
+    holdings = [row for row in _active_portfolio_holdings() if _portfolio_key(row.get("ticker")) != key]
+    st.session_state["portfolio_holdings"] = holdings
+    if st.session_state.get("selected_ticker") == key:
+        remaining = _portfolio_tickers(holdings)
+        if remaining:
+            st.session_state["selected_ticker"] = remaining[0]
+    st.session_state["portfolio_message"] = f"Removed {key} from the portfolio."
 
 
 def render_watchlist_sidebar(rows: list[dict[str, object]]) -> None:
@@ -395,17 +499,37 @@ def render_watchlist_page() -> None:
     html(section("Watchlist Groups", "", f'<div class="pt-score-breakdown">{cards}</div>'))
 
 
-def _thesis_tracker_rows() -> list[dict[str, object]]:
+def _thesis_tracker_rows(tickers: list[str] | None = None) -> list[dict[str, object]]:
     rows = []
-    for ticker, analysis in ANALYSES.items():
+    source_tickers = list(ANALYSES.keys()) if tickers is None else tickers
+    for ticker in source_tickers:
+        symbol = clean_ticker(ticker)
+        if not symbol:
+            continue
+        try:
+            analysis = ANALYSES.get(symbol) or load_dashboard_analysis(symbol)
+        except Exception:
+            rows.append(
+                {
+                    "Ticker": symbol,
+                    "Original Thesis": f"{symbol} needs more source data before the thesis can be scored.",
+                    "Current Thesis Status": "Needs Data",
+                    "Bull Case Drivers": "Pending",
+                    "Bear Case Risks": "Pending",
+                    "Recent Updates": "No updates available",
+                    "Thesis Trend": "Unscored",
+                    "Conviction Change": "+0.0",
+                }
+            )
+            continue
         rows.append(
             {
-                "Ticker": ticker,
-                "Original Thesis": _original_thesis(ticker),
+                "Ticker": symbol,
+                "Original Thesis": _original_thesis(symbol, analysis.company.themes),
                 "Current Thesis Status": analysis.thesis_summary.status,
                 "Bull Case Drivers": ", ".join(analysis.company.themes[:2]),
-                "Bear Case Risks": analysis.risks[0].risk_name,
-                "Recent Updates": analysis.thesis_updates[0].title,
+                "Bear Case Risks": analysis.risks[0].risk_name if analysis.risks else "Pending",
+                "Recent Updates": analysis.thesis_updates[0].title if analysis.thesis_updates else "No updates available",
                 "Thesis Trend": analysis.thesis_summary.status,
                 "Conviction Change": f"{analysis.thesis_summary.net_thesis_impact_score:+.1f}",
             }
@@ -413,27 +537,115 @@ def _thesis_tracker_rows() -> list[dict[str, object]]:
     return rows
 
 
-def _original_thesis(ticker: str) -> str:
+def _original_thesis(ticker: str, themes: list[str] | None = None) -> str:
     if ticker == "AMPX":
         return "High-density batteries can benefit from drone, aviation, and EV applications where weight and endurance matter."
-    themes = ", ".join(COMPANIES[ticker].themes[:2])
-    return f"{ticker} benefits if {themes} demand continues strengthening."
+    company = COMPANIES.get(ticker)
+    selected_themes = themes or (company.themes if company else [])
+    theme_text = ", ".join(selected_themes[:2]) if selected_themes else "its core end-market"
+    return f"{ticker} benefits if {theme_text} demand continues strengthening."
+
+
+def _portfolio_signal_tone(signal: str) -> str:
+    lowered = signal.casefold()
+    if "buy" in lowered:
+        return "good"
+    if "avoid" in lowered or "sell" in lowered:
+        return "bad"
+    if "hold" in lowered or "reserve" in lowered:
+        return "warn"
+    return "neutral"
+
+
+def _portfolio_risk_tone(risk: str) -> str:
+    lowered = risk.casefold()
+    if lowered == "high":
+        return "bad"
+    if lowered == "medium":
+        return "warn"
+    if lowered == "low":
+        return "good"
+    return "neutral"
+
+
+def render_portfolio_controls() -> None:
+    message = st.session_state.get("portfolio_message", "")
+    if message:
+        st.caption(message)
+    if st.session_state.get("portfolio_add_open"):
+        ticker_col, weight_col = st.columns([0.72, 0.28], vertical_alignment="center")
+        with ticker_col:
+            new_ticker = st.text_input("Add ticker to portfolio", key="portfolio_new_ticker", placeholder="Ticker")
+        with weight_col:
+            new_weight = st.number_input("Starting weight (%)", min_value=0.0, max_value=100.0, value=0.0, step=0.5, key="portfolio_new_weight")
+        add_col, cancel_col = st.columns(2)
+        with add_col:
+            if st.button("Add to Portfolio", key="portfolio_add_confirm", use_container_width=True):
+                _add_portfolio_ticker(new_ticker, new_weight)
+                st.rerun()
+        with cancel_col:
+            if st.button("Cancel", key="portfolio_add_cancel", use_container_width=True):
+                st.session_state["portfolio_add_open"] = False
+                st.rerun()
+    elif st.button("+ Add Ticker", key="portfolio_add_open_button"):
+        st.session_state["portfolio_add_open"] = True
+        st.rerun()
+
+
+def render_portfolio_holdings(rows: list[dict[str, object]]) -> None:
+    html('<div class="pt-side-title">Portfolio Holdings</div>')
+    headers = ["Ticker", "Weight", "Signal", "Risk", "Theme", ""]
+    widths = [0.16, 0.12, 0.24, 0.14, 0.28, 0.06]
+    header_cols = st.columns(widths, gap="small")
+    for col, label in zip(header_cols, headers):
+        with col:
+            st.markdown(f'<div class="pt-mini-label">{escape(label)}</div>', unsafe_allow_html=True)
+    for row in rows:
+        ticker = str(row.get("ticker", ""))
+        key = _portfolio_key(ticker)
+        is_cash = key == "CASH"
+        row_cols = st.columns(widths, gap="small", vertical_alignment="center")
+        with row_cols[0]:
+            if is_cash:
+                st.markdown(f"**{escape(ticker)}**", unsafe_allow_html=True)
+            elif st.button(ticker, key=f"portfolio_select_{key}", use_container_width=True):
+                st.session_state["selected_ticker"] = key
+                st.rerun()
+        with row_cols[1]:
+            st.markdown(f'{_portfolio_weight(row.get("weight")):.1f}%')
+        with row_cols[2]:
+            signal = str(row.get("signal", "No Rating"))
+            st.markdown(f'<span class="{_portfolio_signal_tone(signal)}">{escape(signal)}</span>', unsafe_allow_html=True)
+        with row_cols[3]:
+            risk = str(row.get("risk", "N/A"))
+            st.markdown(f'<span class="{_portfolio_risk_tone(risk)}">{escape(risk)}</span>', unsafe_allow_html=True)
+        with row_cols[4]:
+            st.markdown(escape(str(row.get("theme", "General"))), unsafe_allow_html=True)
+        with row_cols[5]:
+            if not is_cash and st.button("X", key=f"portfolio_remove_{key}", help=f"Remove {key}", use_container_width=True):
+                _remove_portfolio_ticker(key)
+                st.rerun()
 
 
 def render_portfolio_page() -> None:
-    total_risk = sum(row["weight"] for row in PORTFOLIO_HOLDINGS if row["risk"] == "High")
+    portfolio_rows = _active_portfolio_holdings()
+    portfolio_tickers = _portfolio_tickers(portfolio_rows)
+    total_risk = sum(_portfolio_weight(row.get("weight")) for row in portfolio_rows if str(row.get("risk")) == "High")
+    cash_reserve = next((_portfolio_weight(row.get("weight")) for row in portfolio_rows if _portfolio_key(row.get("ticker")) == "CASH"), 0.0)
+    theme_count = len({str(row.get("theme")) for row in portfolio_rows if _portfolio_key(row.get("ticker")) != "CASH"})
     cards = f"""
     <div class="pt-score-breakdown">
       <div class="pt-row-card"><span class="pt-mini-label">High-Risk Exposure</span><strong class="warn">{total_risk:.1f}%</strong></div>
-      <div class="pt-row-card"><span class="pt-mini-label">Theme Count</span><strong>{len({row["theme"] for row in PORTFOLIO_HOLDINGS})}</strong></div>
-      <div class="pt-row-card"><span class="pt-mini-label">Cash Reserve</span><strong>65.5%</strong></div>
+      <div class="pt-row-card"><span class="pt-mini-label">Theme Count</span><strong>{theme_count}</strong></div>
+      <div class="pt-row-card"><span class="pt-mini-label">Cash Reserve</span><strong>{cash_reserve:.1f}%</strong></div>
       <div class="pt-row-card"><span class="pt-mini-label">Read-Through Coverage</span><strong class="good">Active</strong></div>
     </div>
     """
     html(section("Portfolio", "Holdings, thesis, theme and risk monitor", cards))
-    render_dataframe(PORTFOLIO_HOLDINGS, 300)
+    render_portfolio_controls()
+    render_portfolio_holdings(portfolio_rows)
     html(section("Thesis / Theme Tracker", "Thesis status, drivers, risks, and recent updates", ""))
-    render_dataframe(_thesis_tracker_rows(), 420)
+    render_dataframe(_thesis_tracker_rows(portfolio_tickers), 420)
 
 
 def render_news_feed_page() -> None:
