@@ -158,6 +158,9 @@ button, input, textarea, select {
   border: 1px solid rgba(122, 152, 184, 0.22) !important;
   background: rgba(20, 34, 53, 0.52) !important;
 }
+[data-testid="stButton"] button p {
+  white-space: nowrap;
+}
 .good { color: var(--green) !important; }
 .bad { color: var(--red) !important; }
 .warn { color: var(--yellow) !important; }
@@ -979,6 +982,7 @@ button, input, textarea, select {
   font-weight: 950;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  white-space: nowrap;
   padding: 0.28rem 0;
   border-bottom: 1px solid rgba(122, 152, 184, 0.18);
 }

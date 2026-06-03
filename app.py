@@ -70,6 +70,7 @@ APP_STATE_VERSION = "pineterminal-dashboard-v3"
 DEFAULT_WATCHLIST = ["AMPX", "MRVL", "VICR", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
 WATCHLIST_REFRESH_INTERVAL_MS = 300_000
 SCANNER_PROVIDER = MarketUniverseProvider()
+SCANNER_TABLE_COLUMNS = [0.16, 0.1, 0.11, 0.1, 0.1, 0.12, 0.12, 0.17, 0.13, 0.13]
 
 
 st.set_page_config(page_title="PineTerminal", page_icon="P", layout="wide", initial_sidebar_state="expanded")
@@ -747,7 +748,7 @@ def _render_scanner_detail() -> None:
 
 
 def _scanner_row_columns(row: pd.Series, prefix: str, idx: int) -> None:
-    cols = st.columns([0.09, 0.1, 0.1, 0.1, 0.1, 0.1, 0.11, 0.16, 0.12, 0.12], vertical_alignment="center")
+    cols = st.columns(SCANNER_TABLE_COLUMNS, vertical_alignment="center")
     ticker = clean_ticker(str(row.get("ticker") or ""))
     with cols[0]:
         if st.button(ticker, key=f"{prefix}_ticker_{ticker}_{idx}", help=f"Open {ticker}", use_container_width=True):
@@ -780,7 +781,7 @@ def _render_scanner_table(title: str, subtitle: str, frame: pd.DataFrame, prefix
     if frame is None or frame.empty:
         html('<p class="pt-placeholder">No tickers match the current scanner filters.</p>')
         return
-    header = st.columns([0.09, 0.1, 0.1, 0.1, 0.1, 0.1, 0.11, 0.16, 0.12, 0.12])
+    header = st.columns(SCANNER_TABLE_COLUMNS)
     labels = ["Ticker", "Price", "% Change", "Volume", "Rel Vol", "Unusual", "$ Vol", "Theme", "Volume", "Signal"]
     for col, label in zip(header, labels):
         with col:
