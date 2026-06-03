@@ -77,6 +77,11 @@ PAGES = [
 APP_STATE_VERSION = "pineterminal-dashboard-v3"
 DEFAULT_WATCHLIST = ["AMPX", "MRVL", "VICR", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
 WATCHLIST_REFRESH_INTERVAL_MS = 300_000
+PAGE_REFRESH_INTERVAL_MS = {
+    "Scanner": 180_000,
+    "News Feed": 300_000,
+    "Economic Data": 900_000,
+}
 SCANNER_PROVIDER = MarketUniverseProvider()
 SCANNER_TABLE_COLUMNS = [0.16, 0.1, 0.11, 0.1, 0.1, 0.12, 0.12, 0.17, 0.13, 0.13]
 
@@ -419,15 +424,46 @@ def render_watchlist_tape(rows: list[dict[str, object]]) -> None:
     html(watchlist_tape(rows))
 
 
-def render_watchlist_refresh_timer() -> None:
+def _auto_refresh_interval_ms(page: str) -> int:
+    return PAGE_REFRESH_INTERVAL_MS.get(page, WATCHLIST_REFRESH_INTERVAL_MS)
+
+
+def _refresh_bucket(interval_ms: int) -> int:
+    seconds = max(1, int(interval_ms / 1000))
+    return int(now_et().timestamp() // seconds)
+
+
+def _format_refresh_interval(interval_ms: int) -> str:
+    minutes = max(1, round(interval_ms / 60_000))
+    return f"{minutes} min"
+
+
+def render_auto_refresh_timer(page: str) -> None:
+    interval_ms = _auto_refresh_interval_ms(page)
     components.html(
         f"""
         <script>
-          window.setTimeout(() => window.parent.location.reload(), {WATCHLIST_REFRESH_INTERVAL_MS});
+          window.setTimeout(() => window.parent.location.reload(), {interval_ms});
         </script>
         """,
         height=0,
         width=0,
+    )
+
+
+def render_auto_refresh_status(page: str) -> None:
+    if page not in PAGE_REFRESH_INTERVAL_MS:
+        return
+    interval_ms = _auto_refresh_interval_ms(page)
+    checked = now_et().strftime("%I:%M %p ET").lstrip("0")
+    html(
+        f"""
+        <div class="pt-auto-refresh">
+          <b>Auto-refresh</b>
+          <span>Every {escape(_format_refresh_interval(interval_ms))}</span>
+          <span>Last checked {escape(checked)}</span>
+        </div>
+        """
     )
 
 
@@ -570,6 +606,8 @@ def _scanner_filters_from_state() -> ScannerFilters:
         for part in str(st.session_state.get("scanner_custom_tickers", "")).replace("\n", ",").replace(" ", ",").split(",")
         if clean_ticker(part)
     )
+    manual_refresh_token = int(st.session_state.get("scanner_refresh_token", 0) or 0)
+    timed_refresh_token = _refresh_bucket(_auto_refresh_interval_ms("Scanner"))
     return ScannerFilters(
         universe_type=UNIVERSE_OPTIONS.get(st.session_state.get("scanner_universe", "All U.S. Stocks"), "all_us_stocks"),
         session=str(st.session_state.get("scanner_session", "Regular Market")),
@@ -584,7 +622,7 @@ def _scanner_filters_from_state() -> ScannerFilters:
         include_etfs=bool(st.session_state.get("scanner_include_etfs", False)),
         exclude_low_liquidity=bool(st.session_state.get("scanner_exclude_low_liquidity", True)),
         custom_tickers=custom_values,
-        refresh_token=int(st.session_state.get("scanner_refresh_token", 0) or 0),
+        refresh_token=(manual_refresh_token * 1_000_000) + timed_refresh_token,
     )
 
 
@@ -1772,12 +1810,13 @@ def render_page(page: str, analysis) -> None:
 def main() -> None:
     _init_state()
     _apply_session_valuation_specs()
-    render_watchlist_refresh_timer()
     watchlist_rows = _watchlist_rows()
     page = render_sidebar(watchlist_rows)
+    render_auto_refresh_timer(page)
     analysis = load_dashboard_analysis(st.session_state["selected_ticker"])
     render_global_controls(page, analysis)
     render_watchlist_tape(watchlist_rows)
+    render_auto_refresh_status(page)
     render_page(page, analysis)
 
 

@@ -749,6 +749,23 @@ button, input, textarea, select {
   from { transform: translateX(-50%); }
   to { transform: translateX(0); }
 }
+.pt-auto-refresh {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+  margin: -0.28rem 0 0.55rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.pt-auto-refresh b {
+  color: var(--blue);
+  font-weight: 900;
+}
+.pt-auto-refresh span {
+  border-left: 1px solid rgba(122, 152, 184, 0.2);
+  padding-left: 0.6rem;
+}
 .pt-mover-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -3561,6 +3578,15 @@ button, input, textarea, select {
   .pt-scanner-source span:last-child,
   .pt-news-feed-status span:last-child {
     margin-left: 0;
+  }
+  .pt-auto-refresh {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .pt-auto-refresh span {
+    border-left: 0;
+    padding-left: 0;
   }
   .pt-calendar-weekdays {
     display: none;

@@ -314,7 +314,7 @@ class MarketUniverseProvider:
                 min_volume=min_volume,
                 max_universe_size=5000,
                 include_etfs=filters.include_etfs or filters.universe_type == "etfs",
-                refresh=bool(filters.refresh_token),
+                refresh=filters.refresh_token,
             )
             raw_frame = packet.get("all_scanned", pd.DataFrame())
             frame = self._normalize_mover_frame(raw_frame, filters.universe_type, watchlist)
