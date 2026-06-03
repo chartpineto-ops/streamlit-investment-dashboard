@@ -259,11 +259,6 @@ def render_topbar(page: str, ticker: str, currency: str, data_mode: str = "Demo"
         f"""
         <div class="pt-topbar">
           <div class="pt-breadcrumb">Dashboard / Company Analysis / <b>{escape(ticker)}</b></div>
-          <div class="pt-actions">
-            <span class="pt-action">+ Add to Watchlist</span>
-            <span class="pt-action">Share</span>
-            <span class="pt-action">{escape(currency)}</span>
-          </div>
         </div>
         """
     )

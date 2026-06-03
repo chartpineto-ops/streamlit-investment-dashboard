@@ -165,7 +165,7 @@ button, input, textarea, select {
 .neutral { color: var(--muted) !important; }
 .pt-topbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
   align-items: center;
   margin: 0 0 0.8rem;
@@ -181,21 +181,6 @@ button, input, textarea, select {
 .pt-top-meta {
   color: var(--faint);
   margin-left: 0.5rem;
-}
-.pt-actions {
-  display: flex;
-  gap: 0.5rem;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-}
-.pt-action {
-  border: 1px solid var(--border);
-  background: #0a1522;
-  color: var(--text);
-  padding: 0.46rem 0.75rem;
-  border-radius: 7px;
-  font-size: 0.78rem;
-  font-weight: 800;
 }
 .pt-shell {
   display: flex;
@@ -3088,9 +3073,6 @@ button, input, textarea, select {
   }
   .pt-topbar {
     grid-template-columns: 1fr;
-  }
-  .pt-actions {
-    justify-content: flex-start;
   }
   .pt-decision-shell .pt-header,
   .pt-decision-card {
