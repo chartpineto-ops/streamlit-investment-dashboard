@@ -920,7 +920,7 @@ button, input, textarea, select {
 .pt-scanner-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 0.1rem 0.65rem;
+  gap: 0.1rem 0.78rem;
   align-items: center;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -929,13 +929,13 @@ button, input, textarea, select {
 }
 .pt-scanner-card-icon {
   grid-row: span 3;
-  width: 2.1rem;
-  height: 2.1rem;
+  width: 2.55rem;
+  height: 2.55rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  font-size: 1.15rem;
+  font-size: 1.45rem;
   font-weight: 950;
   background: rgba(122, 152, 184, 0.1);
 }

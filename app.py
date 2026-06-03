@@ -681,7 +681,7 @@ def _scanner_header(status: dict) -> None:
 
 
 def _render_scanner_filters(theme_options: list[str]) -> None:
-    filter_cols = st.columns([0.16, 0.15, 0.13, 0.13, 0.13, 0.13, 0.12, 0.13], vertical_alignment="end")
+    filter_cols = st.columns([0.16, 0.15, 0.13, 0.13, 0.13, 0.13, 0.12, 0.13], vertical_alignment="bottom")
     with filter_cols[0]:
         st.selectbox("Market Universe", list(UNIVERSE_OPTIONS.keys()), key="scanner_universe")
     with filter_cols[1]:
@@ -699,7 +699,7 @@ def _render_scanner_filters(theme_options: list[str]) -> None:
     with filter_cols[7]:
         st.selectbox("Direction", ["Both", "Gainers", "Losers"], key="scanner_direction")
 
-    extra_cols = st.columns([0.2, 0.2, 0.16, 0.16, 0.18], vertical_alignment="end")
+    extra_cols = st.columns([0.2, 0.2, 0.16, 0.16, 0.18], vertical_alignment="bottom")
     with extra_cols[0]:
         st.number_input("Min Unusual Vol %", min_value=0.0, max_value=2_000.0, step=25.0, key="scanner_min_unusual_pct")
     with extra_cols[1]:
