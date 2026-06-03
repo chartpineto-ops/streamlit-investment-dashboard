@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import calendar
+from collections import defaultdict
 from dataclasses import asdict
+from datetime import datetime
 from html import escape
 
 import pandas as pd
@@ -25,7 +28,7 @@ from pineterminal.calculations import calculate_expected_return, calculate_funda
 from pineterminal.demo_data import (
     ANALYSES,
     COMPANIES,
-    ECONOMIC_DATA,
+    ECONOMIC_CALENDAR_EVENTS,
     MARKET_INDICES,
     MARKET_MOVERS,
     MARKET_UPDATES,
@@ -708,12 +711,90 @@ def render_news_feed_page() -> None:
     render_dataframe(rows, 520)
 
 
+def _economic_event_date(row: dict[str, object]):
+    return datetime.strptime(str(row["date"]), "%Y-%m-%d").date()
+
+
+def _economic_event_tone(row: dict[str, object]) -> str:
+    status = str(row.get("status", "")).casefold()
+    impact = str(row.get("impact", "")).casefold()
+    if status == "released":
+        return "good" if impact == "high" else "info"
+    if impact == "high":
+        return "warn"
+    return "neutral"
+
+
+def _economic_event_card(row: dict[str, object]) -> str:
+    tone = _economic_event_tone(row)
+    source_url = escape(str(row.get("source_url", "")))
+    source_label = escape(str(row.get("source_label", "Source")))
+    source_link = f'<a href="{source_url}" target="_blank" rel="noopener noreferrer">{source_label}</a>' if source_url else ""
+    return f"""
+    <div class="pt-eco-event {tone}">
+      <div class="pt-eco-event-head">
+        <strong>{escape(str(row["event"]))}</strong>
+        <span>{escape(str(row.get("time", "")))} | {escape(str(row.get("category", "")))}</span>
+      </div>
+      <div class="pt-eco-values">
+        <span><b>Actual</b>{escape(str(row.get("actual", "Pending")))}</span>
+        <span><b>Estimate</b>{escape(str(row.get("estimate", "TBD")))}</span>
+        <span><b>Previous</b>{escape(str(row.get("previous", "N/A")))}</span>
+      </div>
+      <p>{escape(str(row.get("why_it_matters", "")))}</p>
+      <div class="pt-eco-source"><em>{escape(str(row.get("impact", "Medium")))} impact</em>{source_link}</div>
+    </div>
+    """
+
+
+def _economic_calendar_markup(year: int, month: int, today) -> str:
+    events = [row for row in ECONOMIC_CALENDAR_EVENTS if (event_date := _economic_event_date(row)).year == year and event_date.month == month]
+    events_by_date: dict[object, list[dict[str, object]]] = defaultdict(list)
+    for row in events:
+        events_by_date[_economic_event_date(row)].append(row)
+    month_label = f"{calendar.month_name[month]} {year}"
+    released = sum(1 for row in events if str(row.get("status", "")).casefold() == "released")
+    high_impact = sum(1 for row in events if str(row.get("impact", "")).casefold() == "high")
+    summary = f"""
+    <div class="pt-score-breakdown">
+      <div class="pt-row-card"><span class="pt-mini-label">Month</span><strong>{escape(month_label)}</strong></div>
+      <div class="pt-row-card"><span class="pt-mini-label">Events</span><strong>{len(events)}</strong></div>
+      <div class="pt-row-card"><span class="pt-mini-label">Released</span><strong class="good">{released}</strong></div>
+      <div class="pt-row-card"><span class="pt-mini-label">High Impact</span><strong class="warn">{high_impact}</strong></div>
+    </div>
+    """
+    weekday_header = "".join(f"<div>{day}</div>" for day in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
+    weeks = calendar.Calendar(firstweekday=6).monthdatescalendar(year, month)
+    cells = ""
+    for week in weeks:
+        for day in week:
+            classes = ["pt-calendar-day"]
+            if day.month != month:
+                classes.append("muted")
+            if day == today:
+                classes.append("today")
+            day_events = "".join(_economic_event_card(row) for row in events_by_date.get(day, []))
+            empty = '<span class="pt-calendar-empty">No major releases</span>' if day.month == month and not day_events else ""
+            cells += f'<div class="{" ".join(classes)}"><div class="pt-calendar-date">{day.day}</div>{day_events}{empty}</div>'
+    note = """
+    <p class="pt-calendar-note">
+      Actuals update after release; estimates are market-consensus placeholders when the official source does not publish forecasts.
+      Source links open the release calendar or data provider page.
+    </p>
+    """
+    return f"""
+    {section("Economic Calendar", "Current month macro releases", summary)}
+    <div class="pt-calendar">
+      <div class="pt-calendar-weekdays">{weekday_header}</div>
+      <div class="pt-calendar-grid">{cells}</div>
+    </div>
+    {note}
+    """
+
+
 def render_economic_page() -> None:
-    cards = "".join(
-        f'<div class="pt-row-card"><span class="pt-mini-label">{row["metric"]}</span><strong>{row["latest"]}</strong><em>{row["trend"]}</em><p class="pt-placeholder">{row["impact"]}</p></div>'
-        for row in ECONOMIC_DATA
-    )
-    html(section("Economic Data", "Macro inputs that affect valuation levers", f'<div class="pt-score-breakdown">{cards}</div>'))
+    today = now_et().date()
+    html(_economic_calendar_markup(today.year, today.month, today))
 
 
 def render_calendar_page() -> None:
