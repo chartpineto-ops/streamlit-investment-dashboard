@@ -367,15 +367,6 @@ def render_global_controls(page: str, analysis) -> None:
         render_topbar(page, analysis.company.ticker, st.session_state["currency"], analysis.company.data_mode, analysis.company.last_updated)
 
 
-def market_tape() -> str:
-    movers = MARKET_MOVERS + MARKET_MOVERS
-    items = "".join(
-        f'<span><b>{row["ticker"]}</b> {price(float(row["price"]))} <b class="{tone_for_value(float(row["change"]))}">{percent(float(row["change"]), 2)}</b></span>'
-        for row in movers
-    )
-    return f'<div class="pt-tape"><div class="pt-tape-inner">{items}</div></div>'
-
-
 def watchlist_tape(rows: list[dict[str, object]]) -> str:
     if not rows:
         return ""
@@ -439,7 +430,6 @@ def render_home_page() -> None:
     html(
         '<div class="pt-shell">'
         + section("Market Index Strip", "", f'<div class="pt-score-breakdown">{index_cards}</div>')
-        + section("Moving Market Ticker", "", market_tape())
         + "</div>"
     )
     col1, col2 = st.columns(2)

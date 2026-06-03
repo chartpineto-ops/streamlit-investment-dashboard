@@ -714,24 +714,6 @@ button, input, textarea, select {
   color: var(--muted);
   font-size: 0.75rem;
 }
-.pt-tape {
-  display: flex;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #081321;
-  white-space: nowrap;
-}
-.pt-tape-inner {
-  display: inline-flex;
-  min-width: max-content;
-  animation: ticker 36s linear infinite;
-}
-.pt-tape span {
-  padding: 0.62rem 0.85rem;
-  border-right: 1px solid rgba(122, 152, 184, 0.18);
-  font-size: 0.78rem;
-}
 .pt-watch-tape {
   display: flex;
   overflow: hidden;
@@ -759,10 +741,6 @@ button, input, textarea, select {
 .pt-watch-tape b:first-child {
   color: var(--text);
   margin-right: 0.35rem;
-}
-@keyframes ticker {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
 }
 @keyframes watchlist-ticker-ltr {
   from { transform: translateX(-50%); }
