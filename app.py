@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+from data.market_scanner import MarketUniverseProvider, ScannerFilters, UNIVERSE_OPTIONS
 from pineterminal.components import (
     html,
     money,
@@ -48,14 +49,14 @@ from pineterminal.valuation import (
 from storage.db import connect, init_db
 from storage.watchlist import add_ticker as store_add_ticker
 from storage.watchlist import latest_quote_snapshot, remove_ticker as store_remove_ticker
-from utils.formatting import clean_ticker, now_et
+from utils.formatting import clean_ticker, fmt_compact, fmt_currency, fmt_daily_move, fmt_multiple, now_et, safe_format_datetime, to_float
 
 
 PAGES = [
     "Dashboard",
     "Markets",
     "Market Read-Through",
-    "Screener",
+    "Scanner",
     "Watchlists",
     "Portfolio",
     "News Feed",
@@ -68,6 +69,7 @@ PAGES = [
 APP_STATE_VERSION = "pineterminal-dashboard-v3"
 DEFAULT_WATCHLIST = ["AMPX", "MRVL", "VICR", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
 WATCHLIST_REFRESH_INTERVAL_MS = 300_000
+SCANNER_PROVIDER = MarketUniverseProvider()
 
 
 st.set_page_config(page_title="PineTerminal", page_icon="P", layout="wide", initial_sidebar_state="expanded")
@@ -114,6 +116,8 @@ def _init_state() -> None:
     st.session_state.setdefault("page", "Dashboard")
     if st.session_state["page"] == "Thesis Tracker":
         st.session_state["page"] = "Portfolio"
+    elif st.session_state["page"] == "Screener":
+        st.session_state["page"] = "Scanner"
     elif st.session_state["page"] not in PAGES:
         st.session_state["page"] = "Dashboard"
     if "watchlist_tickers" not in st.session_state:
@@ -504,31 +508,395 @@ def render_market_readthrough_page() -> None:
     render_dataframe(exposure_rows, 300)
 
 
-def render_screener_page() -> None:
+def _scanner_state_defaults() -> None:
+    defaults = {
+        "scanner_universe": "All U.S. Stocks",
+        "scanner_session": "Regular Market",
+        "scanner_min_price": 2.0,
+        "scanner_min_market_cap_m": 100.0,
+        "scanner_min_dollar_volume_m": 10.0,
+        "scanner_min_move_pct": 3.0,
+        "scanner_min_relative_volume": 2.0,
+        "scanner_min_unusual_pct": 100.0,
+        "scanner_direction": "Both",
+        "scanner_theme": "All",
+        "scanner_include_etfs": False,
+        "scanner_exclude_low_liquidity": True,
+        "scanner_custom_tickers": "",
+        "scanner_refresh_token": 0,
+        "scanner_enable_fundamentals": False,
+        "scanner_min_fundamental_score": 0.0,
+        "scanner_min_expected_return": -250,
+        "scanner_fundamental_signal": "All",
+        "scanner_fundamental_risk": "All",
+        "scanner_keep_unscored": True,
+    }
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
+
+
+def _reset_scanner_filters() -> None:
+    for key in (
+        "scanner_universe",
+        "scanner_session",
+        "scanner_min_price",
+        "scanner_min_market_cap_m",
+        "scanner_min_dollar_volume_m",
+        "scanner_min_move_pct",
+        "scanner_min_relative_volume",
+        "scanner_min_unusual_pct",
+        "scanner_direction",
+        "scanner_theme",
+        "scanner_include_etfs",
+        "scanner_exclude_low_liquidity",
+        "scanner_custom_tickers",
+    ):
+        st.session_state.pop(key, None)
+    _scanner_state_defaults()
+
+
+def _scanner_filters_from_state() -> ScannerFilters:
+    custom_values = tuple(
+        clean_ticker(part)
+        for part in str(st.session_state.get("scanner_custom_tickers", "")).replace("\n", ",").replace(" ", ",").split(",")
+        if clean_ticker(part)
+    )
+    return ScannerFilters(
+        universe_type=UNIVERSE_OPTIONS.get(st.session_state.get("scanner_universe", "All U.S. Stocks"), "all_us_stocks"),
+        session=str(st.session_state.get("scanner_session", "Regular Market")),
+        min_price=float(st.session_state.get("scanner_min_price", 2.0) or 0),
+        min_market_cap=float(st.session_state.get("scanner_min_market_cap_m", 100.0) or 0) * 1_000_000,
+        min_dollar_volume=float(st.session_state.get("scanner_min_dollar_volume_m", 10.0) or 0) * 1_000_000,
+        min_move_pct=float(st.session_state.get("scanner_min_move_pct", 3.0) or 0),
+        min_relative_volume=float(st.session_state.get("scanner_min_relative_volume", 2.0) or 0),
+        min_unusual_volume_pct=float(st.session_state.get("scanner_min_unusual_pct", 100.0) or 0),
+        direction=str(st.session_state.get("scanner_direction", "Both")),
+        theme=str(st.session_state.get("scanner_theme", "All")),
+        include_etfs=bool(st.session_state.get("scanner_include_etfs", False)),
+        exclude_low_liquidity=bool(st.session_state.get("scanner_exclude_low_liquidity", True)),
+        custom_tickers=custom_values,
+        refresh_token=int(st.session_state.get("scanner_refresh_token", 0) or 0),
+    )
+
+
+def _scanner_signal_tone(signal: str) -> str:
+    value = signal.casefold()
+    if "breakout" in value or "surge" in value:
+        return "good"
+    if "selloff" in value or "breakdown" in value or "capitulation" in value:
+        return "bad"
+    if "anomaly" in value or "elevated" in value:
+        return "warn"
+    return "neutral"
+
+
+def _scanner_volume_tone(label: str) -> str:
+    value = label.casefold()
+    if "extreme" in value or "very" in value:
+        return "warn"
+    if "unusual" in value or "elevated" in value:
+        return "info"
+    if "normal" in value:
+        return "neutral"
+    return "neutral"
+
+
+def _scanner_status_tone(mode: str) -> str:
+    value = mode.casefold()
+    if "live" in value:
+        return "good"
+    if "partial" in value:
+        return "warn"
+    if "fallback" in value or "demo" in value:
+        return "bad"
+    return "neutral"
+
+
+def _open_scanner_ticker(row: pd.Series) -> None:
+    ticker = clean_ticker(str(row.get("ticker") or ""))
+    if not ticker:
+        return
+    if ticker in ANALYSES or ticker in COMPANIES:
+        st.session_state["selected_ticker"] = ticker
+        st.session_state["page"] = "Dashboard"
+        st.rerun()
+    st.session_state["scanner_detail_ticker"] = ticker
+    st.session_state["scanner_detail_row"] = {column: row.get(column) for column in row.index}
+
+
+def _scanner_summary_cards(summary: dict) -> str:
+    cards = [
+        ("High-Volume Gainers", summary.get("highVolumeGainers", 0), "vs filters", "+"),
+        ("High-Volume Losers", summary.get("highVolumeLosers", 0), "vs filters", "-"),
+        ("Unusual Volume Leaders", summary.get("unusualVolumeLeaders", 0), "ranked by rel vol", "!"),
+        ("Watchlist Alerts", summary.get("watchlistAlerts", 0), "secondary only", "!"),
+        ("Market Breadth", f'{summary.get("marketBreadth", 0):.0f}%', "advancers", "+"),
+    ]
+    body = ""
+    for title, value, label, icon in cards:
+        tone = "bad" if "Losers" in title else "warn" if "Unusual" in title or "Alerts" in title else "good"
+        body += f"""
+        <div class="pt-scanner-card">
+          <div class="pt-scanner-card-icon {tone}">{escape(icon)}</div>
+          <span>{escape(title)}</span>
+          <strong>{escape(str(value))}</strong>
+          <small>{escape(label)}</small>
+        </div>
+        """
+    return f'<div class="pt-scanner-summary">{body}</div>'
+
+
+def _scanner_header(status: dict) -> None:
+    mode = str(status.get("data_mode") or "Partial")
+    last_updated = safe_format_datetime(status.get("last_updated"))
+    source = str(status.get("source") or status.get("provider") or "Market data feed")
+    left, right = st.columns([0.58, 0.42], vertical_alignment="center")
+    with left:
+        html(
+            f"""
+            <div class="pt-scanner-titlebar">
+              <div>
+                <h1>Market Scanner</h1>
+                <p>High-volume movers, unusual activity, and directional market signals.</p>
+              </div>
+            </div>
+            """
+        )
+    with right:
+        meta_col, refresh_col = st.columns([0.72, 0.28], vertical_alignment="center")
+        with meta_col:
+            html(
+                f"""
+                <div class="pt-scanner-meta">
+                  <span>Last updated <b>{escape(last_updated)}</b></span>
+                  <span>Session <b>{escape(str(st.session_state.get("scanner_session", "Regular Market")))}</b></span>
+                  <span>Data <b class="{_scanner_status_tone(mode)}" title="{escape(source)}">{escape(mode)}</b></span>
+                </div>
+                """
+            )
+        with refresh_col:
+            if st.button("Refresh", key="scanner_refresh", use_container_width=True):
+                st.session_state["scanner_refresh_token"] = int(st.session_state.get("scanner_refresh_token", 0) or 0) + 1
+                st.rerun()
+
+
+def _render_scanner_filters(theme_options: list[str]) -> None:
+    filter_cols = st.columns([0.16, 0.15, 0.13, 0.13, 0.13, 0.13, 0.12, 0.13], vertical_alignment="end")
+    with filter_cols[0]:
+        st.selectbox("Market Universe", list(UNIVERSE_OPTIONS.keys()), key="scanner_universe")
+    with filter_cols[1]:
+        st.selectbox("Session", ["Regular Market", "Pre-Market", "After Hours", "Full Session"], key="scanner_session")
+    with filter_cols[2]:
+        st.number_input("Min Price", min_value=0.0, max_value=250.0, step=0.5, key="scanner_min_price")
+    with filter_cols[3]:
+        st.number_input("Min Mkt Cap ($M)", min_value=0.0, max_value=1_000_000.0, step=50.0, key="scanner_min_market_cap_m")
+    with filter_cols[4]:
+        st.number_input("Min $ Vol ($M)", min_value=0.0, max_value=100_000.0, step=5.0, key="scanner_min_dollar_volume_m")
+    with filter_cols[5]:
+        st.number_input("Min % Move", min_value=0.0, max_value=50.0, step=0.5, key="scanner_min_move_pct")
+    with filter_cols[6]:
+        st.number_input("Min Rel Vol", min_value=0.0, max_value=50.0, step=0.5, key="scanner_min_relative_volume")
+    with filter_cols[7]:
+        st.selectbox("Direction", ["Both", "Gainers", "Losers"], key="scanner_direction")
+
+    extra_cols = st.columns([0.2, 0.2, 0.16, 0.16, 0.18], vertical_alignment="end")
+    with extra_cols[0]:
+        st.number_input("Min Unusual Vol %", min_value=0.0, max_value=2_000.0, step=25.0, key="scanner_min_unusual_pct")
+    with extra_cols[1]:
+        current_theme = st.session_state.get("scanner_theme", "All")
+        if current_theme not in theme_options:
+            st.session_state["scanner_theme"] = "All"
+        st.selectbox("Theme", theme_options, key="scanner_theme")
+    with extra_cols[2]:
+        st.checkbox("Include ETFs", key="scanner_include_etfs")
+    with extra_cols[3]:
+        st.checkbox("Exclude low liquidity", key="scanner_exclude_low_liquidity")
+    with extra_cols[4]:
+        if st.button("Reset Filters", key="scanner_reset", use_container_width=True):
+            _reset_scanner_filters()
+            st.rerun()
+
+    if st.session_state.get("scanner_universe") == "Custom Universe":
+        st.text_input("Custom tickers", placeholder="AAPL, MSFT, NVDA", key="scanner_custom_tickers")
+
+
+def _scanner_detail_markup(row: dict) -> str:
+    ticker = clean_ticker(str(row.get("ticker") or ""))
+    return section(
+        f"{ticker} Scanner Detail",
+        "Ticker is not yet modeled in Company Analysis",
+        f"""
+        <div class="pt-scanner-detail-grid">
+          {value_row("Company", str(row.get("companyName") or ticker))}
+          {value_row("Price", price(to_float(row.get("currentPrice"))))}
+          {value_row("Move", fmt_daily_move(row.get("priceChangePercent")), tone_for_value(to_float(row.get("priceChangePercent")) or 0))}
+          {value_row("Relative Volume", fmt_multiple(row.get("relativeVolume")))}
+          {value_row("Unusual Volume", fmt_daily_move(row.get("unusualVolumePercent")), "warn")}
+          {value_row("Dollar Volume", fmt_currency(row.get("dollarVolume"), 1))}
+          {value_row("Signal", str(row.get("signal") or "Normal move"), _scanner_signal_tone(str(row.get("signal") or "")))}
+          {value_row("Source", str(row.get("source") or "Market data feed"))}
+        </div>
+        """,
+    )
+
+
+def _render_scanner_detail() -> None:
+    row = st.session_state.get("scanner_detail_row")
+    if row:
+        html(_scanner_detail_markup(row))
+
+
+def _scanner_row_columns(row: pd.Series, prefix: str, idx: int) -> None:
+    cols = st.columns([0.09, 0.1, 0.1, 0.1, 0.1, 0.1, 0.11, 0.16, 0.12, 0.12], vertical_alignment="center")
+    ticker = clean_ticker(str(row.get("ticker") or ""))
+    with cols[0]:
+        if st.button(ticker, key=f"{prefix}_ticker_{ticker}_{idx}", help=f"Open {ticker}", use_container_width=True):
+            _open_scanner_ticker(row)
+    with cols[1]:
+        st.markdown(f'<span class="pt-scanner-cell">{price(to_float(row.get("currentPrice")))}</span>', unsafe_allow_html=True)
+    with cols[2]:
+        move = to_float(row.get("priceChangePercent")) or 0.0
+        st.markdown(f'<span class="pt-scanner-cell {tone_for_value(move)}">{fmt_daily_move(move)}</span>', unsafe_allow_html=True)
+    with cols[3]:
+        st.markdown(f'<span class="pt-scanner-cell">{fmt_compact(row.get("currentVolume"), 1)}</span>', unsafe_allow_html=True)
+    with cols[4]:
+        st.markdown(f'<span class="pt-scanner-cell">{fmt_multiple(row.get("relativeVolume"))}</span>', unsafe_allow_html=True)
+    with cols[5]:
+        st.markdown(f'<span class="pt-scanner-cell">{fmt_daily_move(row.get("unusualVolumePercent"))}</span>', unsafe_allow_html=True)
+    with cols[6]:
+        st.markdown(f'<span class="pt-scanner-cell">{fmt_currency(row.get("dollarVolume"), 1)}</span>', unsafe_allow_html=True)
+    with cols[7]:
+        st.markdown(f'<span class="pt-scanner-cell">{escape(str(row.get("theme") or "General"))}</span>', unsafe_allow_html=True)
+    with cols[8]:
+        anomaly = str(row.get("volumeAnomaly") or "Unknown")
+        st.markdown(f'<span class="pt-scanner-chip {_scanner_volume_tone(anomaly)}">{escape(anomaly)}</span>', unsafe_allow_html=True)
+    with cols[9]:
+        signal = str(row.get("signal") or "Normal move")
+        st.markdown(f'<span class="pt-scanner-chip {_scanner_signal_tone(signal)}">{escape(signal)}</span>', unsafe_allow_html=True)
+
+
+def _render_scanner_table(title: str, subtitle: str, frame: pd.DataFrame, prefix: str, limit: int = 8, action: str = "") -> None:
+    html(section(title, subtitle, "", action))
+    if frame is None or frame.empty:
+        html('<p class="pt-placeholder">No tickers match the current scanner filters.</p>')
+        return
+    header = st.columns([0.09, 0.1, 0.1, 0.1, 0.1, 0.1, 0.11, 0.16, 0.12, 0.12])
+    labels = ["Ticker", "Price", "% Change", "Volume", "Rel Vol", "Unusual", "$ Vol", "Theme", "Volume", "Signal"]
+    for col, label in zip(header, labels):
+        with col:
+            st.markdown(f'<div class="pt-scanner-header-cell">{escape(label)}</div>', unsafe_allow_html=True)
+    for idx, (_, row) in enumerate(frame.head(limit).iterrows()):
+        _scanner_row_columns(row, prefix, idx)
+
+
+def _apply_scanner_fundamental_filters(packet: dict) -> dict:
+    if not st.session_state.get("scanner_enable_fundamentals"):
+        return packet
+    frame = packet.get("all_results", pd.DataFrame())
+    if frame is None or frame.empty:
+        return packet
+    lookup = {clean_ticker(str(row["Ticker"])): row for row in screener_rows()}
+    min_score = float(st.session_state.get("scanner_min_fundamental_score", 0.0) or 0.0)
+    min_return = float(st.session_state.get("scanner_min_expected_return", -250) or -250)
+    signal = str(st.session_state.get("scanner_fundamental_signal", "All"))
+    risk = str(st.session_state.get("scanner_fundamental_risk", "All"))
+    keep_unscored = bool(st.session_state.get("scanner_keep_unscored", True))
+
+    keep_indexes = []
+    for idx, row in frame.iterrows():
+        fundamentals = lookup.get(clean_ticker(str(row.get("ticker") or "")))
+        if not fundamentals:
+            if keep_unscored:
+                keep_indexes.append(idx)
+            continue
+        if float(fundamentals.get("Fundamental Score") or 0) < min_score:
+            continue
+        if float(fundamentals.get("Expected Return") or 0) < min_return:
+            continue
+        if signal != "All" and fundamentals.get("Investment Signal") != signal:
+            continue
+        if risk != "All" and fundamentals.get("Risk Level") != risk:
+            continue
+        keep_indexes.append(idx)
+    filtered = frame.loc[keep_indexes].reset_index(drop=True)
+    packet = dict(packet)
+    packet["all_results"] = filtered
+    packet["gainers"] = filtered[filtered["priceChangePercent"] > 0].sort_values(["priceChangePercent", "relativeVolume"], ascending=[False, False], na_position="last").reset_index(drop=True)
+    packet["losers"] = filtered[filtered["priceChangePercent"] < 0].sort_values(["priceChangePercent", "relativeVolume"], ascending=[True, False], na_position="last").reset_index(drop=True)
+    packet["unusual_volume"] = filtered.sort_values(["relativeVolume", "unusualVolumePercent"], ascending=[False, False], na_position="last").reset_index(drop=True)
+    packet["watchlist_alerts"] = filtered[filtered["isWatchlistTicker"]].reset_index(drop=True)
+    packet["summary"] = SCANNER_PROVIDER._summary(packet["all_results"], packet["gainers"], packet["losers"], packet["unusual_volume"], packet["watchlist_alerts"])
+    packet["status"] = {**packet.get("status", {}), "rows": len(filtered), "fundamental_filters": "Enabled"}
+    return packet
+
+
+def _render_scanner_advanced_filters() -> None:
     rows = screener_rows()
     signals = ["All"] + sorted({str(row["Investment Signal"]) for row in rows})
     risks = ["All"] + sorted({str(row["Risk Level"]) for row in rows})
-    filters = st.columns(4)
-    with filters[0]:
-        min_score = st.slider("Minimum Fundamental Score", 0.0, 10.0, 5.0, 0.5)
-    with filters[1]:
-        min_return = st.slider("Minimum Expected Return", -50, 150, 0, 5)
-    with filters[2]:
-        signal = st.selectbox("Investment Signal", signals)
-    with filters[3]:
-        risk = st.selectbox("Risk Level", risks)
-    filtered = []
-    for row in rows:
-        if float(row["Fundamental Score"]) < min_score:
-            continue
-        if float(row["Expected Return"]) < min_return:
-            continue
-        if signal != "All" and row["Investment Signal"] != signal:
-            continue
-        if risk != "All" and row["Risk Level"] != risk:
-            continue
-        filtered.append(row)
-    render_dataframe(filtered, 460)
+    with st.expander("Advanced Filters", expanded=False):
+        st.checkbox("Enable fundamental filters", key="scanner_enable_fundamentals")
+        cols = st.columns(5)
+        with cols[0]:
+            st.slider("Fundamental Score", 0.0, 10.0, key="scanner_min_fundamental_score")
+        with cols[1]:
+            st.slider("Expected Return", -250, 250, key="scanner_min_expected_return")
+        with cols[2]:
+            st.selectbox("Investment Signal", signals, key="scanner_fundamental_signal")
+        with cols[3]:
+            st.selectbox("Risk Level", risks, key="scanner_fundamental_risk")
+        with cols[4]:
+            st.checkbox("Keep unscored tickers", key="scanner_keep_unscored")
+        st.caption("Fundamental filters only apply to tickers with PineTerminal model coverage unless you keep unscored tickers.")
+
+
+def render_scanner_page() -> None:
+    _scanner_state_defaults()
+    filters = _scanner_filters_from_state()
+    with st.spinner("Scanning market universe..."):
+        packet = SCANNER_PROVIDER.scanMarket(filters, watchlist_tickers=_active_watchlist_tickers())
+    packet = _apply_scanner_fundamental_filters(packet)
+    status = packet.get("status", {})
+    _scanner_header(status)
+    html(_scanner_summary_cards(packet.get("summary", {})))
+
+    current_themes = sorted(
+        {
+            str(value)
+            for value in packet.get("all_results", pd.DataFrame()).get("theme", pd.Series(dtype=str)).dropna().unique()
+            if str(value).strip() and str(value).strip() != "N/A"
+        }
+    )
+    model_themes = sorted({str(row.get("Theme") or "General") for row in screener_rows() if row.get("Theme")})
+    theme_options = ["All"] + sorted(set(current_themes + model_themes))
+    _render_scanner_filters(theme_options)
+
+    source_message = str(status.get("message") or "")
+    source = str(status.get("source") or status.get("provider") or "Market data feed")
+    html(
+        f"""
+        <div class="pt-scanner-source">
+          <b>{escape(status.get("universe_label", "All U.S. Stocks"))}</b>
+          <span>{escape(source_message or "Current-session leaders from the selected scanner universe.")}</span>
+          <span title="{escape(source)}">Data Sources</span>
+        </div>
+        """
+    )
+    _render_scanner_detail()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        _render_scanner_table("Biggest Gainers on Unusual Volume", "Sorted by move, then relative volume", packet.get("gainers", pd.DataFrame()), "scanner_gainers", limit=6)
+    with col2:
+        _render_scanner_table("Biggest Losers on Unusual Volume", "Sorted by downside move, then relative volume", packet.get("losers", pd.DataFrame()), "scanner_losers", limit=6)
+
+    col3, col4 = st.columns([0.62, 0.38])
+    with col3:
+        _render_scanner_table("Unusual Volume Leaders", "Market-wide anomaly ranking", packet.get("unusual_volume", pd.DataFrame()), "scanner_unusual", limit=10, action="View full leaderboard")
+    with col4:
+        _render_scanner_table("Watchlist Alerts", "Secondary alerts from your saved tickers", packet.get("watchlist_alerts", pd.DataFrame()), "scanner_watchlist", limit=6, action="View all alerts")
+
+    _render_scanner_advanced_filters()
 
 
 def render_watchlist_page() -> None:
@@ -1039,8 +1407,8 @@ def render_page(page: str, analysis) -> None:
         render_home_page()
     elif page == "Market Read-Through":
         render_market_readthrough_page()
-    elif page == "Screener":
-        render_screener_page()
+    elif page == "Scanner":
+        render_scanner_page()
     elif page == "Watchlists":
         render_watchlist_page()
     elif page == "Portfolio":

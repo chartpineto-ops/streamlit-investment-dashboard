@@ -874,6 +874,168 @@ button, input, textarea, select {
   font-size: 0.76rem;
   margin: 0.65rem 0 0;
 }
+.pt-scanner-titlebar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin: 0.2rem 0 0.35rem;
+}
+.pt-scanner-titlebar h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.75rem;
+  line-height: 1.1;
+  font-weight: 950;
+}
+.pt-scanner-titlebar p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+.pt-scanner-meta {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.9rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.pt-scanner-meta span {
+  padding-right: 0.9rem;
+  border-right: 1px solid rgba(122, 152, 184, 0.22);
+}
+.pt-scanner-meta span:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+.pt-scanner-meta b {
+  color: var(--text);
+  margin-left: 0.25rem;
+}
+.pt-scanner-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.68rem;
+  margin: 0.35rem 0 0.72rem;
+}
+.pt-scanner-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.1rem 0.65rem;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.78rem;
+  background: linear-gradient(180deg, rgba(17, 31, 49, 0.92), rgba(9, 20, 34, 0.92));
+}
+.pt-scanner-card-icon {
+  grid-row: span 3;
+  width: 2.1rem;
+  height: 2.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 1.15rem;
+  font-weight: 950;
+  background: rgba(122, 152, 184, 0.1);
+}
+.pt-scanner-card span {
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+.pt-scanner-card strong {
+  color: var(--text);
+  font-size: 1.65rem;
+  line-height: 1;
+}
+.pt-scanner-card small {
+  color: var(--muted);
+  font-size: 0.73rem;
+}
+.pt-scanner-source {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid rgba(122, 152, 184, 0.18);
+  border-radius: 8px;
+  padding: 0.52rem 0.68rem;
+  margin: 0.55rem 0 0.72rem;
+  background: rgba(9, 20, 34, 0.78);
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.pt-scanner-source b {
+  color: var(--text);
+}
+.pt-scanner-source span:last-child {
+  color: var(--blue);
+  margin-left: auto;
+  font-weight: 850;
+}
+.pt-scanner-header-cell {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.28rem 0;
+  border-bottom: 1px solid rgba(122, 152, 184, 0.18);
+}
+.pt-scanner-cell {
+  display: block;
+  min-height: 1.9rem;
+  line-height: 1.9rem;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 850;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid rgba(122, 152, 184, 0.12);
+}
+.pt-scanner-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 1.35rem;
+  margin-top: 0.2rem;
+  border-radius: 5px;
+  padding: 0.14rem 0.38rem;
+  font-size: 0.68rem;
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid rgba(122, 152, 184, 0.2);
+  background: rgba(122, 152, 184, 0.08);
+  color: var(--muted);
+}
+.pt-scanner-chip.good {
+  border-color: rgba(49, 209, 124, 0.34);
+  background: rgba(49, 209, 124, 0.13);
+  color: var(--green-2);
+}
+.pt-scanner-chip.bad {
+  border-color: rgba(255, 92, 112, 0.36);
+  background: rgba(255, 92, 112, 0.13);
+  color: #ff8a96;
+}
+.pt-scanner-chip.warn {
+  border-color: rgba(240, 194, 74, 0.36);
+  background: rgba(240, 194, 74, 0.13);
+  color: var(--yellow);
+}
+.pt-scanner-chip.info {
+  border-color: rgba(91, 182, 255, 0.34);
+  background: rgba(91, 182, 255, 0.12);
+  color: #8fceff;
+}
+.pt-scanner-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem 1rem;
+}
 .pt-placeholder {
   color: var(--muted);
   font-size: 0.82rem;
@@ -3164,8 +3326,18 @@ button, input, textarea, select {
   .pt-header-market,
   .pt-header-signal,
   .pt-mover-grid,
-  .pt-trigger-grid {
+  .pt-trigger-grid,
+  .pt-scanner-summary,
+  .pt-scanner-detail-grid {
     grid-template-columns: 1fr;
+  }
+  .pt-scanner-meta,
+  .pt-scanner-source {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .pt-scanner-source span:last-child {
+    margin-left: 0;
   }
   .pt-calendar-weekdays {
     display: none;
