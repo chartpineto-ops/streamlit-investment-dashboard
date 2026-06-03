@@ -747,9 +747,41 @@ button, input, textarea, select {
   border-right: 1px solid rgba(122, 152, 184, 0.18);
   font-size: 0.78rem;
 }
+.pt-watch-tape {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(7, 16, 28, 0.94), rgba(13, 27, 45, 0.94));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+  margin: 0.58rem 0 0.72rem;
+}
+.pt-watch-tape-inner {
+  display: inline-flex;
+  min-width: max-content;
+  animation: watchlist-ticker-ltr 40s linear infinite;
+}
+.pt-watch-tape:hover .pt-watch-tape-inner {
+  animation-play-state: paused;
+}
+.pt-watch-tape span {
+  padding: 0.62rem 1rem;
+  border-right: 1px solid rgba(122, 152, 184, 0.18);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.pt-watch-tape b:first-child {
+  color: var(--text);
+  margin-right: 0.35rem;
+}
 @keyframes ticker {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
+}
+@keyframes watchlist-ticker-ltr {
+  from { transform: translateX(-50%); }
+  to { transform: translateX(0); }
 }
 .pt-mover-grid {
   display: grid;

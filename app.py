@@ -4,6 +4,7 @@ from dataclasses import asdict
 from html import escape
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from pineterminal.components import (
     html,
@@ -57,6 +58,7 @@ PAGES = [
 
 APP_STATE_VERSION = "pineterminal-dashboard-v3"
 DEFAULT_WATCHLIST = ["AMPX", "MRVL", "VICR", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
+WATCHLIST_REFRESH_INTERVAL_MS = 300_000
 
 
 st.set_page_config(page_title="PineTerminal", page_icon="P", layout="wide", initial_sidebar_state="expanded")
@@ -143,6 +145,8 @@ def _analysis_watchlist_row(ticker: str) -> dict[str, object]:
         "Market Cap": company.market_cap,
         "Revenue Growth": analysis.fundamental_metrics[0].value if analysis.fundamental_metrics else "N/A",
         "Gross Margin": analysis.fundamental_metrics[1].value if len(analysis.fundamental_metrics) > 1 else "N/A",
+        "Last Updated": company.last_updated,
+        "Source": company.data_source,
     }
 
 
@@ -150,30 +154,29 @@ def _watchlist_rows() -> list[dict[str, object]]:
     built_in = {str(row["Ticker"]): row for row in all_watchlist_rows()}
     rows = []
     for ticker in _active_watchlist_tickers():
-        row = built_in.get(ticker)
-        if row is not None:
-            rows.append(row)
-            continue
         try:
             rows.append(_analysis_watchlist_row(ticker))
         except Exception:
             snapshot = latest_quote_snapshot(ticker) or {}
+            row = built_in.get(ticker) or {}
             rows.append(
                 {
                     "Ticker": ticker,
-                    "Company": snapshot.get("company") or ticker,
-                    "Price": snapshot.get("price") or 0.0,
-                    "Daily Change": snapshot.get("daily_move_pct") or 0.0,
-                    "Fundamental Score": 0.0,
-                    "Expected Return": 0.0,
-                    "Net Thesis Impact": 0.0,
-                    "Latest Thesis Impact": "N/A",
-                    "Investment Signal": "No Rating",
-                    "Risk Level": "N/A",
-                    "Theme": "Live",
-                    "Market Cap": snapshot.get("market_cap") or 0.0,
-                    "Revenue Growth": "N/A",
-                    "Gross Margin": "N/A",
+                    "Company": snapshot.get("company") or row.get("Company") or ticker,
+                    "Price": snapshot.get("price") or row.get("Price") or 0.0,
+                    "Daily Change": snapshot.get("daily_move_pct") or row.get("Daily Change") or 0.0,
+                    "Fundamental Score": row.get("Fundamental Score") or 0.0,
+                    "Expected Return": row.get("Expected Return") or 0.0,
+                    "Net Thesis Impact": row.get("Net Thesis Impact") or 0.0,
+                    "Latest Thesis Impact": row.get("Latest Thesis Impact") or "N/A",
+                    "Investment Signal": row.get("Investment Signal") or "No Rating",
+                    "Risk Level": row.get("Risk Level") or "N/A",
+                    "Theme": row.get("Theme") or "Live",
+                    "Market Cap": snapshot.get("market_cap") or row.get("Market Cap") or 0.0,
+                    "Revenue Growth": row.get("Revenue Growth") or "N/A",
+                    "Gross Margin": row.get("Gross Margin") or "N/A",
+                    "Last Updated": snapshot.get("timestamp") or row.get("Last Updated") or "N/A",
+                    "Source": snapshot.get("source") or row.get("Source") or "Fallback",
                 }
             )
     return rows
@@ -343,12 +346,12 @@ def render_watchlist_sidebar(rows: list[dict[str, object]]) -> None:
         st.rerun()
 
 
-def render_sidebar() -> str:
+def render_sidebar(watchlist_rows: list[dict[str, object]]) -> str:
     with st.sidebar:
         render_brand()
         page = st.radio("Navigation", PAGES, index=PAGES.index(st.session_state.get("page", "Dashboard")), label_visibility="collapsed")
         st.session_state["page"] = page
-        render_watchlist_sidebar(_watchlist_rows())
+        render_watchlist_sidebar(watchlist_rows)
     return page
 
 
@@ -371,6 +374,42 @@ def market_tape() -> str:
         for row in movers
     )
     return f'<div class="pt-tape"><div class="pt-tape-inner">{items}</div></div>'
+
+
+def watchlist_tape(rows: list[dict[str, object]]) -> str:
+    if not rows:
+        return ""
+    items = "".join(
+        (
+            f'<span title="Updated {escape(str(row.get("Last Updated", "N/A")))}">'
+            f'<b>{escape(str(row["Ticker"]))}</b> '
+            f'{price(float(row.get("Price") or 0.0))} '
+            f'<b class="{tone_for_value(float(row.get("Daily Change") or 0.0))}">{percent(float(row.get("Daily Change") or 0.0), 2)}</b>'
+            "</span>"
+        )
+        for row in rows
+    )
+    return (
+        '<div class="pt-watch-tape" aria-label="Watchlist ticker tape">'
+        f'<div class="pt-watch-tape-inner">{items}{items}</div>'
+        "</div>"
+    )
+
+
+def render_watchlist_tape(rows: list[dict[str, object]]) -> None:
+    html(watchlist_tape(rows))
+
+
+def render_watchlist_refresh_timer() -> None:
+    components.html(
+        f"""
+        <script>
+          window.setTimeout(() => window.parent.location.reload(), {WATCHLIST_REFRESH_INTERVAL_MS});
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def render_home_page() -> None:
@@ -730,9 +769,12 @@ def render_page(page: str, analysis) -> None:
 
 def main() -> None:
     _init_state()
-    page = render_sidebar()
+    render_watchlist_refresh_timer()
+    watchlist_rows = _watchlist_rows()
+    page = render_sidebar(watchlist_rows)
     analysis = load_dashboard_analysis(st.session_state["selected_ticker"])
     render_global_controls(page, analysis)
+    render_watchlist_tape(watchlist_rows)
     render_page(page, analysis)
 
 
