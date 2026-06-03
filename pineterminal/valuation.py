@@ -147,7 +147,19 @@ VALUATION_SPECS: dict[str, dict[str, object]] = {
             ("Bull Case", 7.50, 52.0, None, 0.25, "AI platform demand expands across training, inference, networking, and software attach.", "Upside case"),
         ],
     },
+    "LWLG": {
+        "valuation_method": "Revenue Multiple",
+        "model_year": 2028,
+        "key_assumption": "Commercial polymer photonics adoption must convert pilots into material product or licensing revenue.",
+        "scenarios": [
+            ("Bear Case", 10_000_000, 8.0, None, 0.25, "Customer qualification remains slow and revenue stays early-stage.", "Needs proof"),
+            ("Base Case", 45_000_000, 12.0, None, 0.50, "Initial commercial adoption creates a visible but still early revenue base.", "Model assumptions"),
+            ("Bull Case", 125_000_000, 16.0, None, 0.25, "Large data-center customers validate the technology and revenue scales quickly.", "Upside case"),
+        ],
+    },
 }
+
+CUSTOM_VALUATION_SPECS: dict[str, dict[str, object]] = {}
 
 
 def _number(value: object) -> float | None:
@@ -161,7 +173,7 @@ def _number(value: object) -> float | None:
 
 
 def get_valuation_method(ticker: str) -> str:
-    spec = VALUATION_SPECS.get(ticker.upper())
+    spec = get_valuation_spec(ticker)
     if spec:
         return str(spec["valuation_method"])
     return "Revenue Multiple"
@@ -177,6 +189,29 @@ def get_scenario_labels_by_method(valuation_method: str) -> dict[str, object]:
 
 def getScenarioLabelsByMethod(valuation_method: str) -> dict[str, object]:
     return get_scenario_labels_by_method(valuation_method)
+
+
+def configured_valuation_tickers() -> list[str]:
+    return sorted({*VALUATION_SPECS.keys(), *CUSTOM_VALUATION_SPECS.keys()})
+
+
+def get_valuation_spec(ticker: str) -> dict[str, object] | None:
+    symbol = ticker.upper()
+    return CUSTOM_VALUATION_SPECS.get(symbol) or VALUATION_SPECS.get(symbol)
+
+
+def register_valuation_spec(ticker: str, spec: dict[str, object]) -> None:
+    symbol = ticker.upper()
+    if not symbol:
+        return
+    CUSTOM_VALUATION_SPECS[symbol] = {
+        "valuation_method": str(spec.get("valuation_method") or "Revenue Multiple"),
+        "model_year": int(spec.get("model_year") or 2028),
+        "net_debt": float(spec.get("net_debt") or 0.0),
+        "shares": spec.get("shares"),
+        "key_assumption": str(spec.get("key_assumption") or f"{symbol} requires validated model assumptions."),
+        "scenarios": [tuple(row) for row in spec.get("scenarios", [])],  # type: ignore[arg-type]
+    }
 
 
 def format_financial_value(value: float | None, unit: str = "dollars") -> str:
@@ -402,7 +437,7 @@ def _interpretation(
 
 
 def get_ticker_specific_scenario_language(ticker: str, scenario_type: str) -> str:
-    spec = VALUATION_SPECS.get(ticker.upper())
+    spec = get_valuation_spec(ticker)
     if not spec:
         return ""
     for row in spec["scenarios"]:  # type: ignore[index]
@@ -449,7 +484,8 @@ def get_valuation_model(company: Company) -> ValuationModel:
     from dataclasses import replace
 
     symbol = company.ticker.upper()
-    spec = VALUATION_SPECS.get(symbol) or _fallback_spec(company)
+    configured_spec = get_valuation_spec(symbol)
+    spec = configured_spec or _fallback_spec(company)
     valuation_method = str(spec["valuation_method"])
     current_price = _safe_current_price(company)
     scenarios = [
@@ -462,7 +498,7 @@ def get_valuation_model(company: Company) -> ValuationModel:
     base = next((item for item in scenarios if item.name == "Base Case"), scenarios[0] if scenarios else None)
     base_return = calculate_expected_return(base.future_share_price, current_price or 0.0) if base else None
     data_status = "Updated from latest available financials" if "Live" in company.data_mode else "Model assumptions"
-    if spec is not VALUATION_SPECS.get(symbol):
+    if configured_spec is None:
         data_status = "Needs refresh"
         warnings.append("Ticker-specific valuation assumptions are not yet configured.")
     model = ValuationModel(

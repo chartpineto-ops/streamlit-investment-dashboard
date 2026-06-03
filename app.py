@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from html import escape
 
+import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -36,6 +37,11 @@ from pineterminal.demo_data import (
 )
 from pineterminal.live_data import load_dashboard_analysis
 from pineterminal.styles import apply_theme
+from pineterminal.valuation import (
+    configured_valuation_tickers,
+    get_valuation_spec,
+    register_valuation_spec,
+)
 from storage.db import connect, init_db
 from storage.watchlist import add_ticker as store_add_ticker
 from storage.watchlist import latest_quote_snapshot, remove_ticker as store_remove_ticker
@@ -115,6 +121,12 @@ def _init_state() -> None:
         st.session_state["portfolio_holdings"] = _default_portfolio_holdings()
     st.session_state.setdefault("portfolio_add_open", False)
     st.session_state.setdefault("portfolio_message", "")
+    st.session_state.setdefault("valuation_assumption_specs", {})
+
+
+def _apply_session_valuation_specs() -> None:
+    for ticker, spec in st.session_state.get("valuation_assumption_specs", {}).items():
+        register_valuation_spec(str(ticker), spec)
 
 
 def _active_watchlist_tickers() -> list[str]:
@@ -708,6 +720,211 @@ def render_calendar_page() -> None:
     render_dataframe(UPCOMING_EVENTS, 360)
 
 
+VALUATION_METHODS = ["Revenue Multiple", "P/E", "EBITDA Multiple", "Asset Price Scenario"]
+
+
+def _valuation_editor_candidates() -> list[str]:
+    tickers = {
+        st.session_state.get("selected_ticker", "AMPX"),
+        *_active_watchlist_tickers(),
+        *_portfolio_tickers(_active_portfolio_holdings()),
+        *configured_valuation_tickers(),
+    }
+    return sorted(clean_ticker(str(ticker)) for ticker in tickers if clean_ticker(str(ticker)))
+
+
+def _default_valuation_editor_spec(ticker: str, method: str = "Revenue Multiple") -> dict[str, object]:
+    if method == "P/E":
+        return {
+            "valuation_method": "P/E",
+            "model_year": 2028,
+            "net_debt": 0.0,
+            "shares": None,
+            "key_assumption": f"{ticker} needs validated EPS and multiple assumptions.",
+            "scenarios": [
+                ("Bear Case", 0.25, 18.0, None, 0.25, "Earnings power remains limited and the multiple compresses.", "Needs proof"),
+                ("Base Case", 0.75, 24.0, None, 0.50, "Revenue growth converts into positive earnings power.", "Draft assumption"),
+                ("Bull Case", 1.50, 30.0, None, 0.25, "Growth and margins improve enough to support premium earnings power.", "Upside case"),
+            ],
+        }
+    if method == "EBITDA Multiple":
+        return {
+            "valuation_method": "EBITDA Multiple",
+            "model_year": 2028,
+            "net_debt": 0.0,
+            "shares": None,
+            "key_assumption": f"{ticker} needs validated EBITDA, dilution, and multiple assumptions.",
+            "scenarios": [
+                ("Bear Case", 10_000_000, 10.0, None, 0.25, "EBITDA remains small and valuation support weakens.", "Needs proof"),
+                ("Base Case", 40_000_000, 14.0, None, 0.50, "Operating leverage creates a visible EBITDA base.", "Draft assumption"),
+                ("Bull Case", 100_000_000, 18.0, None, 0.25, "Margins scale and the market assigns a premium EBITDA multiple.", "Upside case"),
+            ],
+        }
+    if method == "Asset Price Scenario":
+        return {
+            "valuation_method": "Asset Price Scenario",
+            "model_year": 2028,
+            "net_debt": 0.0,
+            "shares": None,
+            "key_assumption": f"{ticker} value is primarily driven by asset-price scenario sensitivity.",
+            "scenarios": [
+                ("Bear Case", 80.0, None, None, 0.25, "Asset price declines and NAV/share contracts.", "Needs monitoring", 0.75),
+                ("Base Case", 120.0, None, None, 0.50, "Asset price appreciates moderately.", "Draft assumption", 1.10),
+                ("Bull Case", 180.0, None, None, 0.25, "Asset price appreciation accelerates.", "Upside case", 1.60),
+            ],
+        }
+    return {
+        "valuation_method": "Revenue Multiple",
+        "model_year": 2028,
+        "net_debt": 0.0,
+        "shares": None,
+        "key_assumption": f"{ticker} needs validated revenue, dilution, and multiple assumptions.",
+        "scenarios": [
+            ("Bear Case", 25_000_000, 3.0, None, 0.25, "Growth remains early and valuation multiple compresses.", "Needs proof"),
+            ("Base Case", 75_000_000, 5.0, None, 0.50, "Revenue scales from a small base and the current model framework holds.", "Draft assumption"),
+            ("Bull Case", 180_000_000, 8.0, None, 0.25, "Customer adoption accelerates and market support improves.", "Upside case"),
+        ],
+    }
+
+
+def _editor_metric_value(value: object, method: str) -> float:
+    try:
+        number = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if method in {"P/E", "Asset Price Scenario"}:
+        return round(number, 2)
+    return round(number / 1_000_000, 2)
+
+
+def _spec_metric_value(value: object, method: str) -> float:
+    try:
+        number = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if method in {"P/E", "Asset Price Scenario"}:
+        return number
+    return number * 1_000_000
+
+
+def _editor_shares(value: object) -> float:
+    try:
+        number = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(number / 1_000_000, 2) if number else 0.0
+
+
+def _spec_shares(value: object, method: str) -> float | None:
+    if method in {"P/E", "Asset Price Scenario"}:
+        return None
+    try:
+        number = float(value or 0.0)
+    except (TypeError, ValueError):
+        return None
+    return number * 1_000_000 if number > 0 else None
+
+
+def _scenario_rows_for_editor(spec: dict[str, object], method: str) -> list[dict[str, object]]:
+    rows = []
+    for row in spec.get("scenarios", []):
+        scenario = tuple(row)
+        factor = scenario[7] if method == "Asset Price Scenario" and len(scenario) > 7 else scenario[2]
+        rows.append(
+            {
+                "Case": str(scenario[0]),
+                "Metric": _editor_metric_value(scenario[1], method),
+                "Multiple / Factor": float(factor or 0.0),
+                "Diluted Shares (M)": _editor_shares(scenario[3]),
+                "Probability %": round(float(scenario[4] or 0.0) * 100, 1),
+                "Assumption": str(scenario[5]),
+                "Quality": str(scenario[6]) if len(scenario) > 6 else "Model assumptions",
+            }
+        )
+    return rows
+
+
+def _spec_from_editor(
+    *,
+    method: str,
+    model_year: int,
+    net_debt_m: float,
+    shares_m: float,
+    key_assumption: str,
+    scenario_rows: pd.DataFrame,
+) -> dict[str, object]:
+    scenarios = []
+    for row in scenario_rows.to_dict("records"):
+        probability = max(0.0, float(row.get("Probability %") or 0.0)) / 100
+        metric = _spec_metric_value(row.get("Metric"), method)
+        shares = _spec_shares(row.get("Diluted Shares (M)") or shares_m, method)
+        factor_or_multiple = float(row.get("Multiple / Factor") or 0.0)
+        if method == "Asset Price Scenario":
+            scenarios.append((row.get("Case"), metric, None, None, probability, row.get("Assumption"), row.get("Quality"), factor_or_multiple))
+        else:
+            scenarios.append((row.get("Case"), metric, factor_or_multiple, shares, probability, row.get("Assumption"), row.get("Quality")))
+    return {
+        "valuation_method": method,
+        "model_year": model_year,
+        "net_debt": net_debt_m * 1_000_000,
+        "shares": shares_m * 1_000_000 if shares_m > 0 else None,
+        "key_assumption": key_assumption,
+        "scenarios": scenarios,
+    }
+
+
+def render_valuation_assumptions_editor() -> None:
+    html(
+        section(
+            "Valuation Assumptions",
+            "Configure ticker-specific forecast inputs",
+            '<p class="pt-placeholder">Use this when a ticker shows incomplete or stale valuation inputs. Saved assumptions apply immediately for this session.</p>',
+        )
+    )
+    candidates = _valuation_editor_candidates()
+    selected_ticker = st.selectbox("Ticker", candidates, index=candidates.index(st.session_state["selected_ticker"]) if st.session_state["selected_ticker"] in candidates else 0)
+    base_spec = get_valuation_spec(selected_ticker) or _default_valuation_editor_spec(selected_ticker)
+    default_method = str(base_spec.get("valuation_method") or "Revenue Multiple")
+    method = st.selectbox("Valuation method", VALUATION_METHODS, index=VALUATION_METHODS.index(default_method) if default_method in VALUATION_METHODS else 0)
+    editor_spec = base_spec if method == default_method else _default_valuation_editor_spec(selected_ticker, method)
+    metric_note = {
+        "P/E": "Metric = future EPS. Multiple / Factor = P/E multiple.",
+        "Asset Price Scenario": "Metric = future asset price. Multiple / Factor = NAV/share factor.",
+    }.get(method, "Metric = future revenue or EBITDA in $M. Multiple / Factor = valuation multiple.")
+    with st.form("valuation_assumption_form"):
+        model_col, net_debt_col, shares_col = st.columns(3)
+        with model_col:
+            model_year = st.number_input("Model year", min_value=2026, max_value=2035, value=int(editor_spec.get("model_year") or 2028), step=1)
+        with net_debt_col:
+            net_debt_m = st.number_input("Net debt / (cash) $M", value=round(float(editor_spec.get("net_debt") or 0.0) / 1_000_000, 1), step=5.0)
+        with shares_col:
+            shares_m = st.number_input("Default diluted shares (M)", min_value=0.0, value=_editor_shares(editor_spec.get("shares")), step=1.0)
+        key_assumption = st.text_area("Key assumption", value=str(editor_spec.get("key_assumption") or ""), height=70)
+        st.caption(metric_note)
+        edited_rows = st.data_editor(
+            pd.DataFrame(_scenario_rows_for_editor(editor_spec, method)),
+            hide_index=True,
+            num_rows="fixed",
+            use_container_width=True,
+            key=f"valuation_editor_{selected_ticker}_{method}",
+            column_config={
+                "Case": st.column_config.TextColumn(disabled=True),
+                "Metric": st.column_config.NumberColumn(format="%.2f"),
+                "Multiple / Factor": st.column_config.NumberColumn(format="%.2f"),
+                "Diluted Shares (M)": st.column_config.NumberColumn(format="%.2f"),
+                "Probability %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, format="%.1f"),
+            },
+        )
+        saved = st.form_submit_button("Save Assumptions", use_container_width=True)
+    if saved:
+        spec = _spec_from_editor(method=method, model_year=int(model_year), net_debt_m=float(net_debt_m), shares_m=float(shares_m), key_assumption=key_assumption, scenario_rows=edited_rows)
+        st.session_state["valuation_assumption_specs"][selected_ticker] = spec
+        register_valuation_spec(selected_ticker, spec)
+        st.session_state["selected_ticker"] = selected_ticker
+        st.success(f"Saved valuation assumptions for {selected_ticker}.")
+        st.rerun()
+
+
 def render_settings_page() -> None:
     html(
         section(
@@ -721,6 +938,7 @@ def render_settings_page() -> None:
             """,
         )
     )
+    render_valuation_assumptions_editor()
     st.json(
         {
             "default_ticker": "AMPX",
@@ -728,6 +946,7 @@ def render_settings_page() -> None:
             "calculation_mode": "transparent demo helpers",
             "theme_engine": "theme exposure map plus ticker exposure",
             "live_integrations": False,
+            "configured_valuation_tickers": configured_valuation_tickers(),
         }
     )
 
@@ -759,6 +978,7 @@ def render_page(page: str, analysis) -> None:
 
 def main() -> None:
     _init_state()
+    _apply_session_valuation_specs()
     render_watchlist_refresh_timer()
     watchlist_rows = _watchlist_rows()
     page = render_sidebar(watchlist_rows)
