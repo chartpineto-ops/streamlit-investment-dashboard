@@ -11,6 +11,14 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from data.market_scanner import MarketUniverseProvider, ScannerFilters, UNIVERSE_OPTIONS
+from data.market_news import (
+    SOURCE_TYPES,
+    UPDATE_TYPES,
+    NewsItem,
+    filter_news_items,
+    market_news_provider,
+    news_summary,
+)
 from pineterminal.components import (
     html,
     money,
@@ -1061,23 +1069,358 @@ def render_portfolio_page() -> None:
     render_dataframe(_thesis_tracker_rows(portfolio_tickers), 420)
 
 
+def _news_state_defaults() -> None:
+    defaults = {
+        "news_feed_mode": "Market-Wide",
+        "news_view_mode": "Table View",
+        "news_search": "",
+        "news_ticker_input": "",
+        "news_ticker_filters": [],
+        "news_sector": "All",
+        "news_theme": "All",
+        "news_impact": "All",
+        "news_update_type": "All",
+        "news_directness": "All",
+        "news_date_filter": "Last 7 Days",
+        "news_source_type": "All Sources",
+        "news_custom_start": now_et().date(),
+        "news_custom_end": now_et().date(),
+    }
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
+
+
+def _reset_news_filters() -> None:
+    for key in list(st.session_state.keys()):
+        if key.startswith("news_"):
+            st.session_state.pop(key, None)
+    _news_state_defaults()
+
+
+def _news_tone(value: str) -> str:
+    lowered = str(value or "").casefold()
+    if "positive" in lowered or "high" == lowered or "+" in lowered:
+        return "good"
+    if "negative" in lowered or "risk" in lowered or "-" in lowered:
+        return "bad"
+    if "mixed" in lowered or "medium" == lowered or "macro" in lowered or "sector" in lowered:
+        return "warn"
+    if "direct" in lowered or "theme" in lowered or "indirect" in lowered:
+        return "info"
+    return "neutral"
+
+
+def _news_badge(label: str, tone: str | None = None) -> str:
+    return f'<span class="pt-news-badge {escape(tone or _news_tone(label))}">{escape(str(label))}</span>'
+
+
+def _news_primary_label(item: NewsItem) -> tuple[str, str]:
+    if item.tickers:
+        primary = item.tickers[0]
+        extra = len(set(item.tickers + item.readThroughTickers)) - 1
+        return primary, f"+{extra}" if extra > 0 else ""
+    if item.themes:
+        return item.themes[0], f"+{len(item.themes) - 1}" if len(item.themes) > 1 else ""
+    return "Market", ""
+
+
+def _news_source_link(item: NewsItem) -> str:
+    label = escape(item.source)
+    if item.url:
+        return f'<a href="{escape(item.url)}" target="_blank" rel="noopener noreferrer">{label}</a>'
+    return label
+
+
+def _open_news_ticker(ticker: str, item: NewsItem) -> None:
+    symbol = clean_ticker(ticker)
+    if not symbol:
+        return
+    if symbol in ANALYSES or symbol in COMPANIES:
+        st.session_state["selected_ticker"] = symbol
+        st.session_state["page"] = "Dashboard"
+        st.rerun()
+    st.session_state["news_detail_ticker"] = symbol
+    st.session_state["news_detail_item"] = item.id
+
+
+def _render_news_ticker_actions(item: NewsItem, key_prefix: str) -> None:
+    tickers = []
+    for ticker in [*item.tickers, *item.readThroughTickers]:
+        symbol = clean_ticker(ticker)
+        if symbol and symbol not in tickers:
+            tickers.append(symbol)
+    if not tickers:
+        st.caption("No direct ticker. This is a theme or macro read-through.")
+        return
+    cols = st.columns(min(6, len(tickers)))
+    for idx, ticker in enumerate(tickers[:6]):
+        with cols[idx % len(cols)]:
+            if st.button(ticker, key=f"{key_prefix}_{item.id}_{ticker}", help=f"Open {ticker}", use_container_width=True):
+                _open_news_ticker(ticker, item)
+
+
+def _news_summary_markup(summary: dict[str, int]) -> str:
+    cards = [
+        ("Market Updates", summary.get("market_updates", 0), "Macro, policy, commodity, sector", "info"),
+        ("Direct Company News", summary.get("company_news", 0), "Earnings, guidance, corporate actions", "good"),
+        ("Indirect Read-Throughs", summary.get("indirect_readthroughs", 0), "Supply chain, policy, sector impacts", "warn"),
+        ("Watchlist Impacts", summary.get("watchlist_impacts", 0), "Items affecting your watchlist", "warn"),
+    ]
+    body = ""
+    for label, value, subtitle, tone in cards:
+        body += f"""
+        <div class="pt-news-summary-card">
+          <span>{escape(label)}</span>
+          <strong class="{tone}">{value}</strong>
+          <small>{escape(subtitle)}</small>
+        </div>
+        """
+    return f'<div class="pt-news-summary">{body}</div>'
+
+
+def _render_news_header(status_label: str) -> None:
+    left, right = st.columns([0.58, 0.42], vertical_alignment="center")
+    with left:
+        html(
+            """
+            <div class="pt-news-title">
+              <small>Dashboard / Research / News Feed</small>
+              <h1>News Feed</h1>
+              <p>Market-wide updates, company news, and thesis-impact read-throughs.</p>
+            </div>
+            """
+        )
+    with right:
+        controls = st.columns([0.42, 0.28, 0.3], vertical_alignment="center")
+        with controls[0]:
+            st.segmented_control("Feed mode", ["Market-Wide", "Watchlist", "Ticker"], key="news_feed_mode", label_visibility="collapsed")
+        with controls[1]:
+            st.segmented_control("View", ["Table View", "Card View"], key="news_view_mode", label_visibility="collapsed")
+        with controls[2]:
+            html(f'<div class="pt-news-data-mode">Data Mode <b>{escape(status_label)}</b><span>Demo feed, classified locally</span></div>')
+
+
+def _render_news_filters(items: list[NewsItem]) -> None:
+    all_related_tickers = sorted(
+        {
+            ticker
+            for item in items
+            for ticker in [*item.tickers, *item.readThroughTickers]
+            if clean_ticker(ticker)
+        }
+    )
+    sectors = ["All"] + sorted({sector for item in items for sector in item.sectors if sector})
+    themes = ["All"] + sorted({theme for item in items for theme in [*item.themes, *item.readThroughThemes] if theme})
+    impacts = ["All", "Positive", "Negative", "Neutral", "Mixed", "Unknown"]
+    update_types = ["All"] + [item for item in UPDATE_TYPES if any(news.updateType == item for news in items)]
+    directness = ["All", "Direct", "Indirect", "Macro", "Sector", "Theme"]
+    sources = ["All Sources"] + SOURCE_TYPES
+
+    top = st.columns([0.32, 0.18, 0.18, 0.16, 0.16], vertical_alignment="bottom")
+    with top[0]:
+        st.text_input("Search news", placeholder="Search headlines, themes, tickers...", key="news_search")
+    with top[1]:
+        st.text_input("Ticker", placeholder="Free text ticker", key="news_ticker_input")
+    with top[2]:
+        st.multiselect("Ticker filter", all_related_tickers, key="news_ticker_filters")
+    with top[3]:
+        st.selectbox("Sector", sectors, key="news_sector")
+    with top[4]:
+        st.selectbox("Theme", themes, key="news_theme")
+
+    bottom = st.columns([0.16, 0.18, 0.17, 0.17, 0.18, 0.14], vertical_alignment="bottom")
+    with bottom[0]:
+        st.selectbox("Impact", impacts, key="news_impact")
+    with bottom[1]:
+        st.selectbox("Update Type", update_types, key="news_update_type")
+    with bottom[2]:
+        st.selectbox("Directness", directness, key="news_directness")
+    with bottom[3]:
+        st.selectbox("Date", ["Today", "Last 7 Days", "Last 30 Days", "Custom", "All"], key="news_date_filter")
+    with bottom[4]:
+        st.selectbox("Source", sources, key="news_source_type")
+    with bottom[5]:
+        st.button("Reset", key="reset_news_filters_button", use_container_width=True, on_click=_reset_news_filters)
+
+    if st.session_state.get("news_date_filter") == "Custom":
+        custom_cols = st.columns(2)
+        with custom_cols[0]:
+            st.date_input("Start date", key="news_custom_start")
+        with custom_cols[1]:
+            st.date_input("End date", key="news_custom_end")
+
+
+def _render_news_detail_drawer(items: list[NewsItem]) -> None:
+    ticker = st.session_state.get("news_detail_ticker")
+    if not ticker:
+        return
+    item_id = st.session_state.get("news_detail_item")
+    item = next((row for row in items if row.id == item_id), None)
+    html(
+        section(
+            f"{ticker} News Detail",
+            "Ticker is not yet modeled in Company Analysis",
+            f"""
+            <div class="pt-news-detail-grid">
+              {value_row("Related item", item.headline if item else "N/A")}
+              {value_row("Impact", item.impact if item else "Unknown", _news_tone(item.impact if item else ""))}
+              {value_row("Why it matters", item.whyItMatters if item else "No detail available.")}
+              {value_row("Valuation lever", item.affectedValuationLever if item else "Unknown")}
+            </div>
+            """,
+        )
+    )
+    col1, col2 = st.columns([0.2, 0.8])
+    with col1:
+        if st.button(f"Add {ticker} to Watchlist", key=f"news_add_watch_{ticker}", use_container_width=True):
+            _add_watchlist_ticker(str(ticker))
+            st.rerun()
+    with col2:
+        if st.button("Close Detail", key="news_close_detail"):
+            st.session_state.pop("news_detail_ticker", None)
+            st.session_state.pop("news_detail_item", None)
+            st.rerun()
+
+
+def _render_news_item_expander(item: NewsItem, key_prefix: str) -> None:
+    with st.expander(f"Details: {item.headline}", expanded=False):
+        detail_cols = st.columns([0.34, 0.28, 0.2, 0.18])
+        with detail_cols[0]:
+            st.markdown(f"**Summary**  \n{item.summary}")
+            st.markdown(f"**Why it matters**  \n{item.whyItMatters}")
+        with detail_cols[1]:
+            st.markdown("**Related tickers**")
+            _render_news_ticker_actions(item, f"{key_prefix}_ticker")
+            st.markdown("**Related themes**  \n" + ", ".join(item.readThroughThemes or item.themes or ["N/A"]))
+        with detail_cols[2]:
+            st.markdown(f"**Thesis lever**  \n{item.affectedThesisLever}")
+            st.markdown(f"**Valuation lever**  \n{item.affectedValuationLever}")
+            st.markdown(f"**Dashboard adjustment**  \n{item.dashboardAdjustment}")
+        with detail_cols[3]:
+            st.markdown(f"**Confidence**  \n{item.confidence}")
+            st.caption(item.confidenceExplanation)
+            if item.url:
+                st.markdown(f"[View source]({item.url})")
+            else:
+                st.caption(f"Source: {item.source}")
+
+
+def _render_news_table(items: list[NewsItem]) -> None:
+    if not items:
+        html(section("Market-Wide News", "No matching items", '<p class="pt-placeholder">Try loosening filters or switching feed mode.</p>'))
+        return
+    header = st.columns([0.09, 0.12, 0.26, 0.1, 0.08, 0.13, 0.13, 0.12, 0.22, 0.1])
+    labels = ["Date", "Ticker / Theme", "Headline", "Type", "Impact", "Thesis Lever", "Valuation Lever", "Adjustment", "Why It Matters", "Source"]
+    for col, label in zip(header, labels):
+        with col:
+            st.markdown(f'<div class="pt-news-header-cell">{escape(label)}</div>', unsafe_allow_html=True)
+    for idx, item in enumerate(items[:20]):
+        primary, extra = _news_primary_label(item)
+        row = st.columns([0.09, 0.12, 0.26, 0.1, 0.08, 0.13, 0.13, 0.12, 0.22, 0.1], vertical_alignment="center")
+        with row[0]:
+            st.markdown(f'<span class="pt-news-cell">{escape(item.timestamp.strftime("%Y-%m-%d"))}<small>{escape(item.timestamp.strftime("%I:%M %p ET").lstrip("0"))}</small></span>', unsafe_allow_html=True)
+        with row[1]:
+            if primary in item.tickers:
+                if st.button(primary, key=f"news_primary_{item.id}_{idx}", help=f"Open {primary}", use_container_width=True):
+                    _open_news_ticker(primary, item)
+            else:
+                st.markdown(f'<span class="pt-news-cell"><b>{escape(primary)}</b></span>', unsafe_allow_html=True)
+            if extra:
+                st.caption(extra)
+        with row[2]:
+            st.markdown(f'<span class="pt-news-cell headline">{escape(item.headline)}</span>', unsafe_allow_html=True)
+        with row[3]:
+            st.markdown(_news_badge(item.updateType, "neutral"), unsafe_allow_html=True)
+        with row[4]:
+            st.markdown(_news_badge(item.impact), unsafe_allow_html=True)
+        with row[5]:
+            st.markdown(f'<span class="pt-news-cell">{escape(item.affectedThesisLever)}</span>', unsafe_allow_html=True)
+        with row[6]:
+            st.markdown(f'<span class="pt-news-cell">{escape(item.affectedValuationLever)}</span>', unsafe_allow_html=True)
+        with row[7]:
+            st.markdown(f'<span class="pt-news-cell {_news_tone(item.dashboardAdjustment)}">{escape(item.dashboardAdjustment)}</span>', unsafe_allow_html=True)
+        with row[8]:
+            st.markdown(f'<span class="pt-news-cell">{escape(item.whyItMatters)}</span>', unsafe_allow_html=True)
+        with row[9]:
+            st.markdown(f'<span class="pt-news-cell source">{_news_source_link(item)}</span>', unsafe_allow_html=True)
+        _render_news_item_expander(item, f"table_{idx}")
+
+
+def _render_news_cards(items: list[NewsItem]) -> None:
+    if not items:
+        html(section("Market-Wide News", "No matching items", '<p class="pt-placeholder">Try loosening filters or switching feed mode.</p>'))
+        return
+    for idx, item in enumerate(items[:16]):
+        ticker_list = ", ".join(item.tickers or item.readThroughTickers[:5] or ["Theme-driven"])
+        theme_list = ", ".join(item.themes[:4] or item.readThroughThemes[:4] or ["Market"])
+        html(
+            f"""
+            <div class="pt-news-card">
+              <div class="pt-news-card-head">
+                <div>
+                  <strong>{escape(item.headline)}</strong>
+                  <small>{escape(item.source)} / {escape(item.timestamp.strftime("%Y-%m-%d %I:%M %p ET").replace(" 0", " "))}</small>
+                </div>
+                <div>{_news_badge(item.impact)} {_news_badge(item.updateType, "neutral")} {_news_badge(item.directness)}</div>
+              </div>
+              <div class="pt-news-card-meta">
+                <span><b>Themes</b>{escape(theme_list)}</span>
+                <span><b>Affected Tickers</b>{escape(ticker_list)}</span>
+                <span><b>Valuation Lever</b>{escape(item.affectedValuationLever)}</span>
+                <span><b>Dashboard Adjustment</b>{escape(item.dashboardAdjustment)}</span>
+              </div>
+              <p><b>Why it matters:</b> {escape(item.whyItMatters)}</p>
+            </div>
+            """
+        )
+        _render_news_item_expander(item, f"card_{idx}")
+
+
 def render_news_feed_page() -> None:
-    rows = []
-    for ticker, analysis in ANALYSES.items():
-        for update in analysis.thesis_updates:
-            rows.append(
-                {
-                    "Date": update.date,
-                    "Ticker": ticker,
-                    "Title": update.title,
-                    "Type": update.type,
-                    "Impact": update.impact,
-                    "Affected Thesis Lever": update.affected_thesis_lever,
-                    "Affected Valuation Lever": update.affected_valuation_lever,
-                    "Dashboard Adjustment": update.dashboard_adjustment,
-                }
-            )
-    render_dataframe(rows, 520)
+    _news_state_defaults()
+    provider = market_news_provider()
+    all_items = provider.getMarketNews()
+    _render_news_header("Demo")
+    _render_news_filters(all_items)
+
+    ticker_inputs = list(st.session_state.get("news_ticker_filters", []))
+    typed_ticker = clean_ticker(st.session_state.get("news_ticker_input", ""))
+    if typed_ticker:
+        ticker_inputs.append(typed_ticker)
+    selected_ticker = typed_ticker or st.session_state.get("selected_ticker", "")
+    filtered_items = filter_news_items(
+        all_items,
+        mode=st.session_state.get("news_feed_mode", "Market-Wide"),
+        watchlist_tickers=_active_watchlist_tickers(),
+        selected_ticker=selected_ticker,
+        ticker_filters=ticker_inputs,
+        sector=st.session_state.get("news_sector", "All"),
+        theme=st.session_state.get("news_theme", "All"),
+        impact=st.session_state.get("news_impact", "All"),
+        update_type=st.session_state.get("news_update_type", "All"),
+        directness=st.session_state.get("news_directness", "All"),
+        source_type=st.session_state.get("news_source_type", "All Sources"),
+        date_filter=st.session_state.get("news_date_filter", "Last 7 Days"),
+        custom_start=st.session_state.get("news_custom_start"),
+        custom_end=st.session_state.get("news_custom_end"),
+        search=st.session_state.get("news_search", ""),
+    )
+    summary = news_summary(filtered_items, _active_watchlist_tickers())
+    html(_news_summary_markup(summary))
+    html(
+        f"""
+        <div class="pt-news-feed-status">
+          <b>{escape(st.session_state.get("news_feed_mode", "Market-Wide"))}</b>
+          <span>{len(filtered_items)} classified items sorted by relevance, recency, and confidence.</span>
+          <span title="Demo feed with local classification and market read-through mapping">Data Sources</span>
+        </div>
+        """
+    )
+    _render_news_detail_drawer(all_items)
+    if st.session_state.get("news_view_mode", "Table View") == "Card View":
+        _render_news_cards(filtered_items)
+    else:
+        _render_news_table(filtered_items)
 
 
 def _economic_event_date(row: dict[str, object]):
