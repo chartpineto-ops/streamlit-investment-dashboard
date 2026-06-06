@@ -1503,7 +1503,7 @@ def _render_economic_month_nav(today: date) -> date:
     context = _economic_month_context(target_month, today)
     prev_col, label_col, next_col, current_col = st.columns([0.07, 0.73, 0.07, 0.13], vertical_alignment="center")
     with prev_col:
-        if st.button("<", key="economic_calendar_prev_month", use_container_width=True, help="Previous month"):
+        if st.button("←", key="economic_calendar_prev_month", use_container_width=True, help="Previous month"):
             st.session_state["economic_calendar_month"] = _add_months(target_month, -1)
             st.rerun()
     with label_col:
@@ -1516,7 +1516,7 @@ def _render_economic_month_nav(today: date) -> date:
             """
         )
     with next_col:
-        if st.button(">", key="economic_calendar_next_month", use_container_width=True, help="Next month"):
+        if st.button("→", key="economic_calendar_next_month", use_container_width=True, help="Next month"):
             st.session_state["economic_calendar_month"] = _add_months(target_month, 1)
             st.rerun()
     with current_col:
