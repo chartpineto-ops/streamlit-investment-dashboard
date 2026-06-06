@@ -785,6 +785,203 @@ button, input, textarea, select {
   font-size: 0.8rem;
   margin: 0.25rem 0 0;
 }
+.pt-sector-brief {
+  background: linear-gradient(180deg, rgba(15, 31, 50, 0.98), rgba(8, 18, 30, 0.98));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: minmax(260px, 1.35fr) minmax(390px, 1.6fr) minmax(150px, 0.55fr);
+  margin-bottom: 0.68rem;
+  padding: 0.8rem;
+}
+.pt-sector-brief-main {
+  border-right: 1px solid var(--border-soft);
+  padding-right: 0.8rem;
+}
+.pt-sector-brief-main p {
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.45;
+  margin: 0.32rem 0;
+}
+.pt-sector-brief-main ul {
+  color: var(--muted);
+  font-size: 0.67rem;
+  line-height: 1.4;
+  margin: 0.35rem 0 0;
+  padding-left: 1rem;
+}
+.pt-sector-brief-stats {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.pt-sector-brief-stats > div {
+  background: rgba(20, 34, 53, 0.5);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  padding: 0.5rem;
+}
+.pt-sector-brief-stats span,
+.pt-sector-conviction span {
+  color: var(--faint);
+  display: block;
+  font-size: 0.61rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+.pt-sector-brief-stats b {
+  color: var(--text);
+  display: block;
+  font-size: 0.72rem;
+  margin-top: 0.2rem;
+}
+.pt-sector-conviction {
+  align-content: center;
+  display: grid;
+  gap: 0.25rem;
+  text-align: center;
+}
+.pt-sector-conviction strong {
+  font-size: 2rem;
+  line-height: 1;
+}
+.pt-sector-conviction b {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.pt-sector-conviction > div,
+.pt-sector-score-bar {
+  background: rgba(122, 152, 184, 0.16);
+  border-radius: 999px;
+  height: 0.28rem;
+  overflow: hidden;
+}
+.pt-sector-conviction > div i,
+.pt-sector-score-bar i {
+  background: var(--green);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+.pt-sector-meaning {
+  display: grid;
+  gap: 0.52rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.pt-sector-meaning > div {
+  background: rgba(20, 34, 53, 0.46);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  min-height: 72px;
+  padding: 0.55rem;
+}
+.pt-sector-meaning span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.63rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.pt-sector-meaning ul,
+.pt-sector-meaning p {
+  color: var(--text);
+  font-size: 0.69rem;
+  line-height: 1.4;
+  margin: 0.3rem 0 0;
+  padding-left: 0.95rem;
+}
+.pt-sector-meaning p {
+  padding-left: 0;
+}
+.pt-sector-meaning strong {
+  color: var(--text);
+  display: block;
+  font-size: 0.9rem;
+  margin-top: 0.32rem;
+}
+.pt-sector-flow-heatmap {
+  display: grid;
+  gap: 0.42rem;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.pt-sector-heat-tile {
+  border: 1px solid rgba(151, 174, 201, 0.2);
+  border-radius: 7px;
+  display: grid;
+  gap: 0.12rem;
+  min-height: 96px;
+  padding: 0.5rem;
+}
+.pt-sector-heat-tile span,
+.pt-sector-heat-tile em,
+.pt-sector-heat-tile small {
+  color: rgba(238, 244, 251, 0.7);
+  font-size: 0.58rem;
+  font-style: normal;
+}
+.pt-sector-heat-tile strong {
+  color: var(--text);
+  font-size: 0.7rem;
+}
+.pt-sector-heat-tile b {
+  color: var(--text);
+  font-size: 1.05rem;
+  line-height: 1.1;
+}
+.pt-sector-ranking-wrap {
+  overflow-x: auto;
+}
+.pt-sector-ranking {
+  border-collapse: collapse;
+  min-width: 1040px;
+  width: 100%;
+}
+.pt-sector-ranking th,
+.pt-sector-ranking td {
+  border-bottom: 1px solid rgba(122, 152, 184, 0.14);
+  color: var(--muted);
+  font-size: 0.66rem;
+  padding: 0.42rem 0.35rem;
+  text-align: left;
+  vertical-align: middle;
+}
+.pt-sector-ranking th {
+  color: var(--faint);
+  font-size: 0.58rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.pt-sector-ranking td strong,
+.pt-sector-ranking td small {
+  color: var(--text);
+  display: block;
+}
+.pt-sector-ranking td small {
+  color: var(--faint);
+  font-size: 0.58rem;
+}
+.pt-sector-score-bar {
+  align-items: center;
+  display: flex;
+  height: 0.34rem;
+  min-width: 88px;
+  overflow: visible;
+  position: relative;
+}
+.pt-sector-score-bar i.warn {
+  background: var(--yellow);
+}
+.pt-sector-score-bar i.bad {
+  background: var(--red);
+}
+.pt-sector-score-bar b {
+  font-size: 0.58rem;
+  margin-left: 0.32rem;
+  min-width: 25px;
+}
 .pt-sector-hero {
   background: linear-gradient(180deg, rgba(15, 31, 50, 0.96), rgba(8, 18, 30, 0.96));
   border: 1px solid var(--border);
@@ -876,6 +1073,12 @@ button, input, textarea, select {
   color: var(--muted);
   font-size: 0.7rem;
 }
+.pt-sector-breadth-copy {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  margin: 0 0 0.5rem;
+}
 .pt-sector-mini-grid {
   display: grid;
   gap: 0.45rem;
@@ -886,6 +1089,9 @@ button, input, textarea, select {
   display: grid;
   gap: 0.55rem;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.pt-sector-beneficiary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .pt-sector-theme-card,
 .pt-sector-beneficiary-card {
@@ -923,11 +1129,33 @@ button, input, textarea, select {
   margin-top: 0.42rem;
   padding-top: 0.42rem;
 }
-.pt-sector-beneficiary-row b {
+.pt-sector-beneficiary-logo {
+  align-items: center;
+  background: rgba(122, 152, 184, 0.12);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  display: flex;
+  height: 30px;
+  justify-content: center;
+  overflow: hidden;
+  width: 30px;
+}
+.pt-sector-beneficiary-logo img {
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+.pt-sector-beneficiary-logo span {
   color: var(--text);
+  font-size: 0.58rem;
+  font-weight: 900;
+}
+.pt-sector-beneficiary-company b {
+  color: var(--text);
+  display: block;
   font-size: 0.72rem;
 }
-.pt-sector-beneficiary-row span,
+.pt-sector-beneficiary-company span,
 .pt-sector-beneficiary-row small {
   color: var(--muted);
   font-size: 0.64rem;
@@ -939,6 +1167,58 @@ button, input, textarea, select {
 }
 .pt-sector-beneficiary-row small {
   grid-column: 1 / -1;
+}
+.pt-sector-beneficiary-metrics {
+  display: grid;
+  gap: 0.22rem;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.pt-sector-beneficiary-metrics span {
+  background: rgba(122, 152, 184, 0.08);
+  border-radius: 4px;
+  color: var(--faint);
+  display: block;
+  font-size: 0.58rem;
+  padding: 0.25rem;
+}
+.pt-sector-beneficiary-metrics b {
+  color: var(--text);
+  display: block;
+  font-size: 0.64rem;
+  margin-top: 0.08rem;
+}
+.pt-sector-money-columns {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.pt-sector-money-columns section {
+  background: rgba(20, 34, 53, 0.38);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  padding: 0.5rem;
+}
+.pt-sector-money-columns section > strong {
+  display: block;
+  font-size: 0.68rem;
+  margin-bottom: 0.25rem;
+}
+.pt-sector-money-columns section > div {
+  align-items: center;
+  border-top: 1px solid rgba(122, 152, 184, 0.12);
+  display: flex;
+  gap: 0.4rem;
+  justify-content: space-between;
+  padding: 0.3rem 0;
+}
+.pt-sector-money-columns span {
+  color: var(--text);
+  font-size: 0.64rem;
+}
+.pt-sector-money-columns b {
+  font-size: 0.58rem;
+  letter-spacing: -0.05rem;
 }
 .pt-sector-timeline {
   display: grid;
@@ -3857,16 +4137,28 @@ button, input, textarea, select {
   .pt-news-summary,
   .pt-news-card-meta,
   .pt-news-detail-grid,
+  .pt-sector-brief,
+  .pt-sector-brief-stats,
+  .pt-sector-meaning,
+  .pt-sector-flow-heatmap,
+  .pt-sector-money-columns,
   .pt-sector-hero,
   .pt-sector-hero-stats,
   .pt-sector-mini-grid,
   .pt-sector-theme-grid,
   .pt-sector-beneficiary-grid,
+  .pt-sector-beneficiary-metrics,
   .pt-sector-timeline,
   .pt-sector-insights,
   .pt-sector-bottom-line > div,
   .pt-sector-health {
     grid-template-columns: 1fr;
+  }
+  .pt-sector-brief-main {
+    border-bottom: 1px solid var(--border-soft);
+    border-right: 0;
+    padding-bottom: 0.7rem;
+    padding-right: 0;
   }
   .pt-sector-hero > div:first-child {
     border-bottom: 1px solid var(--border-soft);

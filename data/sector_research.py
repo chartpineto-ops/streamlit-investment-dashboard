@@ -7,8 +7,13 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+from data.company_identity import get_company_identity
 from data.market_data import get_market_session_et
 from utils.formatting import now_et, to_float
+
+
+HORIZON_DAYS = {"1D": 1, "5D": 5, "1M": 21, "3M": 63}
+HORIZON_KEYS = {"1D": "return_1d", "5D": "return_5d", "1M": "return_1m", "3M": "return_3m"}
 
 
 SECTOR_UNIVERSE = {
@@ -149,6 +154,9 @@ class GroupMetric:
     name: str
     return_1d: float | None
     return_5d: float | None
+    return_1m: float | None
+    return_3m: float | None
+    period_return: float | None
     relative_volume: float | None
     breadth: float | None
     dollar_volume_change: float | None
@@ -237,8 +245,12 @@ def _quote_from_history(symbol: str, frame: pd.DataFrame) -> dict[str, object]:
     latest = to_float(close.iloc[-1])
     previous = to_float(close.iloc[-2]) if len(close) > 1 else None
     five_day_prior = to_float(close.iloc[-6]) if len(close) > 5 else None
+    one_month_prior = to_float(close.iloc[-22]) if len(close) > 21 else None
+    three_month_prior = to_float(close.iloc[-64]) if len(close) > 63 else None
     prior_1d = _pct_change(to_float(close.iloc[-2]), to_float(close.iloc[-3])) if len(close) > 2 else None
     prior_5d = _pct_change(to_float(close.iloc[-2]), to_float(close.iloc[-7])) if len(close) > 6 else None
+    prior_1m = _pct_change(to_float(close.iloc[-2]), to_float(close.iloc[-23])) if len(close) > 22 else None
+    prior_3m = _pct_change(to_float(close.iloc[-2]), to_float(close.iloc[-65])) if len(close) > 64 else None
     latest_volume = to_float(volume.iloc[-1]) if not volume.empty else None
     average_volume = to_float(volume.tail(20).mean()) if not volume.empty else None
     relative_volume = latest_volume / average_volume if latest_volume is not None and average_volume not in (None, 0) else None
@@ -258,8 +270,12 @@ def _quote_from_history(symbol: str, frame: pd.DataFrame) -> dict[str, object]:
         "dollar_change": latest - previous if latest is not None and previous is not None else None,
         "return_1d": _pct_change(latest, previous),
         "return_5d": _pct_change(latest, five_day_prior),
+        "return_1m": _pct_change(latest, one_month_prior),
+        "return_3m": _pct_change(latest, three_month_prior),
         "prior_return_1d": prior_1d,
         "prior_return_5d": prior_5d,
+        "prior_return_1m": prior_1m,
+        "prior_return_3m": prior_3m,
         "volume": latest_volume,
         "average_volume_20d": average_volume,
         "relative_volume": relative_volume,
@@ -349,18 +365,33 @@ def _basket_breadth(snapshot: dict[str, object], basket: Iterable[str], field: s
     return sum(value > 0 for value in valid) / len(valid) * 100 if valid else None
 
 
-def _group_metric(snapshot: dict[str, object], symbol: str, name: str, basket: Iterable[str]) -> GroupMetric:
+def _horizon_key(horizon: str) -> str:
+    return HORIZON_KEYS.get(horizon, "return_5d")
+
+
+def _horizon_persistence(frame: pd.DataFrame, horizon: str) -> float | None:
+    close = _numeric(frame, "Close")
+    days = HORIZON_DAYS.get(horizon, 5)
+    returns = close.pct_change().dropna().tail(days)
+    return float((returns > 0).mean() * 100) if not returns.empty else None
+
+
+def _group_metric(snapshot: dict[str, object], symbol: str, name: str, basket: Iterable[str], horizon: str) -> GroupMetric:
     quote = snapshot.get("quotes", {}).get(symbol, {})
+    period_key = _horizon_key(horizon)
     return GroupMetric(
         symbol=symbol,
         name=name,
         return_1d=to_float(quote.get("return_1d")),
         return_5d=to_float(quote.get("return_5d")),
+        return_1m=to_float(quote.get("return_1m")),
+        return_3m=to_float(quote.get("return_3m")),
+        period_return=to_float(quote.get(period_key)),
         relative_volume=to_float(quote.get("relative_volume")),
-        breadth=_basket_breadth(snapshot, basket),
+        breadth=_basket_breadth(snapshot, basket, period_key),
         dollar_volume_change=to_float(quote.get("dollar_volume_change")),
         dollar_volume=to_float(quote.get("dollar_volume")),
-        persistence=to_float(quote.get("persistence")),
+        persistence=_horizon_persistence(snapshot.get("history", {}).get(symbol, pd.DataFrame()), horizon),
     )
 
 
@@ -372,17 +403,17 @@ def _rank_normalize(series: pd.Series, low: float = -1.0, high: float = 1.0) -> 
     return low + ranks * (high - low)
 
 
-def calculate_flow_scores(snapshot: dict[str, object]) -> pd.DataFrame:
+def calculate_flow_scores(snapshot: dict[str, object], horizon: str = "5D") -> pd.DataFrame:
     rows = [
-        _group_metric(snapshot, symbol, name, SECTOR_BASKETS.get(symbol, [])).__dict__
+        _group_metric(snapshot, symbol, name, SECTOR_BASKETS.get(symbol, []), horizon).__dict__
         for symbol, name in SECTOR_UNIVERSE.items()
     ]
     frame = pd.DataFrame(rows)
     if frame.empty:
         return frame
     components = {
-        "return_1d": 0.30,
-        "return_5d": 0.25,
+        "period_return": 0.45,
+        "return_1d": 0.10,
         "relative_volume": 0.20,
         "breadth": 0.15,
         "dollar_volume_change": 0.10,
@@ -393,21 +424,22 @@ def calculate_flow_scores(snapshot: dict[str, object]) -> pd.DataFrame:
     frame["flow_score"] = (score * 100).clip(-100, 100)
     frame["estimated_flow_proxy"] = (
         pd.to_numeric(frame["dollar_volume"], errors="coerce").fillna(0)
-        * pd.to_numeric(frame["return_1d"], errors="coerce").fillna(0)
+        * pd.to_numeric(frame["period_return"], errors="coerce").fillna(0)
         / 100
         * pd.to_numeric(frame["relative_volume"], errors="coerce").fillna(1).clip(lower=0.25)
     )
+    frame["horizon"] = horizon
     return frame
 
 
-def calculate_sector_leadership_scores(sectors: pd.DataFrame, snapshot: dict[str, object]) -> pd.DataFrame:
+def calculate_sector_leadership_scores(sectors: pd.DataFrame, snapshot: dict[str, object], horizon: str = "5D") -> pd.DataFrame:
     if sectors is None or sectors.empty:
         return pd.DataFrame()
     frame = sectors.copy()
-    spy_5d = to_float(snapshot.get("quotes", {}).get("SPY", {}).get("return_5d")) or 0.0
-    frame["relative_strength_spy"] = pd.to_numeric(frame["return_5d"], errors="coerce") - spy_5d
+    spy_period = to_float(snapshot.get("quotes", {}).get("SPY", {}).get(_horizon_key(horizon))) or 0.0
+    frame["relative_strength_spy"] = pd.to_numeric(frame["period_return"], errors="coerce") - spy_period
     inputs = {
-        "return_5d": 0.22,
+        "period_return": 0.22,
         "relative_strength_spy": 0.20,
         "relative_volume": 0.15,
         "breadth": 0.18,
@@ -420,8 +452,8 @@ def calculate_sector_leadership_scores(sectors: pd.DataFrame, snapshot: dict[str
     frame["leadership_score"] = leadership.clip(0, 100)
     frame["leadership_label"] = frame["leadership_score"].apply(_leadership_label)
     frame["trend"] = frame.apply(
-        lambda row: "Rising" if (to_float(row.get("return_1d")) or 0) > 0 and (to_float(row.get("return_5d")) or 0) > 0
-        else "Falling" if (to_float(row.get("return_1d")) or 0) < 0 and (to_float(row.get("return_5d")) or 0) < 0
+        lambda row: "Rising" if (to_float(row.get("return_1d")) or 0) > 0 and (to_float(row.get("period_return")) or 0) > 0
+        else "Falling" if (to_float(row.get("return_1d")) or 0) < 0 and (to_float(row.get("period_return")) or 0) < 0
         else "Mixed",
         axis=1,
     )
@@ -467,12 +499,14 @@ def _regime_label(score: float) -> str:
     return "Neutral"
 
 
-def calculate_market_regime(snapshot: dict[str, object], sectors: pd.DataFrame) -> dict[str, object]:
+def calculate_market_regime(snapshot: dict[str, object], sectors: pd.DataFrame, horizon: str = "5D") -> dict[str, object]:
     quotes = snapshot.get("quotes", {})
     benchmark_1d = _mean(quotes.get(symbol, {}).get("return_1d") for symbol in ("SPY", "QQQ", "IWM")) or 0.0
-    benchmark_5d = _mean(quotes.get(symbol, {}).get("return_5d") for symbol in ("SPY", "QQQ", "IWM")) or 0.0
+    period_key = _horizon_key(horizon)
+    prior_key = f"prior_{period_key}"
+    benchmark_period = _mean(quotes.get(symbol, {}).get(period_key) for symbol in ("SPY", "QQQ", "IWM")) or 0.0
     prior_1d = _mean(quotes.get(symbol, {}).get("prior_return_1d") for symbol in ("SPY", "QQQ", "IWM")) or 0.0
-    prior_5d = _mean(quotes.get(symbol, {}).get("prior_return_5d") for symbol in ("SPY", "QQQ", "IWM")) or 0.0
+    prior_period = _mean(quotes.get(symbol, {}).get(prior_key) for symbol in ("SPY", "QQQ", "IWM")) or 0.0
     vix_level = to_float(quotes.get("^VIX", {}).get("price"))
     vix_change = to_float(quotes.get("^VIX", {}).get("return_1d")) or 0.0
     prior_vix_change = to_float(quotes.get("^VIX", {}).get("prior_return_1d")) or 0.0
@@ -483,20 +517,20 @@ def calculate_market_regime(snapshot: dict[str, object], sectors: pd.DataFrame) 
     vix_score = 25 if vix_level is not None and vix_level < 16 else -25 if vix_level is not None and vix_level > 25 else 0
     risk_score = (
         benchmark_1d * 8
-        + benchmark_5d * 4
+        + benchmark_period * 4
         - vix_change * 1.5
         - yield_change * 0.5
         + (advancer_pct - 50) * 0.45
         + (positive_sector_pct - 50) * 0.35
         + vix_score
     )
-    previous_score = prior_1d * 8 + prior_5d * 4 - prior_vix_change * 1.5 + vix_score
+    previous_score = prior_1d * 8 + prior_period * 4 - prior_vix_change * 1.5 + vix_score
     risk_score = max(-100, min(100, risk_score))
     previous_score = max(-100, min(100, previous_score))
     trend = "Improving" if risk_score > previous_score + 5 else "Deteriorating" if risk_score < previous_score - 5 else "Stable"
     explanation = (
         f"{positive_sector_pct:.0f}% of tracked groups have positive flow scores; "
-        f"benchmark momentum is {benchmark_5d:+.1f}% over five sessions and tracked-stock breadth is {advancer_pct:.0f}%."
+        f"benchmark momentum is {benchmark_period:+.1f}% over {horizon} and tracked-stock breadth is {advancer_pct:.0f}%."
     )
     return {
         "regime": _regime_label(risk_score),
@@ -504,6 +538,7 @@ def calculate_market_regime(snapshot: dict[str, object], sectors: pd.DataFrame) 
         "trend": trend,
         "risk_score": risk_score,
         "explanation": explanation,
+        "horizon": horizon,
     }
 
 
@@ -544,8 +579,9 @@ def calculate_market_breadth(snapshot: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _theme_metrics(snapshot: dict[str, object]) -> pd.DataFrame:
+def _theme_metrics(snapshot: dict[str, object], horizon: str = "5D") -> pd.DataFrame:
     quotes = snapshot.get("quotes", {})
+    period_key = _horizon_key(horizon)
     rows = []
     for name, basket in THEME_BASKETS.items():
         available = [quotes.get(symbol, {}) for symbol in basket if quotes.get(symbol, {}).get("status") == "OK"]
@@ -554,10 +590,11 @@ def _theme_metrics(snapshot: dict[str, object]) -> pd.DataFrame:
                 "name": name,
                 "return_1d": _mean(row.get("return_1d") for row in available),
                 "return_5d": _mean(row.get("return_5d") for row in available),
+                "period_return": _mean(row.get(period_key) for row in available),
                 "relative_volume": _mean(row.get("relative_volume") for row in available),
-                "breadth": _basket_breadth(snapshot, basket),
+                "breadth": _basket_breadth(snapshot, basket, period_key),
                 "dollar_volume_change": _mean(row.get("dollar_volume_change") for row in available),
-                "persistence": _mean(row.get("persistence") for row in available),
+                "persistence": _mean(_horizon_persistence(snapshot.get("history", {}).get(symbol, pd.DataFrame()), horizon) for symbol in basket),
                 "loaded": len(available),
                 "basket_size": len(basket),
                 "top_movers": ", ".join(
@@ -569,21 +606,21 @@ def _theme_metrics(snapshot: dict[str, object]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def identify_emerging_themes(snapshot: dict[str, object]) -> pd.DataFrame:
-    frame = _theme_metrics(snapshot)
+def identify_emerging_themes(snapshot: dict[str, object], horizon: str = "5D") -> pd.DataFrame:
+    frame = _theme_metrics(snapshot, horizon)
     if frame.empty:
         return frame
     score = (
-        _rank_normalize(frame["return_1d"]) * 0.30
-        + _rank_normalize(frame["return_5d"]) * 0.25
+        _rank_normalize(frame["period_return"]) * 0.45
+        + _rank_normalize(frame["return_1d"]) * 0.10
         + _rank_normalize(frame["relative_volume"]) * 0.20
         + _rank_normalize(frame["breadth"]) * 0.15
         + _rank_normalize(frame["dollar_volume_change"]) * 0.10
     )
     frame["flow_score"] = (score * 100).clip(-100, 100)
     frame["momentum"] = frame.apply(
-        lambda row: "Accelerating" if (to_float(row.get("return_1d")) or 0) > 0 and (to_float(row.get("return_5d")) or 0) > 0
-        else "Fading" if (to_float(row.get("return_1d")) or 0) < 0 and (to_float(row.get("return_5d")) or 0) < 0
+        lambda row: "Accelerating" if (to_float(row.get("return_1d")) or 0) > 0 and (to_float(row.get("period_return")) or 0) > 0
+        else "Fading" if (to_float(row.get("return_1d")) or 0) < 0 and (to_float(row.get("period_return")) or 0) < 0
         else "Mixed",
         axis=1,
     )
@@ -593,25 +630,30 @@ def identify_emerging_themes(snapshot: dict[str, object]) -> pd.DataFrame:
         + pd.to_numeric(frame["relative_volume"], errors="coerce").fillna(1).clip(0, 2) / 2 * 20
         + pd.to_numeric(frame["breadth"], errors="coerce").fillna(50) / 100 * 25
     ).clip(0, 100)
+    frame["horizon"] = horizon
     return frame.sort_values("flow_score", ascending=False).reset_index(drop=True)
 
 
-def identify_beneficiaries(sectors: pd.DataFrame, snapshot: dict[str, object]) -> list[dict[str, object]]:
+def identify_beneficiaries(sectors: pd.DataFrame, snapshot: dict[str, object], horizon: str = "5D") -> list[dict[str, object]]:
     if sectors is None or sectors.empty:
         return []
     quotes = snapshot.get("quotes", {})
-    spy_return = to_float(quotes.get("SPY", {}).get("return_1d")) or 0.0
+    period_key = _horizon_key(horizon)
+    spy_return = to_float(quotes.get("SPY", {}).get(period_key)) or 0.0
     output = []
     for _, sector in sectors.head(4).iterrows():
         sector_name = str(sector["name"])
-        sector_return = to_float(sector.get("return_1d")) or 0.0
+        sector_return = to_float(sector.get("period_return")) or 0.0
         candidates = []
         for symbol in BENEFICIARY_BASKETS.get(sector_name, []):
             quote = quotes.get(symbol, {})
-            stock_return = to_float(quote.get("return_1d"))
+            stock_return = to_float(quote.get(period_key))
             if stock_return is None:
                 continue
-            confirmation = stock_return - max(spy_return, sector_return)
+            relative_spy = stock_return - spy_return
+            relative_sector = stock_return - sector_return
+            volume_confirmed = (to_float(quote.get("relative_volume")) or 0) >= 1.05
+            confirmation = min(relative_spy, relative_sector)
             confidence = max(
                 0,
                 min(
@@ -626,64 +668,97 @@ def identify_beneficiaries(sectors: pd.DataFrame, snapshot: dict[str, object]) -
                 {
                     "ticker": symbol,
                     "company": COMPANY_NAMES.get(symbol, symbol),
-                    "return_1d": stock_return,
+                    "period_return": stock_return,
+                    "relative_spy": relative_spy,
+                    "relative_sector": relative_sector,
+                    "relative_volume": to_float(quote.get("relative_volume")),
                     "confidence": confidence,
-                    "reason": "Outperforming sector and SPY" if confirmation > 0 else "Sector-flow beneficiary",
+                    "reason": (
+                        "Volume confirmed"
+                        if confirmation > 0 and volume_confirmed
+                        else "Outperforming sector"
+                        if relative_sector > 0
+                        else "Outperforming SPY"
+                        if relative_spy > 0
+                        else "Weak confirmation"
+                        if confirmation < -1
+                        else "Watch only"
+                    ),
                 }
             )
+        top_candidates = sorted(candidates, key=lambda row: row["confidence"], reverse=True)[:3]
+        for candidate in top_candidates:
+            identity = get_company_identity(str(candidate["ticker"]))
+            candidate["company"] = identity.get("company_name") or candidate["company"]
+            candidate["logo_url"] = identity.get("logo_data_uri") or identity.get("logo_url")
+            candidate["fallback_initials"] = identity.get("fallback_initials") or str(candidate["ticker"])[:2]
         output.append(
             {
                 "theme": sector_name,
                 "flow_score": to_float(sector.get("flow_score")) or 0.0,
-                "beneficiaries": sorted(candidates, key=lambda row: row["confidence"], reverse=True)[:3],
+                "beneficiaries": top_candidates,
             }
         )
     return output
 
 
-def _history_metric(frame: pd.DataFrame, offset: int) -> dict[str, float | None]:
+def _history_metric(frame: pd.DataFrame, offset: int, period_days: int = 5) -> dict[str, float | None]:
     close = _numeric(frame, "Close")
     volume = _numeric(frame, "Volume")
-    if len(close) < offset + 7:
+    if len(close) < offset + period_days + 2:
         return {}
     position = len(close) - 1 - offset
     latest = to_float(close.iloc[position])
     prior = to_float(close.iloc[position - 1])
-    five_prior = to_float(close.iloc[position - 5])
+    period_prior = to_float(close.iloc[position - period_days])
     latest_volume = to_float(volume.iloc[position]) if len(volume) > position else None
     avg_volume = to_float(volume.iloc[max(0, position - 20):position].mean()) if not volume.empty else None
     return {
         "return_1d": _pct_change(latest, prior),
-        "return_5d": _pct_change(latest, five_prior),
+        "period_return": _pct_change(latest, period_prior),
         "relative_volume": latest_volume / avg_volume if latest_volume is not None and avg_volume not in (None, 0) else None,
     }
 
 
-def build_rotation_timeline(snapshot: dict[str, object], sessions: int = 10) -> list[dict[str, object]]:
+def build_rotation_persistence(snapshot: dict[str, object], horizon: str = "5D", sessions: int = 10) -> pd.DataFrame:
     history = snapshot.get("history", {})
     spy = history.get("SPY", pd.DataFrame())
     dates = list(spy.index[-sessions:]) if spy is not None and not spy.empty else []
-    output = []
+    period_days = HORIZON_DAYS.get(horizon, 5)
+    matrix: dict[str, dict[str, float]] = {name: {} for name in SECTOR_UNIVERSE.values()}
     for offset, stamp in enumerate(reversed(dates)):
         rows = []
         for symbol, name in SECTOR_UNIVERSE.items():
-            metric = _history_metric(history.get(symbol, pd.DataFrame()), offset)
+            metric = _history_metric(history.get(symbol, pd.DataFrame()), offset, period_days)
             if metric:
                 rows.append({"symbol": symbol, "name": name, **metric})
         frame = pd.DataFrame(rows)
         if frame.empty:
             continue
-        score = _rank_normalize(frame["return_1d"]) * 0.45 + _rank_normalize(frame["return_5d"]) * 0.35 + _rank_normalize(frame["relative_volume"]) * 0.20
+        score = _rank_normalize(frame["period_return"]) * 0.65 + _rank_normalize(frame["return_1d"]) * 0.15 + _rank_normalize(frame["relative_volume"]) * 0.20
         frame["score"] = score * 100
-        leaders = frame.sort_values("score", ascending=False).head(2)
+        date_label = pd.Timestamp(stamp).strftime("%b %d")
+        for _, row in frame.iterrows():
+            matrix[str(row["name"])][date_label] = float(row["score"])
+    result = pd.DataFrame.from_dict(matrix, orient="index").dropna(how="all")
+    return result.loc[:, list(reversed(result.columns))]
+
+
+def build_rotation_timeline(snapshot: dict[str, object], horizon: str = "5D", sessions: int = 10) -> list[dict[str, object]]:
+    persistence = build_rotation_persistence(snapshot, horizon, sessions)
+    output = []
+    for date_label in persistence.columns:
+        leaders = persistence[date_label].dropna().sort_values(ascending=False).head(2)
+        if leaders.empty:
+            continue
         output.append(
             {
-                "date": pd.Timestamp(stamp).strftime("%b %d"),
-                "leader": " + ".join(leaders["name"].tolist()),
-                "score": to_float(leaders.iloc[0]["score"]) or 0.0,
+                "date": date_label,
+                "leader": " + ".join(leaders.index.tolist()),
+                "score": to_float(leaders.iloc[0]) or 0.0,
             }
         )
-    return list(reversed(output))
+    return output
 
 
 def generate_sector_research_insights(
@@ -691,6 +766,7 @@ def generate_sector_research_insights(
     regime: dict[str, object],
     themes: pd.DataFrame,
     timeline: list[dict[str, object]],
+    horizon: str = "5D",
 ) -> list[str]:
     if sectors is None or sectors.empty:
         return ["Sector data is unavailable; refresh when the market data provider is reachable."]
@@ -699,7 +775,7 @@ def generate_sector_research_insights(
     insights = [
         f'{leader["name"]} leads capital rotation with a {float(leader["flow_score"]):+.0f} flow score and {float(leader["breadth"] or 0):.0f}% proxy breadth.',
         f'{laggard["name"]} is the weakest group at {float(laggard["flow_score"]):+.0f}, indicating relative capital pressure.',
-        f'Market regime is {regime.get("regime", "Neutral").lower()} and the five-day risk trend is {str(regime.get("trend", "Stable")).lower()}.',
+        f'Market regime is {regime.get("regime", "Neutral").lower()} and the {horizon} risk trend is {str(regime.get("trend", "Stable")).lower()}.',
     ]
     if themes is not None and not themes.empty:
         theme = themes.iloc[0]
@@ -711,6 +787,108 @@ def generate_sector_research_insights(
         if recent and len(set(recent)) == 1:
             insights.append(f"{recent[0]} has held daily leadership for four consecutive tracked sessions.")
     return insights[:5]
+
+
+def calculate_rotation_conviction(sectors: pd.DataFrame) -> dict[str, object]:
+    if sectors is None or sectors.empty:
+        return {"score": 0.0, "label": "Noise", "components": {}}
+    breadth = pd.to_numeric(sectors["breadth"], errors="coerce").dropna()
+    relative_volumes = pd.to_numeric(sectors["relative_volume"], errors="coerce").dropna()
+    flow_scores = pd.to_numeric(sectors["flow_score"], errors="coerce").dropna()
+    persistence_scores = pd.to_numeric(sectors["persistence"], errors="coerce").dropna()
+    breadth_confirmation = min(100.0, float((breadth - 50).abs().mean() * 2)) if not breadth.empty else 0.0
+    relative_volume = min(100.0, max(0.0, float((relative_volumes.mean() - 0.75) * 100))) if not relative_volumes.empty else 0.0
+    dispersion = min(100.0, float(flow_scores.std(ddof=0) * 1.8)) if not flow_scores.empty else 0.0
+    persistence = min(100.0, float((persistence_scores - 50).abs().mean() * 2)) if not persistence_scores.empty else 0.0
+    positive = int((sectors["flow_score"] > 20).sum())
+    negative = int((sectors["flow_score"] < -20).sum())
+    confirmation = max(positive, negative) / max(1, len(sectors)) * 100
+    top_bottom_gap = min(100.0, float((flow_scores.max() - flow_scores.min()) / 2)) if not flow_scores.empty else 0.0
+    components = {
+        "Breadth confirmation": breadth_confirmation,
+        "Relative volume": relative_volume,
+        "Leadership dispersion": dispersion,
+        "Persistence": persistence,
+        "Direction confirmation": confirmation,
+        "Top / bottom gap": top_bottom_gap,
+    }
+    score = (
+        breadth_confirmation * 0.20
+        + relative_volume * 0.15
+        + dispersion * 0.20
+        + persistence * 0.15
+        + confirmation * 0.15
+        + top_bottom_gap * 0.15
+    )
+    label = "Very strong rotation" if score >= 80 else "Strong rotation" if score >= 60 else "Mixed rotation" if score >= 40 else "Weak signal" if score >= 20 else "Noise"
+    return {"score": max(0.0, min(100.0, score)), "label": label, "components": components}
+
+
+def generate_sector_research_brief(
+    sectors: pd.DataFrame,
+    regime: dict[str, object],
+    conviction: dict[str, object],
+    horizon: str = "5D",
+) -> dict[str, object]:
+    if sectors is None or sectors.empty:
+        return {
+            "regime": "Unavailable",
+            "leader": "N/A",
+            "laggard": "N/A",
+            "direction": "Insufficient live data",
+            "conviction": conviction,
+            "takeaway": "Live sector rotation data is unavailable.",
+        }
+    leader = sectors.iloc[0]
+    laggard = sectors.iloc[-1]
+    direction = f'{laggard["name"]} to {leader["name"]}'
+    risk_phrase = (
+        "Risk appetite is improving."
+        if "risk-on" in str(regime.get("regime", "")).casefold()
+        else "Risk appetite is deteriorating."
+        if "risk-off" in str(regime.get("regime", "")).casefold()
+        else "Risk appetite is balanced."
+    )
+    return {
+        "regime": regime.get("regime", "Neutral"),
+        "leader": leader["name"],
+        "laggard": laggard["name"],
+        "direction": direction,
+        "conviction": conviction,
+        "takeaway": (
+            f'Capital is rotating from {laggard["name"]} into {leader["name"]} over the selected {horizon} horizon. '
+            f'{risk_phrase} Rotation conviction is {str(conviction.get("label", "noise")).lower()}.'
+        ),
+    }
+
+
+def generate_what_this_means(sectors: pd.DataFrame, regime: dict[str, object], themes: pd.DataFrame) -> dict[str, object]:
+    if sectors is None or sectors.empty:
+        return {"favored": [], "pressured": [], "watchlist_impact": "Wait for a complete market refresh.", "risk_tone": "Unavailable"}
+    favored = sectors.head(3)["name"].tolist()
+    pressured = sectors.tail(3).sort_values("flow_score")["name"].tolist()
+    if themes is not None and not themes.empty and to_float(themes.iloc[0].get("flow_score")) and float(themes.iloc[0]["flow_score"]) > 20:
+        favored.append(str(themes.iloc[0]["name"]))
+    risk_tone = str(regime.get("regime") or "Neutral")
+    return {
+        "favored": favored[:4],
+        "pressured": pressured[:4],
+        "watchlist_impact": f'Favor names confirming strength in {favored[0]}; review exposure tied to {pressured[0]}.',
+        "risk_tone": risk_tone,
+    }
+
+
+def generate_breadth_interpretation(breadth: dict[str, object], sectors: pd.DataFrame) -> str:
+    health = str(breadth.get("health") or "Unavailable").casefold()
+    leader = str(sectors.iloc[0]["name"]) if sectors is not None and not sectors.empty else "leading groups"
+    laggard = str(sectors.iloc[-1]["name"]) if sectors is not None and not sectors.empty else "weaker groups"
+    if health == "healthy":
+        return f"Breadth is healthy: participation supports leadership in {leader}."
+    if health == "deteriorating":
+        return f"Breadth is deteriorating: strength is narrow and {laggard} remains under pressure."
+    if health == "mixed":
+        return f"Breadth is mixed: {leader} is participating, but weakness in {laggard} limits confirmation."
+    return "Breadth data is incomplete; treat the rotation read cautiously."
 
 
 def generate_rotation_summary(sectors: pd.DataFrame, regime: dict[str, object], status: dict[str, object]) -> dict[str, object]:
@@ -740,17 +918,22 @@ def generate_rotation_summary(sectors: pd.DataFrame, regime: dict[str, object], 
     }
 
 
-def fetch_sector_data(snapshot: dict[str, object]) -> pd.DataFrame:
-    return calculate_sector_leadership_scores(calculate_flow_scores(snapshot), snapshot)
+def fetch_sector_data(snapshot: dict[str, object], horizon: str = "5D") -> pd.DataFrame:
+    return calculate_sector_leadership_scores(calculate_flow_scores(snapshot, horizon), snapshot, horizon)
 
 
-def build_sector_research_packet(snapshot: dict[str, object]) -> dict[str, object]:
-    sectors = fetch_sector_data(snapshot)
+def build_sector_research_packet(snapshot: dict[str, object], horizon: str = "5D") -> dict[str, object]:
+    sectors = fetch_sector_data(snapshot, horizon)
     breadth = calculate_market_breadth(snapshot)
-    regime = calculate_market_regime(snapshot, sectors)
-    themes = identify_emerging_themes(snapshot)
-    beneficiaries = identify_beneficiaries(sectors, snapshot)
-    timeline = build_rotation_timeline(snapshot)
+    regime = calculate_market_regime(snapshot, sectors, horizon)
+    themes = identify_emerging_themes(snapshot, horizon)
+    beneficiaries = identify_beneficiaries(sectors, snapshot, horizon)
+    timeline = build_rotation_timeline(snapshot, horizon)
+    persistence = build_rotation_persistence(snapshot, horizon)
+    conviction = calculate_rotation_conviction(sectors)
+    brief = generate_sector_research_brief(sectors, regime, conviction, horizon)
+    what_this_means = generate_what_this_means(sectors, regime, themes)
+    breadth["interpretation"] = generate_breadth_interpretation(breadth, sectors)
     status = snapshot.get("status", {})
     completeness = to_float(status.get("completeness")) or 0.0
     breadth_available = breadth.get("tracked", 0) > 0
@@ -764,7 +947,12 @@ def build_sector_research_packet(snapshot: dict[str, object]) -> dict[str, objec
         "themes": themes,
         "beneficiaries": beneficiaries,
         "timeline": timeline,
-        "insights": generate_sector_research_insights(sectors, regime, themes, timeline),
+        "persistence": persistence,
+        "conviction": conviction,
+        "brief": brief,
+        "what_this_means": what_this_means,
+        "horizon": horizon,
+        "insights": generate_sector_research_insights(sectors, regime, themes, timeline, horizon),
         "summary": generate_rotation_summary(sectors, regime, status),
         "health": health,
     }

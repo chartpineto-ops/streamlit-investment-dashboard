@@ -606,7 +606,7 @@ def _sector_flow_map(sectors: pd.DataFrame) -> go.Figure | None:
         )
     )
     figure.update_layout(
-        height=330,
+        height=185,
         margin={"l": 15, "r": 15, "t": 10, "b": 10},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -615,74 +615,145 @@ def _sector_flow_map(sectors: pd.DataFrame) -> go.Figure | None:
     return figure
 
 
-def _sector_research_header(packet: dict[str, object]) -> str:
-    regime = packet.get("regime", {})
-    sectors = packet.get("sectors", pd.DataFrame())
-    health = packet.get("health", {})
-    leader = sectors.iloc[0] if isinstance(sectors, pd.DataFrame) and not sectors.empty else {}
-    laggard = sectors.iloc[-1] if isinstance(sectors, pd.DataFrame) and not sectors.empty else {}
-    risk_score = to_float(regime.get("risk_score")) or 0.0
+def _sector_brief_markup(packet: dict[str, object]) -> str:
+    brief = packet.get("brief", {})
+    conviction = packet.get("conviction", {})
+    insights = packet.get("insights", [])
+    insight_rows = "".join(f"<li>{escape(str(item))}</li>" for item in insights[:3])
+    score = to_float(conviction.get("score")) or 0.0
     return f"""
-    <div class="pt-sector-hero">
-      <div>
-        <span class="pt-mini-label">Market Regime</span>
-        <strong class="{_sector_flow_tone(risk_score)}">{escape(str(regime.get("regime") or "Unavailable"))}</strong>
-        <p>{escape(str(regime.get("explanation") or "Waiting for live market data."))}</p>
+    <div class="pt-sector-brief">
+      <div class="pt-sector-brief-main">
+        <span class="pt-mini-label">Sector Research Brief</span>
+        <p>{escape(str(brief.get("takeaway") or "Waiting for live market data."))}</p>
+        <ul>{insight_rows}</ul>
       </div>
-      <div class="pt-sector-hero-stats">
-        <div><span>Risk Score</span><b class="{_sector_flow_tone(risk_score)}">{risk_score:+.0f}</b></div>
-        <div><span>Previous Regime</span><b>{escape(str(regime.get("previous_regime") or "N/A"))}</b></div>
-        <div><span>5D Trend</span><b>{escape(str(regime.get("trend") or "N/A"))}</b></div>
-        <div><span>Leading Group</span><b class="good">{escape(str(leader.get("name", "N/A")))}</b></div>
-        <div><span>Weakest Group</span><b class="bad">{escape(str(laggard.get("name", "N/A")))}</b></div>
-        <div><span>Confidence</span><b class="warn">{escape(str(health.get("confidence") or "Low"))}</b></div>
+      <div class="pt-sector-brief-stats">
+        <div><span>Regime</span><b>{escape(str(brief.get("regime") or "N/A"))}</b></div>
+        <div><span>Leader</span><b class="good">{escape(str(brief.get("leader") or "N/A"))}</b></div>
+        <div><span>Weakest</span><b class="bad">{escape(str(brief.get("laggard") or "N/A"))}</b></div>
+        <div><span>Rotation</span><b>{escape(str(brief.get("direction") or "N/A"))}</b></div>
+      </div>
+      <div class="pt-sector-conviction">
+        <span>Rotation Conviction</span>
+        <strong class="{_sector_flow_tone(score - 50)}">{score:.0f}</strong>
+        <b>{escape(str(conviction.get("label") or "Noise"))}</b>
+        <div><i style="width:{max(0, min(100, score)):.0f}%"></i></div>
       </div>
     </div>
+    """
+
+
+def _what_this_means_markup(packet: dict[str, object]) -> str:
+    meaning = packet.get("what_this_means", {})
+    favored = "".join(f"<li>{escape(str(item))}</li>" for item in meaning.get("favored", []))
+    pressured = "".join(f"<li>{escape(str(item))}</li>" for item in meaning.get("pressured", []))
+    return f"""
+    <div class="pt-sector-meaning">
+      <div><span class="good">Favored</span><ul>{favored}</ul></div>
+      <div><span class="bad">Pressured</span><ul>{pressured}</ul></div>
+      <div><span>Watchlist Impact</span><p>{escape(str(meaning.get("watchlist_impact") or "N/A"))}</p></div>
+      <div><span>Risk Tone</span><strong>{escape(str(meaning.get("risk_tone") or "N/A"))}</strong></div>
+    </div>
+    """
+
+
+def _heat_color(score: object) -> str:
+    value = max(-100.0, min(100.0, to_float(score) or 0.0))
+    strength = 0.12 + abs(value) / 100 * 0.58
+    if value > 10:
+        return f"rgba(49,209,124,{strength:.2f})"
+    if value < -10:
+        return f"rgba(255,92,112,{strength:.2f})"
+    return "rgba(122,152,184,0.16)"
+
+
+def render_sector_flow_heatmap(sectors: pd.DataFrame, themes: pd.DataFrame, horizon: str) -> str:
+    items: list[dict[str, object]] = []
+    if sectors is not None and not sectors.empty:
+        items.extend({**row.to_dict(), "kind": "Sector"} for _, row in sectors.iterrows())
+    if themes is not None and not themes.empty:
+        items.extend({**row.to_dict(), "symbol": "Theme", "kind": "Theme"} for _, row in themes.iterrows())
+    if not items:
+        return '<p class="pt-placeholder">Flow heatmap is unavailable.</p>'
+    tiles = ""
+    for row in items:
+        score = to_float(row.get("flow_score")) or 0.0
+        tiles += f"""
+        <div class="pt-sector-heat-tile" style="background:{_heat_color(score)}">
+          <span>{escape(str(row.get("kind")))}</span>
+          <strong>{escape(str(row.get("name")))}</strong>
+          <em>{escape(str(row.get("symbol") or "Theme"))}</em>
+          <b>{score:+.0f}</b>
+          <small>{escape(horizon)} {fmt_daily_move(row.get("period_return"))} | Rel Vol {fmt_multiple(row.get("relative_volume"))}</small>
+        </div>
+        """
+    return f'<div class="pt-sector-flow-heatmap">{tiles}</div>'
+
+
+def render_compact_rotation_flow_map(sectors: pd.DataFrame) -> go.Figure | None:
+    return _sector_flow_map(sectors)
+
+
+def _score_bar(value: object, signed: bool = False) -> str:
+    number = to_float(value) or 0.0
+    width = max(2.0, min(100.0, abs(number)))
+    tone = _sector_flow_tone(number) if signed else "good" if number >= 70 else "warn" if number >= 50 else "bad"
+    return f'<div class="pt-sector-score-bar"><i class="{tone}" style="width:{width:.0f}%"></i><b class="{tone}">{number:+.0f}</b></div>'
+
+
+def render_leadership_score_bars(ranked: pd.DataFrame, horizon: str) -> str:
+    if ranked is None or ranked.empty:
+        return '<p class="pt-placeholder">Sector rankings are unavailable.</p>'
+    rows = ""
+    for index, row in ranked.iterrows():
+        rows += f"""
+        <tr>
+          <td>{index + 1}</td><td><strong>{escape(str(row.get("name")))}</strong><small>{escape(str(row.get("symbol")))}</small></td>
+          <td>{_score_bar(row.get("flow_score"), True)}</td><td>{_score_bar(row.get("leadership_score"))}</td>
+          <td class="{_sector_flow_tone(row.get("period_return"))}">{fmt_daily_move(row.get("period_return"))}</td>
+          <td>{fmt_multiple(row.get("relative_volume"))}</td><td>{fmt_percent(row.get("breadth"), 0)}</td>
+          <td>{escape(str(row.get("trend")))}</td><td>{escape(str(row.get("leadership_label")))}</td>
+        </tr>
+        """
+    return f"""
+    <div class="pt-sector-ranking-wrap"><table class="pt-sector-ranking">
+      <thead><tr><th>#</th><th>Sector / ETF</th><th>Flow Score</th><th>Leadership</th><th>{escape(horizon)}</th><th>Rel Vol</th><th>Breadth</th><th>Trend</th><th>State</th></tr></thead>
+      <tbody>{rows}</tbody>
+    </table></div>
     """
 
 
 def _sector_big_money_markup(sectors: pd.DataFrame) -> str:
     if sectors is None or sectors.empty:
         return '<p class="pt-placeholder">Flow classifications are unavailable.</p>'
-    rows = ""
-    for _, row in sectors.head(8).iterrows():
+    inflows = ""
+    outflows = ""
+    for _, row in sectors.head(4).iterrows():
         score = to_float(row.get("flow_score")) or 0.0
-        if score >= 60:
-            marker = "&#9650;&#9650;&#9650;&#9650;&#9650;"
-        elif score >= 20:
-            marker = "&#9650;&#9650;&#9650;"
-        elif score <= -60:
-            marker = "&#9660;&#9660;&#9660;&#9660;&#9660;"
-        elif score <= -20:
-            marker = "&#9660;&#9660;&#9660;"
-        else:
-            marker = "&#8212;"
-        rows += f"""
-        <div class="pt-sector-money-row">
-          <span>{escape(str(row.get("name")))}</span>
-          <b class="{_sector_flow_tone(score)}">{marker}</b>
-          <em>{escape(str(row.get("flow_label")))}</em>
-        </div>
-        """
-    return rows
+        count = 5 if score >= 60 else 4 if score >= 40 else 3 if score >= 20 else 1
+        inflows += f'<div><span>{escape(str(row.get("name")))}</span><b class="good">{"&#9650;" * count}</b></div>'
+    for _, row in sectors.tail(4).sort_values("flow_score").iterrows():
+        score = abs(to_float(row.get("flow_score")) or 0.0)
+        count = 5 if score >= 60 else 4 if score >= 40 else 3 if score >= 20 else 1
+        outflows += f'<div><span>{escape(str(row.get("name")))}</span><b class="bad">{"&#9660;" * count}</b></div>'
+    return f'<div class="pt-sector-money-columns"><section><strong class="good">Strong Inflows</strong>{inflows}</section><section><strong class="bad">Strong Outflows</strong>{outflows}</section></div>'
 
 
 def _sector_breadth_markup(breadth: dict[str, object]) -> str:
     health = str(breadth.get("health") or "Unavailable")
     tone = "good" if health == "Healthy" else "bad" if health == "Deteriorating" else "warn"
     values = [
-        ("Above 20D MA", fmt_percent(breadth.get("above_20d"), 0)),
         ("Above 50D MA", fmt_percent(breadth.get("above_50d"), 0)),
-        ("Above 200D MA", fmt_percent(breadth.get("above_200d"), 0)),
-        ("Advancers", str(breadth.get("advancers", 0))),
-        ("Decliners", str(breadth.get("decliners", 0))),
+        ("Advancers / Decliners", f'{breadth.get("advancers", 0)} / {breadth.get("decliners", 0)}'),
         ("New Highs / Lows", f'{breadth.get("new_highs", 0)} / {breadth.get("new_lows", 0)}'),
     ]
     cards = "".join(f'<div><span>{escape(label)}</span><b>{escape(value)}</b></div>' for label, value in values)
-    return f'<div class="pt-sector-breadth-head"><b class="{tone}">{escape(health)}</b><span>Tracked-stock proxy breadth</span></div><div class="pt-sector-mini-grid">{cards}</div>'
+    interpretation = escape(str(breadth.get("interpretation") or ""))
+    return f'<div class="pt-sector-breadth-head"><b class="{tone}">{escape(health)}</b><span>Tracked-stock proxy breadth</span></div><p class="pt-sector-breadth-copy">{interpretation}</p><div class="pt-sector-mini-grid">{cards}</div>'
 
 
-def _sector_themes_markup(themes: pd.DataFrame) -> str:
+def _sector_themes_markup(themes: pd.DataFrame, horizon: str) -> str:
     if themes is None or themes.empty:
         return '<p class="pt-placeholder">Theme baskets are unavailable.</p>'
     cards = ""
@@ -691,7 +762,7 @@ def _sector_themes_markup(themes: pd.DataFrame) -> str:
         cards += f"""
         <div class="pt-sector-theme-card">
           <div><strong>{escape(str(row.get("name")))}</strong><b class="{_sector_flow_tone(score)}">{score:+.0f}</b></div>
-          <span>1D {fmt_daily_move(row.get("return_1d"))} | 5D {fmt_daily_move(row.get("return_5d"))} | Rel Vol {fmt_multiple(row.get("relative_volume"))}</span>
+          <span>{escape(horizon)} {fmt_daily_move(row.get("period_return"))} | Rel Vol {fmt_multiple(row.get("relative_volume"))}</span>
           <p>{escape(str(row.get("momentum")))} | Top movers: {escape(str(row.get("top_movers") or "N/A"))}</p>
           <em>Confidence {fmt_percent(row.get("confidence"), 0)}</em>
         </div>
@@ -699,18 +770,27 @@ def _sector_themes_markup(themes: pd.DataFrame) -> str:
     return f'<div class="pt-sector-theme-grid">{cards}</div>'
 
 
-def _sector_beneficiaries_markup(groups: list[dict[str, object]]) -> str:
+def render_beneficiary_cards_enhanced(groups: list[dict[str, object]], horizon: str) -> str:
     if not groups:
         return '<p class="pt-placeholder">Beneficiary confirmation is unavailable.</p>'
     cards = ""
     for group in groups:
         rows = ""
         for item in group.get("beneficiaries", []):
+            logo_url = str(item.get("logo_url") or "")
+            initials = escape(str(item.get("fallback_initials") or item.get("ticker") or "PT"))
+            logo = f'<img src="{escape(logo_url)}" alt="" />' if logo_url else f"<span>{initials}</span>"
             rows += f"""
             <div class="pt-sector-beneficiary-row">
-              <b>{escape(str(item.get("ticker")))}</b>
-              <span>{escape(str(item.get("company")))}</span>
-              <em class="{_sector_flow_tone(item.get("return_1d"))}">{fmt_daily_move(item.get("return_1d"))}</em>
+              <div class="pt-sector-beneficiary-logo">{logo}</div>
+              <div class="pt-sector-beneficiary-company"><b>{escape(str(item.get("ticker")))}</b><span>{escape(str(item.get("company")))}</span></div>
+              <em class="{_sector_flow_tone(item.get("period_return"))}">{fmt_daily_move(item.get("period_return"))}</em>
+              <div class="pt-sector-beneficiary-metrics">
+                <span>{escape(horizon)} return <b>{fmt_daily_move(item.get("period_return"))}</b></span>
+                <span>vs SPY <b class="{_sector_flow_tone(item.get("relative_spy"))}">{fmt_daily_move(item.get("relative_spy"))}</b></span>
+                <span>vs sector <b class="{_sector_flow_tone(item.get("relative_sector"))}">{fmt_daily_move(item.get("relative_sector"))}</b></span>
+                <span>Rel Vol <b>{fmt_multiple(item.get("relative_volume"))}</b></span>
+              </div>
               <small>{escape(str(item.get("reason")))} | {fmt_percent(item.get("confidence"), 0)} confidence</small>
             </div>
             """
@@ -724,6 +804,37 @@ def _sector_beneficiaries_markup(groups: list[dict[str, object]]) -> str:
         </div>
         """
     return f'<div class="pt-sector-beneficiary-grid">{cards}</div>'
+
+
+def render_rotation_persistence_heatmap(persistence: pd.DataFrame) -> go.Figure | None:
+    if persistence is None or persistence.empty:
+        return None
+    values = persistence.fillna(0).round(0)
+    figure = go.Figure(
+        go.Heatmap(
+            z=values.values,
+            x=values.columns,
+            y=values.index,
+            zmin=-100,
+            zmax=100,
+            zmid=0,
+            colorscale=[[0, "#9b2638"], [0.5, "#273548"], [1, "#168a51"]],
+            text=values.values,
+            texttemplate="%{text:+.0f}",
+            hovertemplate="%{y}<br>%{x}: %{z:+.0f}<extra></extra>",
+            colorbar={"title": "Score", "thickness": 10, "len": 0.72},
+        )
+    )
+    figure.update_layout(
+        height=365,
+        margin={"l": 10, "r": 10, "t": 12, "b": 10},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef4fb", "size": 11},
+        xaxis={"side": "top", "fixedrange": True},
+        yaxis={"autorange": "reversed", "fixedrange": True},
+    )
+    return figure
 
 
 def _sector_timeline_markup(timeline: list[dict[str, object]]) -> str:
@@ -769,20 +880,34 @@ def _sector_health_markup(health: dict[str, object]) -> str:
 
 
 def render_sector_research(snapshot: dict[str, object]) -> None:
+    title_col, horizon_col = st.columns([0.78, 0.22], vertical_alignment="bottom")
+    with title_col:
+        html(
+            """
+            <div class="pt-sector-title">
+              <div><h1>Sector Research</h1><p>Capital rotation, leadership, breadth, and theme intelligence from the shared live market snapshot.</p></div>
+            </div>
+            """
+        )
+    with horizon_col:
+        horizon = st.segmented_control(
+            "Time Horizon",
+            ["1D", "5D", "1M", "3M"],
+            default="5D",
+            key="sector_research_horizon",
+            label_visibility="collapsed",
+        ) or "5D"
     with st.spinner("Calculating live sector rotation..."):
-        packet = build_sector_research_packet(snapshot)
+        packet = build_sector_research_packet(snapshot, horizon)
     sectors = packet.get("sectors", pd.DataFrame())
-    html(
-        """
-        <div class="pt-sector-title">
-          <div><h1>Sector Research</h1><p>Institutional-style capital rotation, leadership, breadth, and theme intelligence.</p></div>
-        </div>
-        """
-    )
-    html(_sector_research_header(packet))
+    themes = packet.get("themes", pd.DataFrame())
 
-    html(section("Capital Rotation Flow Map", "Where capital is leaving and where it is going", ""))
-    flow_figure = _sector_flow_map(sectors)
+    html(_sector_brief_markup(packet))
+    html(section("What This Means", "Actionable implications from the current rotation read", _what_this_means_markup(packet)))
+    html(section("Sector Flow Heatmap", f"Selected {horizon} return, flow score, and relative-volume confirmation", render_sector_flow_heatmap(sectors, themes, horizon)))
+
+    html(section("Capital Rotation Flow Map", "Compact view of where capital is leaving and where it is going", ""))
+    flow_figure = render_compact_rotation_flow_map(sectors)
     if flow_figure is None:
         html('<p class="pt-placeholder">A two-sided flow map requires both positive and negative live sector scores.</p>')
     else:
@@ -791,47 +916,34 @@ def render_sector_research(snapshot: dict[str, object]) -> None:
     sort_options = {
         "Flow Score": "flow_score",
         "Leadership Score": "leadership_score",
-        "1D Performance": "return_1d",
-        "5D Performance": "return_5d",
+        f"{horizon} Performance": "period_return",
         "Relative Volume": "relative_volume",
         "Breadth": "breadth",
     }
     sort_label = st.selectbox("Sort Sector Leadership", list(sort_options), key="sector_research_sort")
-    html(section("Sector Leadership Rankings", "Dynamic ranking from the latest shared market snapshot", ""))
     if isinstance(sectors, pd.DataFrame) and not sectors.empty:
         ranked = sectors.sort_values(sort_options[sort_label], ascending=False).reset_index(drop=True)
-        display = pd.DataFrame(
-            {
-                "Rank": range(1, len(ranked) + 1),
-                "Sector / Theme": ranked["name"],
-                "ETF": ranked["symbol"],
-                "Flow Score": ranked["flow_score"].round(1),
-                "Leadership": ranked["leadership_score"].round(1),
-                "Leadership State": ranked["leadership_label"],
-                "1D %": ranked["return_1d"].round(2),
-                "5D %": ranked["return_5d"].round(2),
-                "Rel Vol": ranked["relative_volume"].round(2),
-                "Breadth %": ranked["breadth"].round(0),
-                "Trend": ranked["trend"],
-                "1D Flow Proxy": ranked["estimated_flow_proxy"].round(0),
-            }
-        )
-        st.dataframe(display, hide_index=True, use_container_width=True, height=455)
+        ranking_markup = render_leadership_score_bars(ranked, horizon)
     else:
-        html('<p class="pt-placeholder">Sector rankings are unavailable from the current provider response.</p>')
+        ranking_markup = '<p class="pt-placeholder">Sector rankings are unavailable from the current provider response.</p>'
+    html(section("Sector Leadership Rankings", "Visual ranking from the latest shared market snapshot", ranking_markup))
 
-    left, right = st.columns([0.46, 0.54])
+    html(section("Emerging Themes", "Accelerating configurable baskets ranked by selected-horizon flow", _sector_themes_markup(themes, horizon)))
+    html(section("Who Benefits If This Continues?", "Stock-level relative strength and volume confirmation inside the strongest groups", render_beneficiary_cards_enhanced(packet.get("beneficiaries", []), horizon)))
+
+    left, right = st.columns([0.5, 0.5])
     with left:
-        html(section("Big Money Moves", "Flow score, relative volume, breadth, and persistence", _sector_big_money_markup(sectors)))
+        html(section("Big Money Moves", "Strongest institutional-style flow classifications", _sector_big_money_markup(sectors)))
     with right:
-        html(section("Market Breadth", "ETF constituent proxy estimate", _sector_breadth_markup(packet.get("breadth", {}))))
+        html(section("Market Breadth", "Compact participation and confirmation read", _sector_breadth_markup(packet.get("breadth", {}))))
 
-    html(section("Emerging Themes", "Configurable ticker baskets ranked by accelerating flow", _sector_themes_markup(packet.get("themes", pd.DataFrame()))))
-    html(section("Who Benefits If This Continues?", "Stock-level confirmation inside the strongest groups", _sector_beneficiaries_markup(packet.get("beneficiaries", []))))
-    html(section("Rotation Timeline", "Daily leadership across the latest tracked sessions", _sector_timeline_markup(packet.get("timeline", []))))
-    insight_rows = "".join(f"<li>{escape(str(item))}</li>" for item in packet.get("insights", []))
-    html(section("Rotation Intelligence", "Deterministic observations generated from current calculated data", f'<ul class="pt-sector-insights">{insight_rows}</ul>'))
-    html(section("Bottom Line", "Current capital-rotation read", _sector_summary_markup(packet)))
+    html(section("Rotation Persistence", f"Leadership persistence across recent sessions using the selected {horizon} horizon", ""))
+    persistence_figure = render_rotation_persistence_heatmap(packet.get("persistence", pd.DataFrame()))
+    if persistence_figure is None:
+        html('<p class="pt-placeholder">Historical persistence is unavailable from the current provider response.</p>')
+    else:
+        st.plotly_chart(persistence_figure, use_container_width=True, config={"displayModeBar": False})
+
     html(section("Data Health / Confidence", "Shared live market snapshot status", _sector_health_markup(packet.get("health", {}))))
 
 
