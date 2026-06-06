@@ -1,0 +1,770 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Iterable
+
+import pandas as pd
+import streamlit as st
+import yfinance as yf
+
+from data.market_data import get_market_session_et
+from utils.formatting import now_et, to_float
+
+
+SECTOR_UNIVERSE = {
+    "XLK": "Technology",
+    "XLF": "Financials",
+    "XLV": "Healthcare",
+    "XLI": "Industrials",
+    "XLE": "Energy",
+    "XLU": "Utilities",
+    "XLY": "Consumer Discretionary",
+    "XLP": "Consumer Staples",
+    "XLC": "Communication Services",
+    "XLB": "Materials",
+    "SMH": "Semiconductors",
+    "IGV": "Software",
+}
+
+SECTOR_BASKETS = {
+    "XLK": ["AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM"],
+    "XLF": ["JPM", "BAC", "WFC", "GS", "MS", "BLK"],
+    "XLV": ["LLY", "UNH", "JNJ", "ABBV", "TMO", "DHR"],
+    "XLI": ["GE", "CAT", "ETN", "RTX", "PH", "PWR"],
+    "XLE": ["XOM", "CVX", "COP", "SLB", "EOG", "MPC"],
+    "XLU": ["NEE", "SO", "DUK", "AEP", "XEL", "CEG"],
+    "XLY": ["AMZN", "TSLA", "HD", "MCD", "LOW", "BKNG"],
+    "XLP": ["WMT", "COST", "PG", "KO", "PEP", "PM"],
+    "XLC": ["META", "GOOGL", "NFLX", "DIS", "T", "VZ"],
+    "XLB": ["LIN", "FCX", "NUE", "SHW", "DD", "APD"],
+    "SMH": ["NVDA", "AVGO", "AMD", "MRVL", "MU", "TSM"],
+    "IGV": ["MSFT", "CRM", "NOW", "ADBE", "SNOW", "ORCL"],
+}
+
+THEME_BASKETS = {
+    "AI Infrastructure": ["NVDA", "AVGO", "MRVL", "ANET", "VRT", "CRWV"],
+    "Power & Grid": ["CEG", "VST", "PWR", "ETN", "GEV", "NRG"],
+    "Nuclear": ["CEG", "VST", "CCJ", "BWXT", "SMR", "OKLO"],
+    "Defense": ["LMT", "RTX", "NOC", "GD", "AVAV", "KTOS"],
+    "Rare Earths": ["MP", "UUUU", "REMX", "LAC", "ALB", "FCX"],
+    "Cybersecurity": ["CRWD", "PANW", "FTNT", "ZS", "OKTA", "CYBR"],
+    "Quantum": ["IONQ", "RGTI", "QBTS", "QUBT", "IBM", "GOOGL"],
+    "Robotics": ["ISRG", "TER", "ROK", "ABB", "SYM", "PATH"],
+    "Cloud": ["MSFT", "AMZN", "GOOGL", "ORCL", "CRM", "NOW"],
+    "Data Centers": ["VRT", "ANET", "EQIX", "DLR", "MRVL", "AVGO"],
+}
+
+BENEFICIARY_BASKETS = {SECTOR_UNIVERSE[symbol]: tickers for symbol, tickers in SECTOR_BASKETS.items()}
+
+COMPANY_NAMES = {
+    "AAPL": "Apple",
+    "MSFT": "Microsoft",
+    "NVDA": "NVIDIA",
+    "AVGO": "Broadcom",
+    "ORCL": "Oracle",
+    "CRM": "Salesforce",
+    "JPM": "JPMorgan Chase",
+    "BAC": "Bank of America",
+    "WFC": "Wells Fargo",
+    "GS": "Goldman Sachs",
+    "MS": "Morgan Stanley",
+    "BLK": "BlackRock",
+    "LLY": "Eli Lilly",
+    "UNH": "UnitedHealth",
+    "ABBV": "AbbVie",
+    "TMO": "Thermo Fisher",
+    "DHR": "Danaher",
+    "GE": "GE Aerospace",
+    "CAT": "Caterpillar",
+    "ETN": "Eaton",
+    "RTX": "RTX",
+    "PH": "Parker-Hannifin",
+    "PWR": "Quanta Services",
+    "XOM": "Exxon Mobil",
+    "CVX": "Chevron",
+    "COP": "ConocoPhillips",
+    "SLB": "SLB",
+    "EOG": "EOG Resources",
+    "MPC": "Marathon Petroleum",
+    "NEE": "NextEra Energy",
+    "SO": "Southern Company",
+    "DUK": "Duke Energy",
+    "AEP": "American Electric Power",
+    "XEL": "Xcel Energy",
+    "CEG": "Constellation Energy",
+    "AMZN": "Amazon",
+    "TSLA": "Tesla",
+    "HD": "Home Depot",
+    "MCD": "McDonald's",
+    "LOW": "Lowe's",
+    "BKNG": "Booking Holdings",
+    "WMT": "Walmart",
+    "COST": "Costco",
+    "PG": "Procter & Gamble",
+    "KO": "Coca-Cola",
+    "PEP": "PepsiCo",
+    "PM": "Philip Morris",
+    "META": "Meta Platforms",
+    "GOOGL": "Alphabet",
+    "NFLX": "Netflix",
+    "DIS": "Disney",
+    "T": "AT&T",
+    "VZ": "Verizon",
+    "LIN": "Linde",
+    "FCX": "Freeport-McMoRan",
+    "NUE": "Nucor",
+    "SHW": "Sherwin-Williams",
+    "DD": "DuPont",
+    "APD": "Air Products",
+    "AMD": "Advanced Micro Devices",
+    "MRVL": "Marvell Technology",
+    "MU": "Micron",
+    "TSM": "Taiwan Semiconductor",
+    "NOW": "ServiceNow",
+    "ADBE": "Adobe",
+    "SNOW": "Snowflake",
+}
+
+MARQUEE_ASSETS = {
+    "SPY": ("SPY", "equity"),
+    "QQQ": ("QQQ", "equity"),
+    "DIA": ("DIA", "equity"),
+    "IWM": ("IWM", "equity"),
+    "^VIX": ("VIX", "index"),
+    "^TNX": ("10Y", "yield"),
+    "BTC-USD": ("BTC", "crypto"),
+    "ETH-USD": ("ETH", "crypto"),
+    "GC=F": ("Gold", "commodity"),
+    "SI=F": ("Silver", "commodity"),
+    "HG=F": ("Copper", "commodity"),
+    "CL=F": ("WTI", "commodity"),
+    "DX-Y.NYB": ("DXY", "index"),
+    "^MOVE": ("MOVE", "index"),
+}
+
+
+@dataclass(frozen=True)
+class GroupMetric:
+    symbol: str
+    name: str
+    return_1d: float | None
+    return_5d: float | None
+    relative_volume: float | None
+    breadth: float | None
+    dollar_volume_change: float | None
+    dollar_volume: float | None
+    persistence: float | None
+
+
+def _all_symbols() -> tuple[str, ...]:
+    values = set(MARQUEE_ASSETS) | set(SECTOR_UNIVERSE)
+    for basket in [*SECTOR_BASKETS.values(), *THEME_BASKETS.values(), *BENEFICIARY_BASKETS.values()]:
+        values.update(basket)
+    return tuple(sorted(values))
+
+
+def _symbol_frame(downloaded: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    if downloaded is None or downloaded.empty:
+        return pd.DataFrame()
+    frame = pd.DataFrame()
+    if isinstance(downloaded.columns, pd.MultiIndex):
+        if symbol in downloaded.columns.get_level_values(0):
+            frame = downloaded[symbol]
+        elif symbol in downloaded.columns.get_level_values(-1):
+            frame = downloaded.xs(symbol, axis=1, level=-1)
+    elif len(_all_symbols()) == 1:
+        frame = downloaded
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    keep = [column for column in ("Open", "High", "Low", "Close", "Volume") if column in frame]
+    return frame[keep].dropna(how="all")
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _download_market_history(symbols: tuple[str, ...], refresh_token: int = 0) -> tuple[dict[str, pd.DataFrame], str]:
+    del refresh_token
+    try:
+        downloaded = yf.download(
+            list(symbols),
+            period="1y",
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+            group_by="ticker",
+        )
+        history = {symbol: _symbol_frame(downloaded, symbol) for symbol in symbols}
+        return history, ""
+    except Exception as exc:
+        return {symbol: pd.DataFrame() for symbol in symbols}, str(exc)
+
+
+@st.cache_data(ttl=45, show_spinner=False)
+def _download_marquee_intraday(symbols: tuple[str, ...], refresh_token: int = 0) -> tuple[dict[str, pd.DataFrame], str]:
+    del refresh_token
+    try:
+        downloaded = yf.download(
+            list(symbols),
+            period="5d",
+            interval="5m",
+            prepost=True,
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+            group_by="ticker",
+        )
+        history = {symbol: _symbol_frame(downloaded, symbol) for symbol in symbols}
+        return history, ""
+    except Exception as exc:
+        return {symbol: pd.DataFrame() for symbol in symbols}, str(exc)
+
+
+def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
+    return pd.to_numeric(frame.get(column, pd.Series(dtype=float)), errors="coerce").dropna()
+
+
+def _pct_change(latest: float | None, prior: float | None) -> float | None:
+    if latest is None or prior in (None, 0):
+        return None
+    return ((latest / prior) - 1) * 100
+
+
+def _quote_from_history(symbol: str, frame: pd.DataFrame) -> dict[str, object]:
+    close = _numeric(frame, "Close")
+    volume = _numeric(frame, "Volume")
+    if close.empty:
+        return {"symbol": symbol, "status": "Missing"}
+    latest = to_float(close.iloc[-1])
+    previous = to_float(close.iloc[-2]) if len(close) > 1 else None
+    five_day_prior = to_float(close.iloc[-6]) if len(close) > 5 else None
+    prior_1d = _pct_change(to_float(close.iloc[-2]), to_float(close.iloc[-3])) if len(close) > 2 else None
+    prior_5d = _pct_change(to_float(close.iloc[-2]), to_float(close.iloc[-7])) if len(close) > 6 else None
+    latest_volume = to_float(volume.iloc[-1]) if not volume.empty else None
+    average_volume = to_float(volume.tail(20).mean()) if not volume.empty else None
+    relative_volume = latest_volume / average_volume if latest_volume is not None and average_volume not in (None, 0) else None
+    dollar_volume = latest * latest_volume if latest is not None and latest_volume is not None else None
+    historical_dollar_volume = close.reindex(volume.index).mul(volume).dropna()
+    average_dollar_volume = to_float(historical_dollar_volume.tail(20).mean()) if not historical_dollar_volume.empty else None
+    dollar_volume_change = _pct_change(dollar_volume, average_dollar_volume)
+    recent_returns = close.pct_change().dropna().tail(5)
+    persistence = float((recent_returns > 0).mean() * 100) if not recent_returns.empty else None
+    high_252 = to_float(close.tail(252).max())
+    low_252 = to_float(close.tail(252).min())
+    latest_timestamp = frame.index[-1] if len(frame.index) else now_et()
+    return {
+        "symbol": symbol,
+        "price": latest,
+        "previous_close": previous,
+        "dollar_change": latest - previous if latest is not None and previous is not None else None,
+        "return_1d": _pct_change(latest, previous),
+        "return_5d": _pct_change(latest, five_day_prior),
+        "prior_return_1d": prior_1d,
+        "prior_return_5d": prior_5d,
+        "volume": latest_volume,
+        "average_volume_20d": average_volume,
+        "relative_volume": relative_volume,
+        "dollar_volume": dollar_volume,
+        "dollar_volume_change": dollar_volume_change,
+        "persistence": persistence,
+        "above_20d": bool(latest >= close.tail(20).mean()) if latest is not None and len(close) >= 20 else None,
+        "above_50d": bool(latest >= close.tail(50).mean()) if latest is not None and len(close) >= 50 else None,
+        "above_200d": bool(latest >= close.tail(200).mean()) if latest is not None and len(close) >= 200 else None,
+        "new_high": bool(high_252 and latest and latest >= high_252 * 0.995),
+        "new_low": bool(low_252 and latest and latest <= low_252 * 1.005),
+        "last_updated": latest_timestamp,
+        "status": "OK",
+    }
+
+
+def _tracked_stock_symbols() -> set[str]:
+    symbols: set[str] = set()
+    for basket in [*SECTOR_BASKETS.values(), *THEME_BASKETS.values(), *BENEFICIARY_BASKETS.values()]:
+        symbols.update(basket)
+    return symbols
+
+
+def get_market_snapshot(refresh_token: int = 0) -> dict[str, object]:
+    symbols = _all_symbols()
+    history, error = _download_market_history(symbols, refresh_token)
+    quotes = {symbol: _quote_from_history(symbol, frame) for symbol, frame in history.items()}
+    market_session = get_market_session_et()
+    extended_moves: dict[str, dict[str, object]] = {}
+    if market_session.get("label") in {"PRE", "AH"}:
+        intraday, intraday_error = _download_marquee_intraday(tuple(MARQUEE_ASSETS), refresh_token)
+        if intraday_error and not error:
+            error = intraday_error
+        for symbol, frame in intraday.items():
+            close = _numeric(frame, "Close")
+            latest = to_float(close.iloc[-1]) if not close.empty else None
+            quote = quotes.get(symbol, {})
+            comparison = quote.get("previous_close") if market_session.get("label") == "PRE" else quote.get("price")
+            extended_moves[symbol] = {
+                "session_label": market_session.get("label"),
+                "session_price": latest,
+                "session_dollar_change": latest - comparison if latest is not None and comparison is not None else None,
+                "session_change_pct": _pct_change(latest, comparison),
+            }
+    loaded = [symbol for symbol, quote in quotes.items() if quote.get("status") == "OK"]
+    missing = [symbol for symbol in symbols if symbol not in loaded]
+    stocks = _tracked_stock_symbols()
+    movers = [quotes[symbol] for symbol in stocks if quotes.get(symbol, {}).get("return_1d") is not None]
+    top_gainer = max(movers, key=lambda row: float(row.get("return_1d") or 0), default=None)
+    top_loser = min(movers, key=lambda row: float(row.get("return_1d") or 0), default=None)
+    marquee = []
+    for symbol, (label, asset_type) in MARQUEE_ASSETS.items():
+        quote = quotes.get(symbol, {})
+        marquee.append({**quote, **extended_moves.get(symbol, {}), "display_symbol": label, "asset_type": asset_type})
+    if top_gainer:
+        marquee.append({**top_gainer, "display_symbol": f'Top + {top_gainer["symbol"]}', "asset_type": "mover"})
+    if top_loser:
+        marquee.append({**top_loser, "display_symbol": f'Top - {top_loser["symbol"]}', "asset_type": "mover"})
+    completeness = len(loaded) / len(symbols) * 100 if symbols else 0
+    return {
+        "quotes": quotes,
+        "history": history,
+        "marquee": marquee,
+        "status": {
+            "provider": "Yahoo Finance/yfinance batch history",
+            "status": "OK" if completeness >= 90 else "Partial" if loaded else "Unavailable",
+            "symbols_loaded": len(loaded),
+            "symbols_missing": len(missing),
+            "missing_symbols": missing,
+            "completeness": completeness,
+            "last_refresh": now_et(),
+            "error": error,
+            "market_session": market_session,
+        },
+    }
+
+
+def _mean(values: Iterable[object]) -> float | None:
+    numbers = [number for value in values if (number := to_float(value)) is not None]
+    return sum(numbers) / len(numbers) if numbers else None
+
+
+def _basket_breadth(snapshot: dict[str, object], basket: Iterable[str], field: str = "return_1d") -> float | None:
+    quotes = snapshot.get("quotes", {})
+    values = [to_float(quotes.get(symbol, {}).get(field)) for symbol in basket]
+    valid = [value for value in values if value is not None]
+    return sum(value > 0 for value in valid) / len(valid) * 100 if valid else None
+
+
+def _group_metric(snapshot: dict[str, object], symbol: str, name: str, basket: Iterable[str]) -> GroupMetric:
+    quote = snapshot.get("quotes", {}).get(symbol, {})
+    return GroupMetric(
+        symbol=symbol,
+        name=name,
+        return_1d=to_float(quote.get("return_1d")),
+        return_5d=to_float(quote.get("return_5d")),
+        relative_volume=to_float(quote.get("relative_volume")),
+        breadth=_basket_breadth(snapshot, basket),
+        dollar_volume_change=to_float(quote.get("dollar_volume_change")),
+        dollar_volume=to_float(quote.get("dollar_volume")),
+        persistence=to_float(quote.get("persistence")),
+    )
+
+
+def _rank_normalize(series: pd.Series, low: float = -1.0, high: float = 1.0) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.notna().sum() <= 1:
+        return pd.Series(0.0, index=series.index)
+    ranks = numeric.rank(pct=True, method="average").fillna(0.5)
+    return low + ranks * (high - low)
+
+
+def calculate_flow_scores(snapshot: dict[str, object]) -> pd.DataFrame:
+    rows = [
+        _group_metric(snapshot, symbol, name, SECTOR_BASKETS.get(symbol, [])).__dict__
+        for symbol, name in SECTOR_UNIVERSE.items()
+    ]
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    components = {
+        "return_1d": 0.30,
+        "return_5d": 0.25,
+        "relative_volume": 0.20,
+        "breadth": 0.15,
+        "dollar_volume_change": 0.10,
+    }
+    score = pd.Series(0.0, index=frame.index)
+    for column, weight in components.items():
+        score += _rank_normalize(frame[column]) * weight
+    frame["flow_score"] = (score * 100).clip(-100, 100)
+    frame["estimated_flow_proxy"] = (
+        pd.to_numeric(frame["dollar_volume"], errors="coerce").fillna(0)
+        * pd.to_numeric(frame["return_1d"], errors="coerce").fillna(0)
+        / 100
+        * pd.to_numeric(frame["relative_volume"], errors="coerce").fillna(1).clip(lower=0.25)
+    )
+    return frame
+
+
+def calculate_sector_leadership_scores(sectors: pd.DataFrame, snapshot: dict[str, object]) -> pd.DataFrame:
+    if sectors is None or sectors.empty:
+        return pd.DataFrame()
+    frame = sectors.copy()
+    spy_5d = to_float(snapshot.get("quotes", {}).get("SPY", {}).get("return_5d")) or 0.0
+    frame["relative_strength_spy"] = pd.to_numeric(frame["return_5d"], errors="coerce") - spy_5d
+    inputs = {
+        "return_5d": 0.22,
+        "relative_strength_spy": 0.20,
+        "relative_volume": 0.15,
+        "breadth": 0.18,
+        "persistence": 0.12,
+        "flow_score": 0.13,
+    }
+    leadership = pd.Series(0.0, index=frame.index)
+    for column, weight in inputs.items():
+        leadership += _rank_normalize(frame[column], 0, 100) * weight
+    frame["leadership_score"] = leadership.clip(0, 100)
+    frame["leadership_label"] = frame["leadership_score"].apply(_leadership_label)
+    frame["trend"] = frame.apply(
+        lambda row: "Rising" if (to_float(row.get("return_1d")) or 0) > 0 and (to_float(row.get("return_5d")) or 0) > 0
+        else "Falling" if (to_float(row.get("return_1d")) or 0) < 0 and (to_float(row.get("return_5d")) or 0) < 0
+        else "Mixed",
+        axis=1,
+    )
+    frame["flow_label"] = frame["flow_score"].apply(_flow_label)
+    return frame.sort_values("flow_score", ascending=False).reset_index(drop=True)
+
+
+def _flow_label(score: object) -> str:
+    value = to_float(score) or 0.0
+    if value >= 60:
+        return "Strong inflow"
+    if value >= 20:
+        return "Moderate inflow"
+    if value <= -60:
+        return "Strong outflow"
+    if value <= -20:
+        return "Moderate outflow"
+    return "Neutral"
+
+
+def _leadership_label(score: object) -> str:
+    value = to_float(score) or 0.0
+    if value >= 90:
+        return "Market Leadership"
+    if value >= 70:
+        return "Strong Leadership"
+    if value >= 50:
+        return "Neutral"
+    if value >= 30:
+        return "Weak"
+    return "Capital Flight"
+
+
+def _regime_label(score: float) -> str:
+    if score >= 55:
+        return "Strong risk-on"
+    if score >= 20:
+        return "Moderate risk-on"
+    if score <= -55:
+        return "Strong risk-off"
+    if score <= -20:
+        return "Moderate risk-off"
+    return "Neutral"
+
+
+def calculate_market_regime(snapshot: dict[str, object], sectors: pd.DataFrame) -> dict[str, object]:
+    quotes = snapshot.get("quotes", {})
+    benchmark_1d = _mean(quotes.get(symbol, {}).get("return_1d") for symbol in ("SPY", "QQQ", "IWM")) or 0.0
+    benchmark_5d = _mean(quotes.get(symbol, {}).get("return_5d") for symbol in ("SPY", "QQQ", "IWM")) or 0.0
+    prior_1d = _mean(quotes.get(symbol, {}).get("prior_return_1d") for symbol in ("SPY", "QQQ", "IWM")) or 0.0
+    prior_5d = _mean(quotes.get(symbol, {}).get("prior_return_5d") for symbol in ("SPY", "QQQ", "IWM")) or 0.0
+    vix_level = to_float(quotes.get("^VIX", {}).get("price"))
+    vix_change = to_float(quotes.get("^VIX", {}).get("return_1d")) or 0.0
+    prior_vix_change = to_float(quotes.get("^VIX", {}).get("prior_return_1d")) or 0.0
+    yield_change = to_float(quotes.get("^TNX", {}).get("return_1d")) or 0.0
+    breadth = calculate_market_breadth(snapshot)
+    advancer_pct = to_float(breadth.get("advancer_pct")) or 50.0
+    positive_sector_pct = float((sectors["flow_score"] > 0).mean() * 100) if sectors is not None and not sectors.empty else 50.0
+    vix_score = 25 if vix_level is not None and vix_level < 16 else -25 if vix_level is not None and vix_level > 25 else 0
+    risk_score = (
+        benchmark_1d * 8
+        + benchmark_5d * 4
+        - vix_change * 1.5
+        - yield_change * 0.5
+        + (advancer_pct - 50) * 0.45
+        + (positive_sector_pct - 50) * 0.35
+        + vix_score
+    )
+    previous_score = prior_1d * 8 + prior_5d * 4 - prior_vix_change * 1.5 + vix_score
+    risk_score = max(-100, min(100, risk_score))
+    previous_score = max(-100, min(100, previous_score))
+    trend = "Improving" if risk_score > previous_score + 5 else "Deteriorating" if risk_score < previous_score - 5 else "Stable"
+    explanation = (
+        f"{positive_sector_pct:.0f}% of tracked groups have positive flow scores; "
+        f"benchmark momentum is {benchmark_5d:+.1f}% over five sessions and tracked-stock breadth is {advancer_pct:.0f}%."
+    )
+    return {
+        "regime": _regime_label(risk_score),
+        "previous_regime": _regime_label(previous_score),
+        "trend": trend,
+        "risk_score": risk_score,
+        "explanation": explanation,
+    }
+
+
+def calculate_market_breadth(snapshot: dict[str, object]) -> dict[str, object]:
+    quotes = snapshot.get("quotes", {})
+    rows = [quotes.get(symbol, {}) for symbol in _tracked_stock_symbols()]
+    loaded = [row for row in rows if row.get("status") == "OK"]
+    count = len(loaded)
+    if not count:
+        return {
+            "tracked": 0,
+            "above_20d": None,
+            "above_50d": None,
+            "above_200d": None,
+            "advancers": 0,
+            "decliners": 0,
+            "advancer_pct": None,
+            "new_highs": 0,
+            "new_lows": 0,
+            "health": "Unavailable",
+        }
+    pct = lambda field: sum(row.get(field) is True for row in loaded) / count * 100
+    advancers = sum((to_float(row.get("return_1d")) or 0) > 0 for row in loaded)
+    decliners = sum((to_float(row.get("return_1d")) or 0) < 0 for row in loaded)
+    above_50d = pct("above_50d")
+    health = "Healthy" if above_50d >= 60 else "Deteriorating" if above_50d < 40 else "Mixed"
+    return {
+        "tracked": count,
+        "above_20d": pct("above_20d"),
+        "above_50d": above_50d,
+        "above_200d": pct("above_200d"),
+        "advancers": advancers,
+        "decliners": decliners,
+        "advancer_pct": advancers / max(1, advancers + decliners) * 100,
+        "new_highs": sum(row.get("new_high") is True for row in loaded),
+        "new_lows": sum(row.get("new_low") is True for row in loaded),
+        "health": health,
+    }
+
+
+def _theme_metrics(snapshot: dict[str, object]) -> pd.DataFrame:
+    quotes = snapshot.get("quotes", {})
+    rows = []
+    for name, basket in THEME_BASKETS.items():
+        available = [quotes.get(symbol, {}) for symbol in basket if quotes.get(symbol, {}).get("status") == "OK"]
+        rows.append(
+            {
+                "name": name,
+                "return_1d": _mean(row.get("return_1d") for row in available),
+                "return_5d": _mean(row.get("return_5d") for row in available),
+                "relative_volume": _mean(row.get("relative_volume") for row in available),
+                "breadth": _basket_breadth(snapshot, basket),
+                "dollar_volume_change": _mean(row.get("dollar_volume_change") for row in available),
+                "persistence": _mean(row.get("persistence") for row in available),
+                "loaded": len(available),
+                "basket_size": len(basket),
+                "top_movers": ", ".join(
+                    row["symbol"]
+                    for row in sorted(available, key=lambda item: float(item.get("return_1d") or -999), reverse=True)[:3]
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def identify_emerging_themes(snapshot: dict[str, object]) -> pd.DataFrame:
+    frame = _theme_metrics(snapshot)
+    if frame.empty:
+        return frame
+    score = (
+        _rank_normalize(frame["return_1d"]) * 0.30
+        + _rank_normalize(frame["return_5d"]) * 0.25
+        + _rank_normalize(frame["relative_volume"]) * 0.20
+        + _rank_normalize(frame["breadth"]) * 0.15
+        + _rank_normalize(frame["dollar_volume_change"]) * 0.10
+    )
+    frame["flow_score"] = (score * 100).clip(-100, 100)
+    frame["momentum"] = frame.apply(
+        lambda row: "Accelerating" if (to_float(row.get("return_1d")) or 0) > 0 and (to_float(row.get("return_5d")) or 0) > 0
+        else "Fading" if (to_float(row.get("return_1d")) or 0) < 0 and (to_float(row.get("return_5d")) or 0) < 0
+        else "Mixed",
+        axis=1,
+    )
+    completeness = frame["loaded"] / frame["basket_size"].clip(lower=1)
+    frame["confidence"] = (
+        completeness * 55
+        + pd.to_numeric(frame["relative_volume"], errors="coerce").fillna(1).clip(0, 2) / 2 * 20
+        + pd.to_numeric(frame["breadth"], errors="coerce").fillna(50) / 100 * 25
+    ).clip(0, 100)
+    return frame.sort_values("flow_score", ascending=False).reset_index(drop=True)
+
+
+def identify_beneficiaries(sectors: pd.DataFrame, snapshot: dict[str, object]) -> list[dict[str, object]]:
+    if sectors is None or sectors.empty:
+        return []
+    quotes = snapshot.get("quotes", {})
+    spy_return = to_float(quotes.get("SPY", {}).get("return_1d")) or 0.0
+    output = []
+    for _, sector in sectors.head(4).iterrows():
+        sector_name = str(sector["name"])
+        sector_return = to_float(sector.get("return_1d")) or 0.0
+        candidates = []
+        for symbol in BENEFICIARY_BASKETS.get(sector_name, []):
+            quote = quotes.get(symbol, {})
+            stock_return = to_float(quote.get("return_1d"))
+            if stock_return is None:
+                continue
+            confirmation = stock_return - max(spy_return, sector_return)
+            confidence = max(
+                0,
+                min(
+                    100,
+                    45
+                    + (to_float(sector.get("flow_score")) or 0) * 0.25
+                    + confirmation * 6
+                    + ((to_float(quote.get("relative_volume")) or 1) - 1) * 15,
+                ),
+            )
+            candidates.append(
+                {
+                    "ticker": symbol,
+                    "company": COMPANY_NAMES.get(symbol, symbol),
+                    "return_1d": stock_return,
+                    "confidence": confidence,
+                    "reason": "Outperforming sector and SPY" if confirmation > 0 else "Sector-flow beneficiary",
+                }
+            )
+        output.append(
+            {
+                "theme": sector_name,
+                "flow_score": to_float(sector.get("flow_score")) or 0.0,
+                "beneficiaries": sorted(candidates, key=lambda row: row["confidence"], reverse=True)[:3],
+            }
+        )
+    return output
+
+
+def _history_metric(frame: pd.DataFrame, offset: int) -> dict[str, float | None]:
+    close = _numeric(frame, "Close")
+    volume = _numeric(frame, "Volume")
+    if len(close) < offset + 7:
+        return {}
+    position = len(close) - 1 - offset
+    latest = to_float(close.iloc[position])
+    prior = to_float(close.iloc[position - 1])
+    five_prior = to_float(close.iloc[position - 5])
+    latest_volume = to_float(volume.iloc[position]) if len(volume) > position else None
+    avg_volume = to_float(volume.iloc[max(0, position - 20):position].mean()) if not volume.empty else None
+    return {
+        "return_1d": _pct_change(latest, prior),
+        "return_5d": _pct_change(latest, five_prior),
+        "relative_volume": latest_volume / avg_volume if latest_volume is not None and avg_volume not in (None, 0) else None,
+    }
+
+
+def build_rotation_timeline(snapshot: dict[str, object], sessions: int = 10) -> list[dict[str, object]]:
+    history = snapshot.get("history", {})
+    spy = history.get("SPY", pd.DataFrame())
+    dates = list(spy.index[-sessions:]) if spy is not None and not spy.empty else []
+    output = []
+    for offset, stamp in enumerate(reversed(dates)):
+        rows = []
+        for symbol, name in SECTOR_UNIVERSE.items():
+            metric = _history_metric(history.get(symbol, pd.DataFrame()), offset)
+            if metric:
+                rows.append({"symbol": symbol, "name": name, **metric})
+        frame = pd.DataFrame(rows)
+        if frame.empty:
+            continue
+        score = _rank_normalize(frame["return_1d"]) * 0.45 + _rank_normalize(frame["return_5d"]) * 0.35 + _rank_normalize(frame["relative_volume"]) * 0.20
+        frame["score"] = score * 100
+        leaders = frame.sort_values("score", ascending=False).head(2)
+        output.append(
+            {
+                "date": pd.Timestamp(stamp).strftime("%b %d"),
+                "leader": " + ".join(leaders["name"].tolist()),
+                "score": to_float(leaders.iloc[0]["score"]) or 0.0,
+            }
+        )
+    return list(reversed(output))
+
+
+def generate_sector_research_insights(
+    sectors: pd.DataFrame,
+    regime: dict[str, object],
+    themes: pd.DataFrame,
+    timeline: list[dict[str, object]],
+) -> list[str]:
+    if sectors is None or sectors.empty:
+        return ["Sector data is unavailable; refresh when the market data provider is reachable."]
+    leader = sectors.iloc[0]
+    laggard = sectors.iloc[-1]
+    insights = [
+        f'{leader["name"]} leads capital rotation with a {float(leader["flow_score"]):+.0f} flow score and {float(leader["breadth"] or 0):.0f}% proxy breadth.',
+        f'{laggard["name"]} is the weakest group at {float(laggard["flow_score"]):+.0f}, indicating relative capital pressure.',
+        f'Market regime is {regime.get("regime", "Neutral").lower()} and the five-day risk trend is {str(regime.get("trend", "Stable")).lower()}.',
+    ]
+    if themes is not None and not themes.empty:
+        theme = themes.iloc[0]
+        insights.append(
+            f'{theme["name"]} is the strongest emerging theme with {float(theme["flow_score"]):+.0f} flow and {float(theme["confidence"]):.0f}% confidence.'
+        )
+    if timeline:
+        recent = [row["leader"] for row in timeline[-4:]]
+        if recent and len(set(recent)) == 1:
+            insights.append(f"{recent[0]} has held daily leadership for four consecutive tracked sessions.")
+    return insights[:5]
+
+
+def generate_rotation_summary(sectors: pd.DataFrame, regime: dict[str, object], status: dict[str, object]) -> dict[str, object]:
+    if sectors is None or sectors.empty:
+        return {
+            "key_takeaway": "Live sector rotation data is unavailable.",
+            "inflow_proxy": 0.0,
+            "outflow_proxy": 0.0,
+            "net_rotation_proxy": 0.0,
+            "regime": regime.get("regime", "Unavailable"),
+            "last_refresh": status.get("last_refresh"),
+        }
+    leader = sectors.iloc[0]
+    laggard = sectors.iloc[-1]
+    inflow = float(sectors.loc[sectors["estimated_flow_proxy"] > 0, "estimated_flow_proxy"].sum())
+    outflow = float(sectors.loc[sectors["estimated_flow_proxy"] < 0, "estimated_flow_proxy"].sum())
+    return {
+        "key_takeaway": (
+            f'Capital is rotating from {laggard["name"]} toward {leader["name"]}; '
+            f'{leader["name"]} has the strongest combination of price momentum, volume, and breadth.'
+        ),
+        "inflow_proxy": inflow,
+        "outflow_proxy": outflow,
+        "net_rotation_proxy": inflow + outflow,
+        "regime": regime.get("regime", "Neutral"),
+        "last_refresh": status.get("last_refresh"),
+    }
+
+
+def fetch_sector_data(snapshot: dict[str, object]) -> pd.DataFrame:
+    return calculate_sector_leadership_scores(calculate_flow_scores(snapshot), snapshot)
+
+
+def build_sector_research_packet(snapshot: dict[str, object]) -> dict[str, object]:
+    sectors = fetch_sector_data(snapshot)
+    breadth = calculate_market_breadth(snapshot)
+    regime = calculate_market_regime(snapshot, sectors)
+    themes = identify_emerging_themes(snapshot)
+    beneficiaries = identify_beneficiaries(sectors, snapshot)
+    timeline = build_rotation_timeline(snapshot)
+    status = snapshot.get("status", {})
+    completeness = to_float(status.get("completeness")) or 0.0
+    breadth_available = breadth.get("tracked", 0) > 0
+    confidence_score = completeness * 0.65 + (20 if breadth_available else 0) + (15 if not sectors.empty else 0)
+    confidence = "High" if confidence_score >= 85 else "Medium" if confidence_score >= 60 else "Low"
+    health = {**status, "confidence": confidence, "confidence_score": min(100, confidence_score)}
+    return {
+        "sectors": sectors,
+        "breadth": breadth,
+        "regime": regime,
+        "themes": themes,
+        "beneficiaries": beneficiaries,
+        "timeline": timeline,
+        "insights": generate_sector_research_insights(sectors, regime, themes, timeline),
+        "summary": generate_rotation_summary(sectors, regime, status),
+        "health": health,
+    }

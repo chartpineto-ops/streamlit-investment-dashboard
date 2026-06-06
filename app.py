@@ -7,6 +7,7 @@ from datetime import date, datetime
 from html import escape
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -20,6 +21,7 @@ from data.market_news import (
     news_summary,
 )
 from data.economic_calendar import enrich_economic_calendar_events
+from data.sector_research import build_sector_research_packet, get_market_snapshot
 from pineterminal.components import (
     html,
     money,
@@ -39,8 +41,6 @@ from pineterminal.demo_data import (
     ANALYSES,
     COMPANIES,
     ECONOMIC_CALENDAR_EVENTS,
-    MARKET_INDICES,
-    MARKET_MOVERS,
     MARKET_UPDATES,
     PORTFOLIO_HOLDINGS,
     THEME_EXPOSURES,
@@ -58,11 +58,12 @@ from pineterminal.valuation import (
 from storage.db import connect, init_db
 from storage.watchlist import add_ticker as store_add_ticker
 from storage.watchlist import latest_quote_snapshot, remove_ticker as store_remove_ticker
-from utils.formatting import clean_ticker, fmt_compact, fmt_currency, fmt_daily_move, fmt_multiple, now_et, safe_format_datetime, to_float
+from utils.formatting import clean_ticker, fmt_compact, fmt_currency, fmt_daily_move, fmt_multiple, fmt_number, fmt_percent, now_et, safe_format_datetime, to_float
 
 
 PAGES = [
     "Dashboard",
+    "Sector Research",
     "Markets",
     "Market Read-Through",
     "Scanner",
@@ -79,7 +80,12 @@ APP_STATE_VERSION = "pineterminal-dashboard-v3"
 DEFAULT_WATCHLIST = ["AMPX", "MRVL", "VICR", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
 WATCHLIST_REFRESH_INTERVAL_MS = 300_000
 PAGE_REFRESH_INTERVAL_MS = {
+    "Dashboard": 300_000,
+    "Sector Research": 300_000,
+    "Markets": 300_000,
     "Scanner": 180_000,
+    "Watchlists": 300_000,
+    "Portfolio": 300_000,
     "News Feed": 300_000,
     "Economic Data": 900_000,
 }
@@ -139,6 +145,7 @@ def _init_state() -> None:
         st.session_state["watchlist_tickers"] = _load_persistent_watchlist_tickers()
     st.session_state.setdefault("watchlist_add_open", False)
     st.session_state.setdefault("watchlist_message", "")
+    st.session_state.setdefault("global_refresh_token", 0)
     if "portfolio_holdings" not in st.session_state:
         st.session_state["portfolio_holdings"] = _default_portfolio_holdings()
     st.session_state.setdefault("portfolio_add_open", False)
@@ -184,35 +191,45 @@ def _analysis_watchlist_row(ticker: str) -> dict[str, object]:
     }
 
 
-def _watchlist_rows() -> list[dict[str, object]]:
+def _watchlist_rows(market_snapshot: dict[str, object] | None = None) -> list[dict[str, object]]:
     built_in = {str(row["Ticker"]): row for row in all_watchlist_rows()}
     rows = []
+    live_quotes = (market_snapshot or {}).get("quotes", {})
     for ticker in _active_watchlist_tickers():
         try:
-            rows.append(_analysis_watchlist_row(ticker))
+            result = _analysis_watchlist_row(ticker)
         except Exception:
             snapshot = latest_quote_snapshot(ticker) or {}
             row = built_in.get(ticker) or {}
-            rows.append(
+            result = {
+                "Ticker": ticker,
+                "Company": snapshot.get("company") or row.get("Company") or ticker,
+                "Price": snapshot.get("price") or row.get("Price") or 0.0,
+                "Daily Change": snapshot.get("daily_move_pct") or row.get("Daily Change") or 0.0,
+                "Fundamental Score": row.get("Fundamental Score") or 0.0,
+                "Expected Return": row.get("Expected Return") or 0.0,
+                "Net Thesis Impact": row.get("Net Thesis Impact") or 0.0,
+                "Latest Thesis Impact": row.get("Latest Thesis Impact") or "N/A",
+                "Investment Signal": row.get("Investment Signal") or "No Rating",
+                "Risk Level": row.get("Risk Level") or "N/A",
+                "Theme": row.get("Theme") or "Live",
+                "Market Cap": snapshot.get("market_cap") or row.get("Market Cap") or 0.0,
+                "Revenue Growth": row.get("Revenue Growth") or "N/A",
+                "Gross Margin": row.get("Gross Margin") or "N/A",
+                "Last Updated": snapshot.get("timestamp") or row.get("Last Updated") or "N/A",
+                "Source": snapshot.get("source") or row.get("Source") or "Fallback",
+            }
+        live_quote = live_quotes.get(ticker, {})
+        if live_quote.get("status") == "OK":
+            result.update(
                 {
-                    "Ticker": ticker,
-                    "Company": snapshot.get("company") or row.get("Company") or ticker,
-                    "Price": snapshot.get("price") or row.get("Price") or 0.0,
-                    "Daily Change": snapshot.get("daily_move_pct") or row.get("Daily Change") or 0.0,
-                    "Fundamental Score": row.get("Fundamental Score") or 0.0,
-                    "Expected Return": row.get("Expected Return") or 0.0,
-                    "Net Thesis Impact": row.get("Net Thesis Impact") or 0.0,
-                    "Latest Thesis Impact": row.get("Latest Thesis Impact") or "N/A",
-                    "Investment Signal": row.get("Investment Signal") or "No Rating",
-                    "Risk Level": row.get("Risk Level") or "N/A",
-                    "Theme": row.get("Theme") or "Live",
-                    "Market Cap": snapshot.get("market_cap") or row.get("Market Cap") or 0.0,
-                    "Revenue Growth": row.get("Revenue Growth") or "N/A",
-                    "Gross Margin": row.get("Gross Margin") or "N/A",
-                    "Last Updated": snapshot.get("timestamp") or row.get("Last Updated") or "N/A",
-                    "Source": snapshot.get("source") or row.get("Source") or "Fallback",
+                    "Price": live_quote.get("price") or result.get("Price"),
+                    "Daily Change": live_quote.get("return_1d") if live_quote.get("return_1d") is not None else result.get("Daily Change"),
+                    "Last Updated": live_quote.get("last_updated") or result.get("Last Updated"),
+                    "Source": "Shared Yahoo Finance market snapshot",
                 }
             )
+        rows.append(result)
     return rows
 
 
@@ -390,7 +407,7 @@ def render_sidebar(watchlist_rows: list[dict[str, object]]) -> str:
 
 
 def render_global_controls(page: str, analysis) -> None:
-    search_col, topbar_col = st.columns([0.16, 0.84], vertical_alignment="center")
+    search_col, topbar_col, refresh_col = st.columns([0.16, 0.72, 0.12], vertical_alignment="center")
     with search_col:
         search_value = st.text_input("Ticker", value=st.session_state["selected_ticker"], placeholder="Search ticker")
         searched = clean_ticker(search_value)
@@ -399,30 +416,55 @@ def render_global_controls(page: str, analysis) -> None:
             st.rerun()
     with topbar_col:
         render_topbar(page, analysis.company.ticker, st.session_state["currency"], analysis.company.data_mode, analysis.company.last_updated)
+    with refresh_col:
+        if st.button("Refresh Data", key="global_market_refresh", use_container_width=True):
+            st.session_state["global_refresh_token"] = int(st.session_state.get("global_refresh_token", 0) or 0) + 1
+            st.cache_data.clear()
+            st.rerun()
 
 
-def watchlist_tape(rows: list[dict[str, object]]) -> str:
+def _marquee_price(row: dict[str, object]) -> str:
+    value = to_float(row.get("price"))
+    if value is None:
+        return "N/A"
+    asset_type = str(row.get("asset_type") or "")
+    if asset_type == "yield":
+        return f"{value:.2f}%"
+    if asset_type == "index":
+        return fmt_number(value, 2)
+    return f"${value:,.2f}"
+
+
+def render_market_marquee(snapshot: dict[str, object]) -> None:
+    rows = [row for row in snapshot.get("marquee", []) if to_float(row.get("price")) is not None]
     if not rows:
-        return ""
-    items = "".join(
-        (
-            f'<span title="Updated {escape(str(row.get("Last Updated", "N/A")))}">'
-            f'<b>{escape(str(row["Ticker"]))}</b> '
-            f'{price(float(row.get("Price") or 0.0))} '
-            f'<b class="{tone_for_value(float(row.get("Daily Change") or 0.0))}">{percent(float(row.get("Daily Change") or 0.0), 2)}</b>'
-            "</span>"
+        html('<div class="pt-market-marquee-empty">Market marquee unavailable. Refresh when the data provider reconnects.</div>')
+        return
+    items = ""
+    for row in rows:
+        move = to_float(row.get("return_1d")) or 0.0
+        dollar_change = to_float(row.get("dollar_change"))
+        session_move = to_float(row.get("session_change_pct"))
+        session_label = str(row.get("session_label") or "")
+        extended = (
+            f'<small class="{tone_for_value(session_move)}">{escape(session_label)} {fmt_daily_move(session_move)}</small>'
+            if session_move is not None and session_label
+            else ""
         )
-        for row in rows
-    )
-    return (
-        '<div class="pt-watch-tape" aria-label="Watchlist ticker tape">'
+        items += f"""
+        <span title="Updated {escape(safe_format_datetime(row.get("last_updated")))}">
+          <b>{escape(str(row.get("display_symbol") or row.get("symbol") or ""))}</b>
+          {_marquee_price(row)}
+          <em class="{tone_for_value(dollar_change or 0)}">{escape(f"{dollar_change:+.2f}" if dollar_change is not None else "N/A")}</em>
+          <b class="{tone_for_value(move)}">{fmt_daily_move(move)}</b>
+          {extended}
+        </span>
+        """
+    html(
+        '<div class="pt-watch-tape pt-market-marquee" aria-label="Global moving market ticker">'
         f'<div class="pt-watch-tape-inner">{items}{items}</div>'
         "</div>"
     )
-
-
-def render_watchlist_tape(rows: list[dict[str, object]]) -> None:
-    html(watchlist_tape(rows))
 
 
 def _auto_refresh_interval_ms(page: str) -> int:
@@ -468,13 +510,29 @@ def render_auto_refresh_status(page: str) -> None:
     )
 
 
-def render_home_page() -> None:
+def render_home_page(market_snapshot: dict[str, object]) -> None:
+    quotes = market_snapshot.get("quotes", {})
+    index_rows = []
+    for symbol, name in (("SPY", "S&P 500"), ("QQQ", "Nasdaq 100"), ("DIA", "Dow"), ("IWM", "Russell 2000"), ("^VIX", "VIX"), ("^TNX", "10Y Yield")):
+        quote = quotes.get(symbol, {})
+        if quote.get("status") == "OK":
+            index_rows.append({"name": name, "price": _marquee_price({**quote, "asset_type": "yield" if symbol == "^TNX" else "index"}), "change": quote.get("return_1d") or 0.0})
     index_cards = "".join(
-        f'<div class="pt-row-card"><span class="pt-mini-label">{row["name"]}</span><strong>{row["price"]}</strong><em class="{tone_for_value(float(row["change"]))}">{percent(float(row["change"]), 2)}</em></div>'
-        for row in MARKET_INDICES
+        f'<div class="pt-row-card"><span class="pt-mini-label">{escape(str(row["name"]))}</span><strong>{escape(str(row["price"]))}</strong><em class="{tone_for_value(float(row["change"]))}">{percent(float(row["change"]), 2)}</em></div>'
+        for row in index_rows
     )
-    gainers = [row for row in MARKET_MOVERS if float(row["change"]) > 0]
-    losers = [row for row in MARKET_MOVERS if float(row["change"]) < 0]
+    equity_rows = [
+        {"ticker": symbol, "company": symbol, "price": quote.get("price"), "change": quote.get("return_1d")}
+        for symbol, quote in quotes.items()
+        if quote.get("status") == "OK"
+        and to_float(quote.get("price")) is not None
+        and to_float(quote.get("return_1d")) is not None
+        and not symbol.startswith("^")
+        and "=" not in symbol
+        and not symbol.endswith("-USD")
+    ]
+    gainers = sorted((row for row in equity_rows if float(row["change"]) > 0), key=lambda row: float(row["change"]), reverse=True)
+    losers = sorted((row for row in equity_rows if float(row["change"]) < 0), key=lambda row: float(row["change"]))
     mover_rows = []
     for idx, row in enumerate(gainers[:10], start=1):
         mover_rows.append({"Rank": idx, "Ticker": row["ticker"], "Company": row["company"], "Price": price(float(row["price"])), "Change": percent(float(row["change"]), 2)})
@@ -494,7 +552,7 @@ def render_home_page() -> None:
         )
     html(
         '<div class="pt-shell">'
-        + section("Market Index Strip", "", f'<div class="pt-score-breakdown">{index_cards}</div>')
+        + section("Market Index Strip", "Shared live market snapshot", f'<div class="pt-score-breakdown">{index_cards}</div>')
         + "</div>"
     )
     col1, col2 = st.columns(2)
@@ -505,7 +563,276 @@ def render_home_page() -> None:
         html(section("Biggest Losers", "", ""))
         render_dataframe(loser_rows, 260)
     html(f'<div class="pt-home-grid">{section("Market Read-Through Highlights", "", render_plain_table(highlights))}{section("Upcoming Events", "", render_plain_table(UPCOMING_EVENTS))}</div>')
-    render_dataframe(all_watchlist_rows(), 270)
+    render_dataframe(_watchlist_rows(market_snapshot), 270)
+
+
+def _sector_flow_tone(value: object) -> str:
+    number = to_float(value) or 0.0
+    return "good" if number > 10 else "bad" if number < -10 else "neutral"
+
+
+def _sector_flow_map(sectors: pd.DataFrame) -> go.Figure | None:
+    if sectors is None or sectors.empty:
+        return None
+    inflows = sectors[sectors["flow_score"] > 0].nlargest(4, "flow_score")
+    outflows = sectors[sectors["flow_score"] < 0].nsmallest(4, "flow_score")
+    if inflows.empty or outflows.empty:
+        return None
+    labels = [str(name) for name in outflows["name"]] + [str(name) for name in inflows["name"]]
+    source = []
+    target = []
+    values = []
+    for weak_index, (_, weak) in enumerate(outflows.iterrows()):
+        for strong_index, (_, strong) in enumerate(inflows.iterrows()):
+            source.append(weak_index)
+            target.append(len(outflows) + strong_index)
+            values.append(max(1.0, abs(float(weak["flow_score"])) * float(strong["flow_score"]) / 100))
+    figure = go.Figure(
+        go.Sankey(
+            arrangement="snap",
+            node={
+                "pad": 18,
+                "thickness": 16,
+                "line": {"color": "#223249", "width": 1},
+                "label": labels,
+                "color": ["rgba(255,92,112,0.72)"] * len(outflows) + ["rgba(49,209,124,0.72)"] * len(inflows),
+            },
+            link={
+                "source": source,
+                "target": target,
+                "value": values,
+                "color": ["rgba(91,182,255,0.18)"] * len(values),
+            },
+        )
+    )
+    figure.update_layout(
+        height=330,
+        margin={"l": 15, "r": 15, "t": 10, "b": 10},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef4fb", "size": 12},
+    )
+    return figure
+
+
+def _sector_research_header(packet: dict[str, object]) -> str:
+    regime = packet.get("regime", {})
+    sectors = packet.get("sectors", pd.DataFrame())
+    health = packet.get("health", {})
+    leader = sectors.iloc[0] if isinstance(sectors, pd.DataFrame) and not sectors.empty else {}
+    laggard = sectors.iloc[-1] if isinstance(sectors, pd.DataFrame) and not sectors.empty else {}
+    risk_score = to_float(regime.get("risk_score")) or 0.0
+    return f"""
+    <div class="pt-sector-hero">
+      <div>
+        <span class="pt-mini-label">Market Regime</span>
+        <strong class="{_sector_flow_tone(risk_score)}">{escape(str(regime.get("regime") or "Unavailable"))}</strong>
+        <p>{escape(str(regime.get("explanation") or "Waiting for live market data."))}</p>
+      </div>
+      <div class="pt-sector-hero-stats">
+        <div><span>Risk Score</span><b class="{_sector_flow_tone(risk_score)}">{risk_score:+.0f}</b></div>
+        <div><span>Previous Regime</span><b>{escape(str(regime.get("previous_regime") or "N/A"))}</b></div>
+        <div><span>5D Trend</span><b>{escape(str(regime.get("trend") or "N/A"))}</b></div>
+        <div><span>Leading Group</span><b class="good">{escape(str(leader.get("name", "N/A")))}</b></div>
+        <div><span>Weakest Group</span><b class="bad">{escape(str(laggard.get("name", "N/A")))}</b></div>
+        <div><span>Confidence</span><b class="warn">{escape(str(health.get("confidence") or "Low"))}</b></div>
+      </div>
+    </div>
+    """
+
+
+def _sector_big_money_markup(sectors: pd.DataFrame) -> str:
+    if sectors is None or sectors.empty:
+        return '<p class="pt-placeholder">Flow classifications are unavailable.</p>'
+    rows = ""
+    for _, row in sectors.head(8).iterrows():
+        score = to_float(row.get("flow_score")) or 0.0
+        if score >= 60:
+            marker = "&#9650;&#9650;&#9650;&#9650;&#9650;"
+        elif score >= 20:
+            marker = "&#9650;&#9650;&#9650;"
+        elif score <= -60:
+            marker = "&#9660;&#9660;&#9660;&#9660;&#9660;"
+        elif score <= -20:
+            marker = "&#9660;&#9660;&#9660;"
+        else:
+            marker = "&#8212;"
+        rows += f"""
+        <div class="pt-sector-money-row">
+          <span>{escape(str(row.get("name")))}</span>
+          <b class="{_sector_flow_tone(score)}">{marker}</b>
+          <em>{escape(str(row.get("flow_label")))}</em>
+        </div>
+        """
+    return rows
+
+
+def _sector_breadth_markup(breadth: dict[str, object]) -> str:
+    health = str(breadth.get("health") or "Unavailable")
+    tone = "good" if health == "Healthy" else "bad" if health == "Deteriorating" else "warn"
+    values = [
+        ("Above 20D MA", fmt_percent(breadth.get("above_20d"), 0)),
+        ("Above 50D MA", fmt_percent(breadth.get("above_50d"), 0)),
+        ("Above 200D MA", fmt_percent(breadth.get("above_200d"), 0)),
+        ("Advancers", str(breadth.get("advancers", 0))),
+        ("Decliners", str(breadth.get("decliners", 0))),
+        ("New Highs / Lows", f'{breadth.get("new_highs", 0)} / {breadth.get("new_lows", 0)}'),
+    ]
+    cards = "".join(f'<div><span>{escape(label)}</span><b>{escape(value)}</b></div>' for label, value in values)
+    return f'<div class="pt-sector-breadth-head"><b class="{tone}">{escape(health)}</b><span>Tracked-stock proxy breadth</span></div><div class="pt-sector-mini-grid">{cards}</div>'
+
+
+def _sector_themes_markup(themes: pd.DataFrame) -> str:
+    if themes is None or themes.empty:
+        return '<p class="pt-placeholder">Theme baskets are unavailable.</p>'
+    cards = ""
+    for _, row in themes.head(8).iterrows():
+        score = to_float(row.get("flow_score")) or 0.0
+        cards += f"""
+        <div class="pt-sector-theme-card">
+          <div><strong>{escape(str(row.get("name")))}</strong><b class="{_sector_flow_tone(score)}">{score:+.0f}</b></div>
+          <span>1D {fmt_daily_move(row.get("return_1d"))} | 5D {fmt_daily_move(row.get("return_5d"))} | Rel Vol {fmt_multiple(row.get("relative_volume"))}</span>
+          <p>{escape(str(row.get("momentum")))} | Top movers: {escape(str(row.get("top_movers") or "N/A"))}</p>
+          <em>Confidence {fmt_percent(row.get("confidence"), 0)}</em>
+        </div>
+        """
+    return f'<div class="pt-sector-theme-grid">{cards}</div>'
+
+
+def _sector_beneficiaries_markup(groups: list[dict[str, object]]) -> str:
+    if not groups:
+        return '<p class="pt-placeholder">Beneficiary confirmation is unavailable.</p>'
+    cards = ""
+    for group in groups:
+        rows = ""
+        for item in group.get("beneficiaries", []):
+            rows += f"""
+            <div class="pt-sector-beneficiary-row">
+              <b>{escape(str(item.get("ticker")))}</b>
+              <span>{escape(str(item.get("company")))}</span>
+              <em class="{_sector_flow_tone(item.get("return_1d"))}">{fmt_daily_move(item.get("return_1d"))}</em>
+              <small>{escape(str(item.get("reason")))} | {fmt_percent(item.get("confidence"), 0)} confidence</small>
+            </div>
+            """
+        cards += f"""
+        <div class="pt-sector-beneficiary-card">
+          <div class="pt-sector-beneficiary-title">
+            <strong>{escape(str(group.get("theme")))}</strong>
+            <b class="{_sector_flow_tone(group.get("flow_score"))}">{float(group.get("flow_score") or 0):+.0f}</b>
+          </div>
+          {rows or '<p class="pt-placeholder">No stock-level confirmation.</p>'}
+        </div>
+        """
+    return f'<div class="pt-sector-beneficiary-grid">{cards}</div>'
+
+
+def _sector_timeline_markup(timeline: list[dict[str, object]]) -> str:
+    if not timeline:
+        return '<p class="pt-placeholder">Historical leadership timeline is unavailable.</p>'
+    rows = "".join(
+        f'<div><span>{escape(str(row.get("date")))}</span><strong>{escape(str(row.get("leader")))}</strong><b class="{_sector_flow_tone(row.get("score"))}">{float(row.get("score") or 0):+.0f}</b></div>'
+        for row in timeline
+    )
+    return f'<div class="pt-sector-timeline">{rows}</div>'
+
+
+def _sector_summary_markup(packet: dict[str, object]) -> str:
+    summary = packet.get("summary", {})
+    return f"""
+    <div class="pt-sector-bottom-line">
+      <p>{escape(str(summary.get("key_takeaway") or "Live rotation takeaway unavailable."))}</p>
+      <div>
+        <span>Estimated Inflow Proxy <b class="good">{fmt_currency(summary.get("inflow_proxy"), 1)}</b></span>
+        <span>Estimated Outflow Proxy <b class="bad">{fmt_currency(summary.get("outflow_proxy"), 1)}</b></span>
+        <span>Net Rotation Proxy <b class="{_sector_flow_tone(summary.get("net_rotation_proxy"))}">{fmt_currency(summary.get("net_rotation_proxy"), 1)}</b></span>
+        <span>Regime <b>{escape(str(summary.get("regime") or "N/A"))}</b></span>
+      </div>
+    </div>
+    """
+
+
+def _sector_health_markup(health: dict[str, object]) -> str:
+    session = health.get("market_session", {})
+    missing = health.get("missing_symbols", [])
+    error = str(health.get("error") or "")
+    return f"""
+    <div class="pt-sector-health">
+      <span>Last Refresh <b>{escape(safe_format_datetime(health.get("last_refresh")))}</b></span>
+      <span>Symbols Loaded <b class="good">{int(health.get("symbols_loaded", 0) or 0)}</b></span>
+      <span>Missing <b class="bad">{int(health.get("symbols_missing", 0) or 0)}</b></span>
+      <span>Provider <b>{escape(str(health.get("status") or "Unavailable"))}</b></span>
+      <span>Confidence <b class="warn">{escape(str(health.get("confidence") or "Low"))}</b></span>
+      <span>Session <b>{escape(str(session.get("session") or "N/A"))}</b></span>
+      <small title="{escape(', '.join(str(symbol) for symbol in missing[:20]))}">{escape(error or "Hover for missing symbols")}</small>
+    </div>
+    """
+
+
+def render_sector_research(snapshot: dict[str, object]) -> None:
+    with st.spinner("Calculating live sector rotation..."):
+        packet = build_sector_research_packet(snapshot)
+    sectors = packet.get("sectors", pd.DataFrame())
+    html(
+        """
+        <div class="pt-sector-title">
+          <div><h1>Sector Research</h1><p>Institutional-style capital rotation, leadership, breadth, and theme intelligence.</p></div>
+        </div>
+        """
+    )
+    html(_sector_research_header(packet))
+
+    html(section("Capital Rotation Flow Map", "Where capital is leaving and where it is going", ""))
+    flow_figure = _sector_flow_map(sectors)
+    if flow_figure is None:
+        html('<p class="pt-placeholder">A two-sided flow map requires both positive and negative live sector scores.</p>')
+    else:
+        st.plotly_chart(flow_figure, use_container_width=True, config={"displayModeBar": False})
+
+    sort_options = {
+        "Flow Score": "flow_score",
+        "Leadership Score": "leadership_score",
+        "1D Performance": "return_1d",
+        "5D Performance": "return_5d",
+        "Relative Volume": "relative_volume",
+        "Breadth": "breadth",
+    }
+    sort_label = st.selectbox("Sort Sector Leadership", list(sort_options), key="sector_research_sort")
+    html(section("Sector Leadership Rankings", "Dynamic ranking from the latest shared market snapshot", ""))
+    if isinstance(sectors, pd.DataFrame) and not sectors.empty:
+        ranked = sectors.sort_values(sort_options[sort_label], ascending=False).reset_index(drop=True)
+        display = pd.DataFrame(
+            {
+                "Rank": range(1, len(ranked) + 1),
+                "Sector / Theme": ranked["name"],
+                "ETF": ranked["symbol"],
+                "Flow Score": ranked["flow_score"].round(1),
+                "Leadership": ranked["leadership_score"].round(1),
+                "Leadership State": ranked["leadership_label"],
+                "1D %": ranked["return_1d"].round(2),
+                "5D %": ranked["return_5d"].round(2),
+                "Rel Vol": ranked["relative_volume"].round(2),
+                "Breadth %": ranked["breadth"].round(0),
+                "Trend": ranked["trend"],
+                "1D Flow Proxy": ranked["estimated_flow_proxy"].round(0),
+            }
+        )
+        st.dataframe(display, hide_index=True, use_container_width=True, height=455)
+    else:
+        html('<p class="pt-placeholder">Sector rankings are unavailable from the current provider response.</p>')
+
+    left, right = st.columns([0.46, 0.54])
+    with left:
+        html(section("Big Money Moves", "Flow score, relative volume, breadth, and persistence", _sector_big_money_markup(sectors)))
+    with right:
+        html(section("Market Breadth", "ETF constituent proxy estimate", _sector_breadth_markup(packet.get("breadth", {}))))
+
+    html(section("Emerging Themes", "Configurable ticker baskets ranked by accelerating flow", _sector_themes_markup(packet.get("themes", pd.DataFrame()))))
+    html(section("Who Benefits If This Continues?", "Stock-level confirmation inside the strongest groups", _sector_beneficiaries_markup(packet.get("beneficiaries", []))))
+    html(section("Rotation Timeline", "Daily leadership across the latest tracked sessions", _sector_timeline_markup(packet.get("timeline", []))))
+    insight_rows = "".join(f"<li>{escape(str(item))}</li>" for item in packet.get("insights", []))
+    html(section("Rotation Intelligence", "Deterministic observations generated from current calculated data", f'<ul class="pt-sector-insights">{insight_rows}</ul>'))
+    html(section("Bottom Line", "Current capital-rotation read", _sector_summary_markup(packet)))
+    html(section("Data Health / Confidence", "Shared live market snapshot status", _sector_health_markup(packet.get("health", {}))))
 
 
 def render_plain_table(rows: list[dict[str, object]]) -> str:
@@ -725,6 +1052,8 @@ def _scanner_header(status: dict) -> None:
         with refresh_col:
             if st.button("Refresh", key="scanner_refresh", use_container_width=True):
                 st.session_state["scanner_refresh_token"] = int(st.session_state.get("scanner_refresh_token", 0) or 0) + 1
+                st.session_state["global_refresh_token"] = int(st.session_state.get("global_refresh_token", 0) or 0) + 1
+                st.cache_data.clear()
                 st.rerun()
 
 
@@ -947,8 +1276,8 @@ def render_scanner_page() -> None:
     _render_scanner_advanced_filters()
 
 
-def render_watchlist_page() -> None:
-    rows = _watchlist_rows()
+def render_watchlist_page(market_snapshot: dict[str, object]) -> None:
+    rows = _watchlist_rows(market_snapshot)
     group_by = st.segmented_control("Group by", ["Theme", "Investment Signal", "Risk Level", "Market Cap"], default="Theme")
     render_dataframe(rows, 440)
     grouped: dict[str, list[str]] = {}
@@ -1860,17 +2189,19 @@ def render_settings_page() -> None:
     )
 
 
-def render_page(page: str, analysis) -> None:
+def render_page(page: str, analysis, market_snapshot: dict[str, object]) -> None:
     if page == "Dashboard":
         render_company_dashboard(analysis)
+    elif page == "Sector Research":
+        render_sector_research(market_snapshot)
     elif page == "Markets":
-        render_home_page()
+        render_home_page(market_snapshot)
     elif page == "Market Read-Through":
         render_market_readthrough_page()
     elif page == "Scanner":
         render_scanner_page()
     elif page == "Watchlists":
-        render_watchlist_page()
+        render_watchlist_page(market_snapshot)
     elif page == "Portfolio":
         render_portfolio_page()
     elif page == "News Feed":
@@ -1888,14 +2219,16 @@ def render_page(page: str, analysis) -> None:
 def main() -> None:
     _init_state()
     _apply_session_valuation_specs()
-    watchlist_rows = _watchlist_rows()
+    refresh_token = int(st.session_state.get("global_refresh_token", 0) or 0) * 1_000_000 + _refresh_bucket(WATCHLIST_REFRESH_INTERVAL_MS)
+    market_snapshot = get_market_snapshot(refresh_token)
+    watchlist_rows = _watchlist_rows(market_snapshot)
     page = render_sidebar(watchlist_rows)
     render_auto_refresh_timer(page)
     analysis = load_dashboard_analysis(st.session_state["selected_ticker"])
     render_global_controls(page, analysis)
-    render_watchlist_tape(watchlist_rows)
+    render_market_marquee(market_snapshot)
     render_auto_refresh_status(page)
-    render_page(page, analysis)
+    render_page(page, analysis, market_snapshot)
 
 
 if __name__ == "__main__":
