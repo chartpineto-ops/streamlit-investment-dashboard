@@ -157,6 +157,7 @@ class GroupMetric:
     return_1m: float | None
     return_3m: float | None
     period_return: float | None
+    prior_period_return: float | None
     relative_volume: float | None
     breadth: float | None
     dollar_volume_change: float | None
@@ -387,6 +388,7 @@ def _group_metric(snapshot: dict[str, object], symbol: str, name: str, basket: I
         return_1m=to_float(quote.get("return_1m")),
         return_3m=to_float(quote.get("return_3m")),
         period_return=to_float(quote.get(period_key)),
+        prior_period_return=to_float(quote.get(f"prior_{period_key}")),
         relative_volume=to_float(quote.get("relative_volume")),
         breadth=_basket_breadth(snapshot, basket, period_key),
         dollar_volume_change=to_float(quote.get("dollar_volume_change")),
@@ -401,6 +403,67 @@ def _rank_normalize(series: pd.Series, low: float = -1.0, high: float = 1.0) -> 
         return pd.Series(0.0, index=series.index)
     ranks = numeric.rank(pct=True, method="average").fillna(0.5)
     return low + ranks * (high - low)
+
+
+def calculate_flow_acceleration(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    output = frame.copy()
+    current = pd.to_numeric(output.get("period_return"), errors="coerce").fillna(0)
+    prior = pd.to_numeric(output.get("prior_period_return"), errors="coerce").fillna(0)
+    output["return_acceleration"] = current - prior
+    prior_flow = _rank_normalize(output.get("prior_period_return", pd.Series(index=output.index, dtype=float))) * 100
+    output["prior_flow_score"] = prior_flow
+    output["flow_acceleration"] = pd.to_numeric(output.get("flow_score"), errors="coerce").fillna(0) - prior_flow
+
+    def acceleration_label(row: pd.Series) -> str:
+        acceleration = to_float(row.get("flow_acceleration")) or 0.0
+        period_return = to_float(row.get("period_return")) or 0.0
+        prior_return = to_float(row.get("prior_period_return")) or 0.0
+        if period_return > 0 >= prior_return or period_return < 0 <= prior_return:
+            return "Reversing"
+        if acceleration >= 20:
+            return "Accelerating"
+        if acceleration <= -20 and period_return < 0:
+            return "Fading"
+        if acceleration <= -20:
+            return "Decelerating"
+        return "Stable"
+
+    output["acceleration_label"] = output.apply(acceleration_label, axis=1)
+    return output
+
+
+def calculate_institutional_score(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    output = frame.copy()
+    inputs = {
+        "flow_score": 0.22,
+        "leadership_score": 0.18,
+        "relative_volume": 0.13,
+        "breadth": 0.13,
+        "persistence": 0.11,
+        "relative_strength_spy": 0.13,
+        "flow_acceleration": 0.10,
+    }
+    score = pd.Series(0.0, index=output.index)
+    for column, weight in inputs.items():
+        values = output.get(column, pd.Series(0.0, index=output.index))
+        score += _rank_normalize(values, 0, 100) * weight
+    output["institutional_score"] = score.clip(0, 100)
+    output["institutional_label"] = output["institutional_score"].apply(
+        lambda value: "Institutional leadership"
+        if value >= 85
+        else "Strong accumulation"
+        if value >= 70
+        else "Watchlist quality"
+        if value >= 50
+        else "Weak confirmation"
+        if value >= 30
+        else "Avoid / capital flight"
+    )
+    return output
 
 
 def calculate_flow_scores(snapshot: dict[str, object], horizon: str = "5D") -> pd.DataFrame:
@@ -429,7 +492,7 @@ def calculate_flow_scores(snapshot: dict[str, object], horizon: str = "5D") -> p
         * pd.to_numeric(frame["relative_volume"], errors="coerce").fillna(1).clip(lower=0.25)
     )
     frame["horizon"] = horizon
-    return frame
+    return calculate_flow_acceleration(frame)
 
 
 def calculate_sector_leadership_scores(sectors: pd.DataFrame, snapshot: dict[str, object], horizon: str = "5D") -> pd.DataFrame:
@@ -458,7 +521,7 @@ def calculate_sector_leadership_scores(sectors: pd.DataFrame, snapshot: dict[str
         axis=1,
     )
     frame["flow_label"] = frame["flow_score"].apply(_flow_label)
-    return frame.sort_values("flow_score", ascending=False).reset_index(drop=True)
+    return calculate_institutional_score(frame).sort_values("flow_score", ascending=False).reset_index(drop=True)
 
 
 def _flow_label(score: object) -> str:
@@ -582,15 +645,18 @@ def calculate_market_breadth(snapshot: dict[str, object]) -> dict[str, object]:
 def _theme_metrics(snapshot: dict[str, object], horizon: str = "5D") -> pd.DataFrame:
     quotes = snapshot.get("quotes", {})
     period_key = _horizon_key(horizon)
+    prior_key = f"prior_{period_key}"
     rows = []
     for name, basket in THEME_BASKETS.items():
         available = [quotes.get(symbol, {}) for symbol in basket if quotes.get(symbol, {}).get("status") == "OK"]
         rows.append(
             {
                 "name": name,
+                "symbol": "Basket",
                 "return_1d": _mean(row.get("return_1d") for row in available),
                 "return_5d": _mean(row.get("return_5d") for row in available),
                 "period_return": _mean(row.get(period_key) for row in available),
+                "prior_period_return": _mean(row.get(prior_key) for row in available),
                 "relative_volume": _mean(row.get("relative_volume") for row in available),
                 "breadth": _basket_breadth(snapshot, basket, period_key),
                 "dollar_volume_change": _mean(row.get("dollar_volume_change") for row in available),
@@ -610,6 +676,8 @@ def identify_emerging_themes(snapshot: dict[str, object], horizon: str = "5D") -
     frame = _theme_metrics(snapshot, horizon)
     if frame.empty:
         return frame
+    spy_return = to_float(snapshot.get("quotes", {}).get("SPY", {}).get(_horizon_key(horizon))) or 0.0
+    frame["relative_strength_spy"] = pd.to_numeric(frame["period_return"], errors="coerce") - spy_return
     score = (
         _rank_normalize(frame["period_return"]) * 0.45
         + _rank_normalize(frame["return_1d"]) * 0.10
@@ -618,12 +686,15 @@ def identify_emerging_themes(snapshot: dict[str, object], horizon: str = "5D") -
         + _rank_normalize(frame["dollar_volume_change"]) * 0.10
     )
     frame["flow_score"] = (score * 100).clip(-100, 100)
-    frame["momentum"] = frame.apply(
-        lambda row: "Accelerating" if (to_float(row.get("return_1d")) or 0) > 0 and (to_float(row.get("period_return")) or 0) > 0
-        else "Fading" if (to_float(row.get("return_1d")) or 0) < 0 and (to_float(row.get("period_return")) or 0) < 0
-        else "Mixed",
-        axis=1,
-    )
+    frame = calculate_flow_acceleration(frame)
+    frame["leadership_score"] = (
+        _rank_normalize(frame["flow_score"], 0, 100) * 0.35
+        + _rank_normalize(frame["relative_strength_spy"], 0, 100) * 0.25
+        + _rank_normalize(frame["relative_volume"], 0, 100) * 0.15
+        + _rank_normalize(frame["breadth"], 0, 100) * 0.15
+        + _rank_normalize(frame["persistence"], 0, 100) * 0.10
+    ).clip(0, 100)
+    frame["momentum"] = frame["acceleration_label"]
     completeness = frame["loaded"] / frame["basket_size"].clip(lower=1)
     frame["confidence"] = (
         completeness * 55
@@ -631,7 +702,7 @@ def identify_emerging_themes(snapshot: dict[str, object], horizon: str = "5D") -
         + pd.to_numeric(frame["breadth"], errors="coerce").fillna(50) / 100 * 25
     ).clip(0, 100)
     frame["horizon"] = horizon
-    return frame.sort_values("flow_score", ascending=False).reset_index(drop=True)
+    return calculate_institutional_score(frame).sort_values("flow_score", ascending=False).reset_index(drop=True)
 
 
 def identify_beneficiaries(sectors: pd.DataFrame, snapshot: dict[str, object], horizon: str = "5D") -> list[dict[str, object]]:
@@ -702,6 +773,247 @@ def identify_beneficiaries(sectors: pd.DataFrame, snapshot: dict[str, object], h
     return output
 
 
+def _group_memberships(sectors: pd.DataFrame, themes: pd.DataFrame) -> dict[str, list[dict[str, object]]]:
+    memberships: dict[str, list[dict[str, object]]] = {}
+    if sectors is not None and not sectors.empty:
+        for _, row in sectors.iterrows():
+            for ticker in SECTOR_BASKETS.get(str(row.get("symbol")), []):
+                memberships.setdefault(ticker, []).append({**row.to_dict(), "group_type": "Sector"})
+    if themes is not None and not themes.empty:
+        for _, row in themes.iterrows():
+            for ticker in THEME_BASKETS.get(str(row.get("name")), []):
+                memberships.setdefault(ticker, []).append({**row.to_dict(), "group_type": "Theme"})
+    return memberships
+
+
+def _candidate_stock_rows(
+    sectors: pd.DataFrame,
+    themes: pd.DataFrame,
+    snapshot: dict[str, object],
+    horizon: str,
+    strongest_parent: bool,
+) -> pd.DataFrame:
+    quotes = snapshot.get("quotes", {})
+    period_key = _horizon_key(horizon)
+    prior_key = f"prior_{period_key}"
+    spy_return = to_float(quotes.get("SPY", {}).get(period_key)) or 0.0
+    rows = []
+    for ticker, parents in _group_memberships(sectors, themes).items():
+        quote = quotes.get(ticker, {})
+        stock_return = to_float(quote.get(period_key))
+        if stock_return is None:
+            continue
+        parent = sorted(parents, key=lambda row: to_float(row.get("institutional_score")) or 0.0, reverse=strongest_parent)[0]
+        prior_return = to_float(quote.get(prior_key)) or 0.0
+        parent_return = to_float(parent.get("period_return")) or 0.0
+        rows.append(
+            {
+                "ticker": ticker,
+                "company": COMPANY_NAMES.get(ticker, ticker),
+                "parent": parent.get("name"),
+                "group_type": parent.get("group_type"),
+                "parent_flow_score": to_float(parent.get("flow_score")) or 0.0,
+                "parent_institutional_score": to_float(parent.get("institutional_score")) or 0.0,
+                "parent_breadth": to_float(parent.get("breadth")) or 0.0,
+                "period_return": stock_return,
+                "prior_period_return": prior_return,
+                "return_acceleration": stock_return - prior_return,
+                "relative_spy": stock_return - spy_return,
+                "relative_parent": stock_return - parent_return,
+                "relative_volume": to_float(quote.get("relative_volume")) or 0.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def calculate_opportunity_scores(
+    sectors: pd.DataFrame,
+    themes: pd.DataFrame,
+    snapshot: dict[str, object],
+    horizon: str = "5D",
+) -> pd.DataFrame:
+    frame = _candidate_stock_rows(sectors, themes, snapshot, horizon, True)
+    if frame.empty:
+        return frame
+    frame["institutional_score"] = (
+        _rank_normalize(frame["parent_flow_score"], 0, 100) * 0.18
+        + _rank_normalize(frame["parent_institutional_score"], 0, 100) * 0.24
+        + _rank_normalize(frame["relative_spy"], 0, 100) * 0.17
+        + _rank_normalize(frame["relative_parent"], 0, 100) * 0.13
+        + _rank_normalize(frame["relative_volume"], 0, 100) * 0.11
+        + _rank_normalize(frame["parent_breadth"], 0, 100) * 0.09
+        + _rank_normalize(frame["return_acceleration"], 0, 100) * 0.08
+    ).clip(0, 100)
+    score = (
+        frame["institutional_score"] * 0.55
+        + _rank_normalize(frame["parent_flow_score"], 0, 100) * 0.14
+        + _rank_normalize(frame["period_return"], 0, 100) * 0.11
+        + _rank_normalize(frame["relative_spy"], 0, 100) * 0.12
+        + _rank_normalize(frame["return_acceleration"], 0, 100) * 0.08
+    )
+    frame["opportunity_score"] = score.clip(0, 100)
+
+    def opportunity_tag(row: pd.Series) -> str:
+        if (to_float(row.get("relative_volume")) or 0) >= 1.25 and (to_float(row.get("relative_spy")) or 0) > 0:
+            return "Volume confirmed"
+        if (to_float(row.get("parent_flow_score")) or 0) >= 50 and (to_float(row.get("relative_parent")) or 0) > 0:
+            return "Flow confirmed"
+        if str(row.get("group_type")) == "Theme" and (to_float(row.get("relative_parent")) or 0) > 0:
+            return "Theme leader"
+        if (to_float(row.get("relative_parent")) or 0) > 0:
+            return "Sector leader"
+        if (to_float(row.get("return_acceleration")) or 0) > 0:
+            return "Watch breakout"
+        return "Defensive leader"
+
+    frame["tag"] = frame.apply(opportunity_tag, axis=1)
+    frame = frame.sort_values("opportunity_score", ascending=False).reset_index(drop=True)
+    for index in frame.head(8).index:
+        identity = get_company_identity(str(frame.at[index, "ticker"]))
+        frame.at[index, "company"] = identity.get("company_name") or frame.at[index, "company"]
+        frame.at[index, "logo_url"] = identity.get("logo_data_uri") or identity.get("logo_url")
+        frame.at[index, "fallback_initials"] = identity.get("fallback_initials") or str(frame.at[index, "ticker"])[:2]
+    return frame
+
+
+def calculate_risk_scores(
+    sectors: pd.DataFrame,
+    themes: pd.DataFrame,
+    snapshot: dict[str, object],
+    horizon: str = "5D",
+) -> pd.DataFrame:
+    stocks = _candidate_stock_rows(sectors, themes, snapshot, horizon, False)
+    group_frames = []
+    for frame, group_type in ((sectors, "Sector"), (themes, "Theme")):
+        if frame is not None and not frame.empty:
+            group = frame.copy()
+            group["ticker"] = group.get("symbol", "Basket")
+            group["company"] = group["name"]
+            group["parent"] = group["name"]
+            group["group_type"] = group_type
+            group["parent_flow_score"] = group["flow_score"]
+            group["parent_institutional_score"] = group["institutional_score"]
+            group["parent_breadth"] = group["breadth"]
+            group["relative_spy"] = group["relative_strength_spy"]
+            group["relative_parent"] = 0.0
+            group["return_acceleration"] = group["return_acceleration"]
+            group_frames.append(group[stocks.columns] if not stocks.empty else group)
+    candidates = pd.concat(([stocks] if not stocks.empty else []) + group_frames, ignore_index=True, sort=False)
+    if candidates.empty:
+        return candidates
+    down_volume = pd.to_numeric(candidates["relative_volume"], errors="coerce").fillna(0) * (
+        pd.to_numeric(candidates["period_return"], errors="coerce").fillna(0) < 0
+    )
+    score = (
+        _rank_normalize(-pd.to_numeric(candidates["parent_flow_score"], errors="coerce"), 0, 100) * 0.22
+        + _rank_normalize(-pd.to_numeric(candidates["relative_spy"], errors="coerce"), 0, 100) * 0.19
+        + _rank_normalize(-pd.to_numeric(candidates["relative_parent"], errors="coerce"), 0, 100) * 0.12
+        + _rank_normalize(-pd.to_numeric(candidates["period_return"], errors="coerce"), 0, 100) * 0.16
+        + _rank_normalize(down_volume, 0, 100) * 0.12
+        + _rank_normalize(-pd.to_numeric(candidates["parent_breadth"], errors="coerce"), 0, 100) * 0.10
+        + _rank_normalize(-pd.to_numeric(candidates["return_acceleration"], errors="coerce"), 0, 100) * 0.09
+    )
+    candidates["risk_score"] = score.clip(0, 100)
+
+    def risk_tag(row: pd.Series) -> str:
+        if (to_float(row.get("parent_flow_score")) or 0) <= -55:
+            return "Capital flight"
+        if (to_float(row.get("relative_volume")) or 0) >= 1.25 and (to_float(row.get("period_return")) or 0) < 0:
+            return "High-volume selloff"
+        if (to_float(row.get("parent_breadth")) or 50) < 35:
+            return "Weak breadth"
+        if (to_float(row.get("return_acceleration")) or 0) < -2:
+            return "Losing leadership"
+        if (to_float(row.get("relative_spy")) or 0) < -2:
+            return "Breakdown watch"
+        return "Avoid for now"
+
+    candidates["tag"] = candidates.apply(risk_tag, axis=1)
+    return candidates.sort_values("risk_score", ascending=False).reset_index(drop=True)
+
+
+def generate_market_drivers(
+    sectors: pd.DataFrame,
+    themes: pd.DataFrame,
+    snapshot: dict[str, object],
+    breadth: dict[str, object],
+    regime: dict[str, object],
+) -> list[str]:
+    if sectors is None or sectors.empty:
+        return ["Live market drivers are unavailable until the sector snapshot refreshes."]
+    sector_index = sectors.set_index("name")
+    theme_index = themes.set_index("name") if themes is not None and not themes.empty else pd.DataFrame()
+    quotes = snapshot.get("quotes", {})
+    drivers: list[str] = []
+    defensive = _mean(sector_index.loc[name, "flow_score"] for name in ("Healthcare", "Consumer Staples", "Utilities") if name in sector_index.index) or 0.0
+    growth = _mean(sector_index.loc[name, "flow_score"] for name in ("Software", "Technology", "Semiconductors") if name in sector_index.index) or 0.0
+    if defensive > growth + 20:
+        drivers.append("Defensive rotation is strengthening as Healthcare, Staples, and Utilities outperform high-beta growth.")
+    if "Financials" in sector_index.index and (to_float(sector_index.loc["Financials", "flow_score"]) or 0) > 20 and (to_float(quotes.get("^TNX", {}).get("return_1d")) or 0) > 0:
+        drivers.append("Rising Treasury yields are confirming relative strength in Financials.")
+    if "Energy" in sector_index.index and (to_float(sector_index.loc["Energy", "flow_score"]) or 0) > 20 and (to_float(quotes.get("CL=F", {}).get("return_1d")) or 0) > 0:
+        drivers.append("Energy leadership is being confirmed by positive oil-price momentum.")
+    if "Semiconductors" in sector_index.index and (to_float(sector_index.loc["Semiconductors", "flow_score"]) or 0) < -20 and (to_float(sector_index.loc["Semiconductors", "relative_volume"]) or 0) > 1.05:
+        drivers.append("Semiconductors are experiencing above-normal selling pressure and losing relative leadership.")
+    if not theme_index.empty and "Data Centers" in theme_index.index and "AI Infrastructure" in theme_index.index:
+        if (to_float(theme_index.loc["Data Centers", "flow_score"]) or 0) > (to_float(theme_index.loc["AI Infrastructure", "flow_score"]) or 0) + 20:
+            drivers.append("Data Center demand remains resilient even as broader AI Infrastructure momentum fades.")
+    drivers.append(str(breadth.get("interpretation") or "Breadth confirmation remains mixed."))
+    if len(drivers) < 3:
+        drivers.append(str(regime.get("explanation") or "The market regime remains balanced."))
+    if len(drivers) < 3:
+        leader = sectors.iloc[0]
+        drivers.append(
+            f'{leader["name"]} has the strongest current combination of flow, breadth, and relative performance versus SPY.'
+        )
+    return drivers[:6]
+
+
+def generate_money_going_next(sectors: pd.DataFrame, themes: pd.DataFrame) -> dict[str, list[dict[str, object]]]:
+    combined = []
+    for frame, group_type in ((sectors, "Sector"), (themes, "Theme")):
+        if frame is not None and not frame.empty:
+            copy = frame.copy()
+            copy["group_type"] = group_type
+            combined.append(copy)
+    if not combined:
+        return {"emerging": [], "losing": []}
+    frame = pd.concat(combined, ignore_index=True, sort=False)
+
+    def rows(source: pd.DataFrame, rising: bool) -> list[dict[str, object]]:
+        output = []
+        for _, row in source.head(5).iterrows():
+            acceleration = to_float(row.get("flow_acceleration")) or 0.0
+            confidence = min(
+                100.0,
+                max(
+                    0.0,
+                    (to_float(row.get("institutional_score")) or 0) * 0.55
+                    + min(100, abs(acceleration)) * 0.25
+                    + (to_float(row.get("persistence")) or 50) * 0.20,
+                ),
+            )
+            output.append(
+                {
+                    "name": row.get("name"),
+                    "group_type": row.get("group_type"),
+                    "current_score": to_float(row.get("flow_score")) or 0.0,
+                    "acceleration": acceleration,
+                    "confidence": confidence,
+                    "reason": (
+                        "Flow, breadth, and relative strength are improving."
+                        if rising
+                        else "Flow momentum and relative strength are deteriorating."
+                    ),
+                }
+            )
+        return output
+
+    emerging = frame.sort_values(["flow_acceleration", "relative_strength_spy"], ascending=False)
+    losing = frame.sort_values(["flow_acceleration", "relative_strength_spy"], ascending=True)
+    return {"emerging": rows(emerging, True), "losing": rows(losing, False)}
+
+
 def _history_metric(frame: pd.DataFrame, offset: int, period_days: int = 5) -> dict[str, float | None]:
     close = _numeric(frame, "Close")
     volume = _numeric(frame, "Volume")
@@ -759,6 +1071,39 @@ def build_rotation_timeline(snapshot: dict[str, object], horizon: str = "5D", se
             }
         )
     return output
+
+
+def generate_rotation_persistence_takeaway(
+    persistence: pd.DataFrame,
+    sectors: pd.DataFrame,
+    regime: dict[str, object],
+) -> dict[str, str]:
+    if persistence is None or persistence.empty:
+        return {"label": "Unstable rotation", "takeaway": "Historical leadership confirmation is unavailable."}
+    first = persistence.iloc[:, 0].sort_values(ascending=False)
+    latest = persistence.iloc[:, -1].sort_values(ascending=False)
+    previous_leaders = first.head(2).index.tolist()
+    latest_leaders = latest.head(2).index.tolist()
+    common = len(set(previous_leaders) & set(latest_leaders))
+    defensive = {"Healthcare", "Consumer Staples", "Utilities"}
+    growth = {"Technology", "Software", "Semiconductors", "Consumer Discretionary"}
+    if len(set(latest_leaders) & defensive) > len(set(previous_leaders) & defensive):
+        label = "Defensive rotation"
+    elif len(set(latest_leaders) & growth) > len(set(previous_leaders) & growth):
+        label = "Growth leadership"
+    elif common == 0:
+        label = "Unstable rotation"
+    elif common == len(latest_leaders):
+        label = "Leadership narrowing"
+    else:
+        label = "Leadership broadening"
+    return {
+        "label": label,
+        "takeaway": (
+            f'Leadership has shifted from {" and ".join(previous_leaders)} toward {" and ".join(latest_leaders)} '
+            f'over the latest sessions; the market regime is {str(regime.get("regime") or "neutral").lower()}.'
+        ),
+    }
 
 
 def generate_sector_research_insights(
@@ -930,10 +1275,15 @@ def build_sector_research_packet(snapshot: dict[str, object], horizon: str = "5D
     beneficiaries = identify_beneficiaries(sectors, snapshot, horizon)
     timeline = build_rotation_timeline(snapshot, horizon)
     persistence = build_rotation_persistence(snapshot, horizon)
+    persistence_takeaway = generate_rotation_persistence_takeaway(persistence, sectors, regime)
     conviction = calculate_rotation_conviction(sectors)
     brief = generate_sector_research_brief(sectors, regime, conviction, horizon)
     what_this_means = generate_what_this_means(sectors, regime, themes)
     breadth["interpretation"] = generate_breadth_interpretation(breadth, sectors)
+    opportunities = calculate_opportunity_scores(sectors, themes, snapshot, horizon)
+    risks = calculate_risk_scores(sectors, themes, snapshot, horizon)
+    market_drivers = generate_market_drivers(sectors, themes, snapshot, breadth, regime)
+    money_going_next = generate_money_going_next(sectors, themes)
     status = snapshot.get("status", {})
     completeness = to_float(status.get("completeness")) or 0.0
     breadth_available = breadth.get("tracked", 0) > 0
@@ -946,8 +1296,13 @@ def build_sector_research_packet(snapshot: dict[str, object], horizon: str = "5D
         "regime": regime,
         "themes": themes,
         "beneficiaries": beneficiaries,
+        "opportunities": opportunities,
+        "risks": risks,
+        "market_drivers": market_drivers,
+        "money_going_next": money_going_next,
         "timeline": timeline,
         "persistence": persistence,
+        "persistence_takeaway": persistence_takeaway,
         "conviction": conviction,
         "brief": brief,
         "what_this_means": what_this_means,

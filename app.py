@@ -673,22 +673,44 @@ def render_sector_flow_heatmap(sectors: pd.DataFrame, themes: pd.DataFrame, hori
     if sectors is not None and not sectors.empty:
         items.extend({**row.to_dict(), "kind": "Sector"} for _, row in sectors.iterrows())
     if themes is not None and not themes.empty:
-        items.extend({**row.to_dict(), "symbol": "Theme", "kind": "Theme"} for _, row in themes.iterrows())
+        items.extend({**row.to_dict(), "kind": "Theme"} for _, row in themes.iterrows())
     if not items:
         return '<p class="pt-placeholder">Flow heatmap is unavailable.</p>'
     tiles = ""
     for row in items:
         score = to_float(row.get("flow_score")) or 0.0
+        acceleration = to_float(row.get("flow_acceleration")) or 0.0
+        arrow = "&#8593;" if acceleration > 15 else "&#8595;" if acceleration < -15 else "&#8594;"
         tiles += f"""
         <div class="pt-sector-heat-tile" style="background:{_heat_color(score)}">
           <span>{escape(str(row.get("kind")))}</span>
-          <strong>{escape(str(row.get("name")))}</strong>
+          <strong>{escape(str(row.get("name")))} <i>{arrow}</i></strong>
           <em>{escape(str(row.get("symbol") or "Theme"))}</em>
           <b>{score:+.0f}</b>
-          <small>{escape(horizon)} {fmt_daily_move(row.get("period_return"))} | Rel Vol {fmt_multiple(row.get("relative_volume"))}</small>
+          <small>{escape(horizon)} {fmt_daily_move(row.get("period_return"))} | vs SPY {fmt_daily_move(row.get("relative_strength_spy"))}</small>
+          <small>Rel Vol {fmt_multiple(row.get("relative_volume"))} | {escape(str(row.get("acceleration_label") or row.get("trend") or "Stable"))}</small>
         </div>
         """
     return f'<div class="pt-sector-flow-heatmap">{tiles}</div>'
+
+
+def render_sector_theme_toggle_heatmap(sectors: pd.DataFrame, themes: pd.DataFrame, horizon: str) -> None:
+    view = st.segmented_control(
+        "Flow View",
+        ["Sector View", "Theme View", "Combined View"],
+        default="Sector View",
+        key="sector_research_flow_view",
+        label_visibility="collapsed",
+    ) or "Sector View"
+    selected_sectors = sectors if view in {"Sector View", "Combined View"} else pd.DataFrame()
+    selected_themes = themes if view in {"Theme View", "Combined View"} else pd.DataFrame()
+    html(
+        section(
+            view.replace(" View", " Flow Heatmap"),
+            f"Selected {horizon} performance, relative strength, flow, and acceleration",
+            render_sector_flow_heatmap(selected_sectors, selected_themes, horizon),
+        )
+    )
 
 
 def render_compact_rotation_flow_map(sectors: pd.DataFrame) -> go.Figure | None:
@@ -710,30 +732,132 @@ def render_leadership_score_bars(ranked: pd.DataFrame, horizon: str) -> str:
         rows += f"""
         <tr>
           <td>{index + 1}</td><td><strong>{escape(str(row.get("name")))}</strong><small>{escape(str(row.get("symbol")))}</small></td>
-          <td>{_score_bar(row.get("flow_score"), True)}</td><td>{_score_bar(row.get("leadership_score"))}</td>
+          <td>{_score_bar(row.get("flow_score"), True)}</td><td>{_score_bar(row.get("institutional_score"))}</td><td>{_score_bar(row.get("leadership_score"))}</td>
           <td class="{_sector_flow_tone(row.get("period_return"))}">{fmt_daily_move(row.get("period_return"))}</td>
+          <td class="{_sector_flow_tone(row.get("relative_strength_spy"))}">{fmt_daily_move(row.get("relative_strength_spy"))}</td>
           <td>{fmt_multiple(row.get("relative_volume"))}</td><td>{fmt_percent(row.get("breadth"), 0)}</td>
           <td>{escape(str(row.get("trend")))}</td><td>{escape(str(row.get("leadership_label")))}</td>
         </tr>
         """
     return f"""
     <div class="pt-sector-ranking-wrap"><table class="pt-sector-ranking">
-      <thead><tr><th>#</th><th>Sector / ETF</th><th>Flow Score</th><th>Leadership</th><th>{escape(horizon)}</th><th>Rel Vol</th><th>Breadth</th><th>Trend</th><th>State</th></tr></thead>
+      <thead><tr><th>#</th><th>Sector / ETF</th><th>Flow Score</th><th>Institutional</th><th>Leadership</th><th>{escape(horizon)}</th><th>vs SPY</th><th>Rel Vol</th><th>Breadth</th><th>Trend</th><th>State</th></tr></thead>
       <tbody>{rows}</tbody>
     </table></div>
     """
 
 
-def _sector_big_money_markup(sectors: pd.DataFrame) -> str:
+def _logo_markup(row: object) -> str:
+    logo_url = str(row.get("logo_url") or "")
+    initials = escape(str(row.get("fallback_initials") or row.get("ticker") or "PT"))
+    return f'<img src="{escape(logo_url)}" alt="" />' if logo_url else f"<span>{initials}</span>"
+
+
+def render_top_opportunities(opportunities: pd.DataFrame, horizon: str) -> str:
+    if opportunities is None or opportunities.empty:
+        return '<p class="pt-placeholder">Opportunity ranking is unavailable.</p>'
+    rows = ""
+    for rank, (_, row) in enumerate(opportunities.head(6).iterrows(), 1):
+        rows += f"""
+        <div class="pt-sector-research-row">
+          <b>{rank}</b><div class="pt-sector-beneficiary-logo">{_logo_markup(row)}</div>
+          <div><strong>{escape(str(row.get("ticker")))}</strong><span>{escape(str(row.get("company")))}</span></div>
+          <div><span>{escape(str(row.get("group_type")))}</span><strong>{escape(str(row.get("parent")))}</strong><small>Institutional {to_float(row.get("institutional_score")) or 0:.0f}</small></div>
+          <div><span>Opportunity</span><strong class="good">{to_float(row.get("opportunity_score")) or 0:.0f}</strong></div>
+          <div><span>{escape(horizon)}</span><strong class="{_sector_flow_tone(row.get("period_return"))}">{fmt_daily_move(row.get("period_return"))}</strong></div>
+          <div><span>vs SPY</span><strong class="{_sector_flow_tone(row.get("relative_spy"))}">{fmt_daily_move(row.get("relative_spy"))}</strong></div>
+          <div><span>Rel Vol</span><strong>{fmt_multiple(row.get("relative_volume"))}</strong></div>
+          <em class="good">{escape(str(row.get("tag")))}</em>
+        </div>
+        """
+    return f'<div class="pt-sector-research-list">{rows}</div>'
+
+
+def render_top_risks(risks: pd.DataFrame, horizon: str) -> str:
+    if risks is None or risks.empty:
+        return '<p class="pt-placeholder">Risk ranking is unavailable.</p>'
+    rows = ""
+    for rank, (_, row) in enumerate(risks.head(6).iterrows(), 1):
+        rows += f"""
+        <div class="pt-sector-research-row pt-sector-risk-row">
+          <b>{rank}</b><div class="pt-sector-risk-icon">!</div>
+          <div><strong>{escape(str(row.get("ticker")))}</strong><span>{escape(str(row.get("company")))}</span></div>
+          <div><span>{escape(str(row.get("group_type")))}</span><strong>{escape(str(row.get("parent")))}</strong></div>
+          <div><span>Risk</span><strong class="bad">{to_float(row.get("risk_score")) or 0:.0f}</strong></div>
+          <div><span>{escape(horizon)}</span><strong class="{_sector_flow_tone(row.get("period_return"))}">{fmt_daily_move(row.get("period_return"))}</strong></div>
+          <div><span>vs SPY</span><strong class="{_sector_flow_tone(row.get("relative_spy"))}">{fmt_daily_move(row.get("relative_spy"))}</strong></div>
+          <div><span>Rel Vol</span><strong>{fmt_multiple(row.get("relative_volume"))}</strong></div>
+          <em class="bad">{escape(str(row.get("tag")))}</em>
+        </div>
+        """
+    return f'<div class="pt-sector-research-list">{rows}</div>'
+
+
+def render_compact_capital_rotation_summary(sectors: pd.DataFrame, conviction: dict[str, object]) -> str:
+    if sectors is None or sectors.empty:
+        return '<p class="pt-placeholder">Capital rotation summary is unavailable.</p>'
+    inflows = "".join(f"<li>{escape(str(name))}</li>" for name in sectors.head(3)["name"])
+    outflows = "".join(f"<li>{escape(str(name))}</li>" for name in sectors.tail(3).sort_values("flow_score")["name"])
+    leader = sectors.iloc[0]
+    laggard = sectors.iloc[-1]
+    score = to_float(conviction.get("score")) or 0.0
+    return f"""
+    <div class="pt-sector-rotation-summary">
+      <div><span>From</span><ul>{outflows}</ul></div>
+      <div><span>To</span><ul>{inflows}</ul></div>
+      <div><span>Rotation Strength</span><strong class="{_sector_flow_tone(score - 50)}">{score:.0f}/100</strong><small>{escape(str(conviction.get("label") or "Noise"))}</small></div>
+      <div><span>Primary Rotation</span><strong>{escape(str(laggard.get("name")))} &#8594; {escape(str(leader.get("name")))}</strong><small>{float(laggard.get("flow_score") or 0):+.0f} to {float(leader.get("flow_score") or 0):+.0f}</small></div>
+    </div>
+    """
+
+
+def render_expandable_flow_map(sectors: pd.DataFrame) -> None:
+    with st.expander("Expand Flow Map", expanded=False):
+        flow_figure = render_compact_rotation_flow_map(sectors)
+        if flow_figure is None:
+            html('<p class="pt-placeholder">A two-sided flow map requires both positive and negative live sector scores.</p>')
+        else:
+            st.plotly_chart(flow_figure, use_container_width=True, config={"displayModeBar": False})
+
+
+def _market_drivers_markup(drivers: list[str]) -> str:
+    if not drivers:
+        return '<p class="pt-placeholder">Market drivers are unavailable.</p>'
+    rows = "".join(f'<div><b>{index}</b><p>{escape(str(driver))}</p></div>' for index, driver in enumerate(drivers, 1))
+    return f'<div class="pt-sector-drivers">{rows}</div>'
+
+
+def _money_going_next_markup(groups: dict[str, list[dict[str, object]]]) -> str:
+    def column(title: str, rows: list[dict[str, object]], tone: str) -> str:
+        items = ""
+        for row in rows:
+            items += f"""
+            <div>
+              <span>{escape(str(row.get("group_type")))}</span><strong>{escape(str(row.get("name")))}</strong>
+              <b class="{tone}">{float(row.get("current_score") or 0):+.0f}</b>
+              <em>{float(row.get("acceleration") or 0):+.0f} acceleration | {fmt_percent(row.get("confidence"), 0)} confidence</em>
+              <small>{escape(str(row.get("reason")))}</small>
+            </div>
+            """
+        return f'<section><h4 class="{tone}">{escape(title)}</h4>{items}</section>'
+    return (
+        '<div class="pt-sector-next">'
+        + column("Potential Emerging Leaders", groups.get("emerging", []), "good")
+        + column("Potential Losing Leadership", groups.get("losing", []), "bad")
+        + "</div>"
+    )
+
+
+def _sector_big_money_markup(sectors: pd.DataFrame, limit: int = 3) -> str:
     if sectors is None or sectors.empty:
         return '<p class="pt-placeholder">Flow classifications are unavailable.</p>'
     inflows = ""
     outflows = ""
-    for _, row in sectors.head(4).iterrows():
+    for _, row in sectors.head(limit).iterrows():
         score = to_float(row.get("flow_score")) or 0.0
         count = 5 if score >= 60 else 4 if score >= 40 else 3 if score >= 20 else 1
         inflows += f'<div><span>{escape(str(row.get("name")))}</span><b class="good">{"&#9650;" * count}</b></div>'
-    for _, row in sectors.tail(4).sort_values("flow_score").iterrows():
+    for _, row in sectors.tail(limit).sort_values("flow_score").iterrows():
         score = abs(to_float(row.get("flow_score")) or 0.0)
         count = 5 if score >= 60 else 4 if score >= 40 else 3 if score >= 20 else 1
         outflows += f'<div><span>{escape(str(row.get("name")))}</span><b class="bad">{"&#9660;" * count}</b></div>'
@@ -753,45 +877,39 @@ def _sector_breadth_markup(breadth: dict[str, object]) -> str:
     return f'<div class="pt-sector-breadth-head"><b class="{tone}">{escape(health)}</b><span>Tracked-stock proxy breadth</span></div><p class="pt-sector-breadth-copy">{interpretation}</p><div class="pt-sector-mini-grid">{cards}</div>'
 
 
-def _sector_themes_markup(themes: pd.DataFrame, horizon: str) -> str:
+def render_emerging_themes_enhanced(themes: pd.DataFrame, horizon: str) -> str:
     if themes is None or themes.empty:
         return '<p class="pt-placeholder">Theme baskets are unavailable.</p>'
     cards = ""
     for _, row in themes.head(8).iterrows():
         score = to_float(row.get("flow_score")) or 0.0
+        acceleration = to_float(row.get("flow_acceleration")) or 0.0
+        arrow = "&#8593;" if acceleration > 15 else "&#8595;" if acceleration < -15 else "&#8594;"
         cards += f"""
         <div class="pt-sector-theme-card">
           <div><strong>{escape(str(row.get("name")))}</strong><b class="{_sector_flow_tone(score)}">{score:+.0f}</b></div>
-          <span>{escape(horizon)} {fmt_daily_move(row.get("period_return"))} | Rel Vol {fmt_multiple(row.get("relative_volume"))}</span>
-          <p>{escape(str(row.get("momentum")))} | Top movers: {escape(str(row.get("top_movers") or "N/A"))}</p>
-          <em>Confidence {fmt_percent(row.get("confidence"), 0)}</em>
+          <div class="pt-sector-theme-scores"><span>Institutional <b>{float(row.get("institutional_score") or 0):.0f}</b></span><span>Confidence <b>{fmt_percent(row.get("confidence"), 0)}</b></span></div>
+          <span>{escape(horizon)} {fmt_daily_move(row.get("period_return"))} | vs SPY {fmt_daily_move(row.get("relative_strength_spy"))}</span>
+          <span>Rel Vol {fmt_multiple(row.get("relative_volume"))} | {arrow} {escape(str(row.get("acceleration_label") or "Stable"))}</span>
+          <p>Top movers: {escape(str(row.get("top_movers") or "N/A"))}</p>
         </div>
         """
     return f'<div class="pt-sector-theme-grid">{cards}</div>'
 
 
-def render_beneficiary_cards_enhanced(groups: list[dict[str, object]], horizon: str) -> str:
+def render_beneficiary_cards_compact(groups: list[dict[str, object]], horizon: str) -> str:
     if not groups:
         return '<p class="pt-placeholder">Beneficiary confirmation is unavailable.</p>'
     cards = ""
     for group in groups:
         rows = ""
         for item in group.get("beneficiaries", []):
-            logo_url = str(item.get("logo_url") or "")
-            initials = escape(str(item.get("fallback_initials") or item.get("ticker") or "PT"))
-            logo = f'<img src="{escape(logo_url)}" alt="" />' if logo_url else f"<span>{initials}</span>"
             rows += f"""
-            <div class="pt-sector-beneficiary-row">
-              <div class="pt-sector-beneficiary-logo">{logo}</div>
+            <div class="pt-sector-beneficiary-row pt-sector-beneficiary-compact">
+              <div class="pt-sector-beneficiary-logo">{_logo_markup(item)}</div>
               <div class="pt-sector-beneficiary-company"><b>{escape(str(item.get("ticker")))}</b><span>{escape(str(item.get("company")))}</span></div>
               <em class="{_sector_flow_tone(item.get("period_return"))}">{fmt_daily_move(item.get("period_return"))}</em>
-              <div class="pt-sector-beneficiary-metrics">
-                <span>{escape(horizon)} return <b>{fmt_daily_move(item.get("period_return"))}</b></span>
-                <span>vs SPY <b class="{_sector_flow_tone(item.get("relative_spy"))}">{fmt_daily_move(item.get("relative_spy"))}</b></span>
-                <span>vs sector <b class="{_sector_flow_tone(item.get("relative_sector"))}">{fmt_daily_move(item.get("relative_sector"))}</b></span>
-                <span>Rel Vol <b>{fmt_multiple(item.get("relative_volume"))}</b></span>
-              </div>
-              <small>{escape(str(item.get("reason")))} | {fmt_percent(item.get("confidence"), 0)} confidence</small>
+              <small>vs SPY <b class="{_sector_flow_tone(item.get("relative_spy"))}">{fmt_daily_move(item.get("relative_spy"))}</b> | {escape(str(item.get("reason")))}</small>
             </div>
             """
         cards += f"""
@@ -804,6 +922,23 @@ def render_beneficiary_cards_enhanced(groups: list[dict[str, object]], horizon: 
         </div>
         """
     return f'<div class="pt-sector-beneficiary-grid">{cards}</div>'
+
+
+def _beneficiary_details_markup(groups: list[dict[str, object]], horizon: str) -> str:
+    rows = ""
+    for group in groups:
+        for item in group.get("beneficiaries", []):
+            rows += f"""
+            <tr><td>{escape(str(group.get("theme")))}</td><td><strong>{escape(str(item.get("ticker")))}</strong></td>
+            <td>{fmt_daily_move(item.get("period_return"))}</td><td>{fmt_daily_move(item.get("relative_spy"))}</td>
+            <td>{fmt_daily_move(item.get("relative_sector"))}</td><td>{fmt_multiple(item.get("relative_volume"))}</td>
+            <td>{fmt_percent(item.get("confidence"), 0)}</td><td>{escape(str(item.get("reason")))}</td></tr>
+            """
+    return f'<div class="pt-sector-ranking-wrap"><table class="pt-sector-ranking"><thead><tr><th>Group</th><th>Ticker</th><th>{escape(horizon)}</th><th>vs SPY</th><th>vs Sector</th><th>Rel Vol</th><th>Confidence</th><th>Reason</th></tr></thead><tbody>{rows}</tbody></table></div>'
+
+
+def _persistence_takeaway_markup(takeaway: dict[str, object]) -> str:
+    return f'<div class="pt-sector-persistence-takeaway"><strong>{escape(str(takeaway.get("label") or "Unstable rotation"))}</strong><p>{escape(str(takeaway.get("takeaway") or ""))}</p></div>'
 
 
 def render_rotation_persistence_heatmap(persistence: pd.DataFrame) -> go.Figure | None:
@@ -904,19 +1039,18 @@ def render_sector_research(snapshot: dict[str, object]) -> None:
 
     html(_sector_brief_markup(packet))
     html(section("What This Means", "Actionable implications from the current rotation read", _what_this_means_markup(packet)))
-    html(section("Sector Flow Heatmap", f"Selected {horizon} return, flow score, and relative-volume confirmation", render_sector_flow_heatmap(sectors, themes, horizon)))
-
-    html(section("Capital Rotation Flow Map", "Compact view of where capital is leaving and where it is going", ""))
-    flow_figure = render_compact_rotation_flow_map(sectors)
-    if flow_figure is None:
-        html('<p class="pt-placeholder">A two-sided flow map requires both positive and negative live sector scores.</p>')
-    else:
-        st.plotly_chart(flow_figure, use_container_width=True, config={"displayModeBar": False})
+    render_sector_theme_toggle_heatmap(sectors, themes, horizon)
+    html(section("Top Opportunities", "Highest-confirmation names to research next", render_top_opportunities(packet.get("opportunities", pd.DataFrame()), horizon)))
+    html(section("Top Risks", "Groups and names showing the strongest pressure signals", render_top_risks(packet.get("risks", pd.DataFrame()), horizon)))
+    html(section("Capital Rotation", "Where money is leaving, where it is going, and the strength of the move", render_compact_capital_rotation_summary(sectors, packet.get("conviction", {}))))
+    render_expandable_flow_map(sectors)
 
     sort_options = {
+        "Institutional Score": "institutional_score",
         "Flow Score": "flow_score",
         "Leadership Score": "leadership_score",
         f"{horizon} Performance": "period_return",
+        "Relative Performance vs SPY": "relative_strength_spy",
         "Relative Volume": "relative_volume",
         "Breadth": "breadth",
     }
@@ -928,16 +1062,23 @@ def render_sector_research(snapshot: dict[str, object]) -> None:
         ranking_markup = '<p class="pt-placeholder">Sector rankings are unavailable from the current provider response.</p>'
     html(section("Sector Leadership Rankings", "Visual ranking from the latest shared market snapshot", ranking_markup))
 
-    html(section("Emerging Themes", "Accelerating configurable baskets ranked by selected-horizon flow", _sector_themes_markup(themes, horizon)))
-    html(section("Who Benefits If This Continues?", "Stock-level relative strength and volume confirmation inside the strongest groups", render_beneficiary_cards_enhanced(packet.get("beneficiaries", []), horizon)))
+    html(section("Market Drivers", "Deterministic explanation of why the current rotation may be happening", _market_drivers_markup(packet.get("market_drivers", []))))
+    html(section("Emerging Themes", "Configurable baskets ranked by flow, relative strength, and institutional confirmation", render_emerging_themes_enhanced(themes, horizon)))
+    html(section("Where Is Money Going Next?", "Potential emerging leaders and groups at risk of losing leadership", _money_going_next_markup(packet.get("money_going_next", {}))))
+    beneficiaries = packet.get("beneficiaries", [])
+    html(section("Who Benefits If This Continues?", "Top three confirmed names inside the strongest groups", render_beneficiary_cards_compact(beneficiaries, horizon)))
+    with st.expander("View beneficiary details", expanded=False):
+        html(_beneficiary_details_markup(beneficiaries, horizon))
 
     left, right = st.columns([0.5, 0.5])
     with left:
-        html(section("Big Money Moves", "Strongest institutional-style flow classifications", _sector_big_money_markup(sectors)))
+        html(section("Big Money Moves", "Highest-signal inflow and outflow groups", _sector_big_money_markup(sectors)))
+        with st.expander("Show all flow groups", expanded=False):
+            html(_sector_big_money_markup(sectors, len(sectors) if isinstance(sectors, pd.DataFrame) else 3))
     with right:
         html(section("Market Breadth", "Compact participation and confirmation read", _sector_breadth_markup(packet.get("breadth", {}))))
 
-    html(section("Rotation Persistence", f"Leadership persistence across recent sessions using the selected {horizon} horizon", ""))
+    html(section("Rotation Persistence", f"Leadership persistence across recent sessions using the selected {horizon} horizon", _persistence_takeaway_markup(packet.get("persistence_takeaway", {}))))
     persistence_figure = render_rotation_persistence_heatmap(packet.get("persistence", pd.DataFrame()))
     if persistence_figure is None:
         html('<p class="pt-placeholder">Historical persistence is unavailable from the current provider response.</p>')
