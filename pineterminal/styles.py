@@ -872,6 +872,14 @@ button, input, textarea, select {
   line-height: 1.35;
   margin: 0.3rem 0;
 }
+.pt-eco-event small {
+  color: var(--text);
+  display: block;
+  font-size: 0.62rem;
+  line-height: 1.3;
+  margin: 0.25rem 0 0.32rem;
+  opacity: 0.9;
+}
 .pt-eco-source {
   align-items: center;
   display: flex;

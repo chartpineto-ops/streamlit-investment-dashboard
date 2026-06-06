@@ -19,6 +19,7 @@ from data.market_news import (
     market_news_provider,
     news_summary,
 )
+from data.economic_calendar import enrich_economic_calendar_events
 from pineterminal.components import (
     html,
     money,
@@ -1480,6 +1481,9 @@ def _economic_event_card(row: dict[str, object]) -> str:
     source_url = escape(str(row.get("source_url", "")))
     source_label = escape(str(row.get("source_label", "Source")))
     source_link = f'<a href="{source_url}" target="_blank" rel="noopener noreferrer">{source_label}</a>' if source_url else ""
+    data_mode = escape(str(row.get("data_mode", row.get("status", "Calendar"))))
+    release_note = escape(str(row.get("release_note", "")))
+    release_detail = f"<small>{release_note}</small>" if release_note else ""
     return f"""
     <div class="pt-eco-event {tone}">
       <div class="pt-eco-event-head">
@@ -1492,24 +1496,34 @@ def _economic_event_card(row: dict[str, object]) -> str:
         <span><b>Previous</b>{escape(str(row.get("previous", "N/A")))}</span>
       </div>
       <p>{escape(str(row.get("why_it_matters", "")))}</p>
-      <div class="pt-eco-source"><em>{escape(str(row.get("impact", "Medium")))} impact</em>{source_link}</div>
+      {release_detail}
+      <div class="pt-eco-source"><em>{escape(str(row.get("impact", "Medium")))} impact · {data_mode}</em>{source_link}</div>
     </div>
     """
 
 
 def _economic_calendar_markup(year: int, month: int, today) -> str:
-    events = [row for row in ECONOMIC_CALENDAR_EVENTS if (event_date := _economic_event_date(row)).year == year and event_date.month == month]
+    enriched_events, calendar_status = enrich_economic_calendar_events(
+        ECONOMIC_CALENDAR_EVENTS,
+        current_date=today,
+        refresh_token=_refresh_bucket(_auto_refresh_interval_ms("Economic Data")),
+    )
+    events = [row for row in enriched_events if (event_date := _economic_event_date(row)).year == year and event_date.month == month]
     events_by_date: dict[object, list[dict[str, object]]] = defaultdict(list)
     for row in events:
         events_by_date[_economic_event_date(row)].append(row)
     month_label = f"{calendar.month_name[month]} {year}"
     released = sum(1 for row in events if str(row.get("status", "")).casefold() == "released")
+    pending = sum(1 for row in events if str(row.get("actual", "")).casefold() == "pending")
     high_impact = sum(1 for row in events if str(row.get("impact", "")).casefold() == "high")
+    updated = int(calendar_status.get("updated_count", 0) or 0)
     summary = f"""
     <div class="pt-score-breakdown">
       <div class="pt-row-card"><span class="pt-mini-label">Month</span><strong>{escape(month_label)}</strong></div>
       <div class="pt-row-card"><span class="pt-mini-label">Events</span><strong>{len(events)}</strong></div>
       <div class="pt-row-card"><span class="pt-mini-label">Released</span><strong class="good">{released}</strong></div>
+      <div class="pt-row-card"><span class="pt-mini-label">Updated Actuals</span><strong class="good">{updated}</strong></div>
+      <div class="pt-row-card"><span class="pt-mini-label">Pending</span><strong class="warn">{pending}</strong></div>
       <div class="pt-row-card"><span class="pt-mini-label">High Impact</span><strong class="warn">{high_impact}</strong></div>
     </div>
     """
@@ -1526,10 +1540,11 @@ def _economic_calendar_markup(year: int, month: int, today) -> str:
             day_events = "".join(_economic_event_card(row) for row in events_by_date.get(day, []))
             empty = '<span class="pt-calendar-empty">No major releases</span>' if day.month == month and not day_events else ""
             cells += f'<div class="{" ".join(classes)}"><div class="pt-calendar-date">{day.day}</div>{day_events}{empty}</div>'
-    note = """
+    checked = escape(str(calendar_status.get("last_updated", "Latest available")))
+    note = f"""
     <p class="pt-calendar-note">
-      Actuals update after release; estimates are market-consensus placeholders when the official source does not publish forecasts.
-      Source links open the release calendar or data provider page.
+      Released actuals are overlaid from official source pages and refreshed with the Economic Data tab. Last official actuals refresh: {checked}.
+      Estimates remain market-consensus placeholders when the official source does not publish forecasts.
     </p>
     """
     return f"""
