@@ -3,7 +3,7 @@ from __future__ import annotations
 import calendar
 from collections import defaultdict
 from dataclasses import asdict
-from datetime import datetime
+from datetime import date, datetime
 from html import escape
 
 import pandas as pd
@@ -1466,6 +1466,66 @@ def _economic_event_date(row: dict[str, object]):
     return datetime.strptime(str(row["date"]), "%Y-%m-%d").date()
 
 
+def _first_of_month(day: date) -> date:
+    return date(day.year, day.month, 1)
+
+
+def _add_months(day: date, offset: int) -> date:
+    month_index = day.year * 12 + day.month - 1 + offset
+    return date(month_index // 12, month_index % 12 + 1, 1)
+
+
+def _coerce_calendar_month(value: object, fallback: date) -> date:
+    if isinstance(value, date):
+        return _first_of_month(value)
+    if isinstance(value, str):
+        try:
+            return _first_of_month(datetime.strptime(value, "%Y-%m-%d").date())
+        except ValueError:
+            return fallback
+    return fallback
+
+
+def _economic_month_context(target_month: date, today: date) -> str:
+    current_month = _first_of_month(today)
+    if target_month < current_month:
+        return "Previous reports released"
+    if target_month > current_month:
+        return "Future reports scheduled"
+    return "Current month macro releases"
+
+
+def _render_economic_month_nav(today: date) -> date:
+    current_month = _first_of_month(today)
+    target_month = _coerce_calendar_month(st.session_state.get("economic_calendar_month"), current_month)
+    st.session_state["economic_calendar_month"] = target_month
+    month_label = f"{calendar.month_name[target_month.month]} {target_month.year}"
+    context = _economic_month_context(target_month, today)
+    prev_col, label_col, next_col, current_col = st.columns([0.07, 0.73, 0.07, 0.13], vertical_alignment="center")
+    with prev_col:
+        if st.button("<", key="economic_calendar_prev_month", use_container_width=True, help="Previous month"):
+            st.session_state["economic_calendar_month"] = _add_months(target_month, -1)
+            st.rerun()
+    with label_col:
+        html(
+            f"""
+            <div class="pt-calendar-nav-label">
+              <span>{escape(context)}</span>
+              <strong>{escape(month_label)}</strong>
+            </div>
+            """
+        )
+    with next_col:
+        if st.button(">", key="economic_calendar_next_month", use_container_width=True, help="Next month"):
+            st.session_state["economic_calendar_month"] = _add_months(target_month, 1)
+            st.rerun()
+    with current_col:
+        if st.button("Current", key="economic_calendar_current_month", use_container_width=True, disabled=target_month == current_month):
+            st.session_state["economic_calendar_month"] = current_month
+            st.rerun()
+    return target_month
+
+
 def _economic_event_tone(row: dict[str, object]) -> str:
     status = str(row.get("status", "")).casefold()
     impact = str(row.get("impact", "")).casefold()
@@ -1497,7 +1557,7 @@ def _economic_event_card(row: dict[str, object]) -> str:
       </div>
       <p>{escape(str(row.get("why_it_matters", "")))}</p>
       {release_detail}
-      <div class="pt-eco-source"><em>{escape(str(row.get("impact", "Medium")))} impact · {data_mode}</em>{source_link}</div>
+      <div class="pt-eco-source"><em>{escape(str(row.get("impact", "Medium")))} impact | {data_mode}</em>{source_link}</div>
     </div>
     """
 
@@ -1513,10 +1573,12 @@ def _economic_calendar_markup(year: int, month: int, today) -> str:
     for row in events:
         events_by_date[_economic_event_date(row)].append(row)
     month_label = f"{calendar.month_name[month]} {year}"
+    target_month = date(year, month, 1)
+    subtitle = _economic_month_context(target_month, today)
     released = sum(1 for row in events if str(row.get("status", "")).casefold() == "released")
     pending = sum(1 for row in events if str(row.get("actual", "")).casefold() == "pending")
     high_impact = sum(1 for row in events if str(row.get("impact", "")).casefold() == "high")
-    updated = int(calendar_status.get("updated_count", 0) or 0)
+    updated = sum(1 for row in events if row.get("actual_updated") or str(row.get("data_mode", "")).casefold().endswith("official actual"))
     summary = f"""
     <div class="pt-score-breakdown">
       <div class="pt-row-card"><span class="pt-mini-label">Month</span><strong>{escape(month_label)}</strong></div>
@@ -1548,7 +1610,7 @@ def _economic_calendar_markup(year: int, month: int, today) -> str:
     </p>
     """
     return f"""
-    {section("Economic Calendar", "Current month macro releases", summary)}
+    {section("Economic Calendar", subtitle, summary)}
     <div class="pt-calendar">
       <div class="pt-calendar-weekdays">{weekday_header}</div>
       <div class="pt-calendar-grid">{cells}</div>
@@ -1559,7 +1621,8 @@ def _economic_calendar_markup(year: int, month: int, today) -> str:
 
 def render_economic_page() -> None:
     today = now_et().date()
-    html(_economic_calendar_markup(today.year, today.month, today))
+    target_month = _render_economic_month_nav(today)
+    html(_economic_calendar_markup(target_month.year, target_month.month, today))
 
 
 def render_calendar_page() -> None:

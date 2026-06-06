@@ -824,6 +824,27 @@ button, input, textarea, select {
   font-size: 0.68rem;
   margin-top: 0.35rem;
 }
+.pt-calendar-nav-label {
+  align-items: center;
+  background: rgba(15, 27, 44, 0.76);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  min-height: 2.42rem;
+  padding: 0.48rem 0.68rem;
+}
+.pt-calendar-nav-label span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.pt-calendar-nav-label strong {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 950;
+}
 .pt-eco-event {
   border: 1px solid rgba(122, 152, 184, 0.18);
   border-left: 3px solid var(--muted);
