@@ -768,6 +768,25 @@ button, input, textarea, select {
   margin: 0.58rem 0 0.72rem;
   padding: 0.62rem 0.75rem;
 }
+.pt-live-ticker-shell {
+  margin: 0.58rem 0 0.72rem;
+}
+.pt-live-ticker-shell .pt-watch-tape {
+  margin: 0;
+}
+.pt-live-ticker-caption {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.68rem;
+  gap: 0.55rem;
+  justify-content: flex-end;
+  padding: 0.22rem 0.15rem 0;
+}
+.pt-live-ticker-caption span:first-child {
+  color: var(--green);
+}
 .pt-social-section-head {
   align-items: center;
   display: flex;
@@ -1712,23 +1731,6 @@ button, input, textarea, select {
   color: var(--faint);
   font-size: 0.62rem;
   grid-column: 1 / -1;
-}
-.pt-auto-refresh {
-  align-items: center;
-  display: flex;
-  gap: 0.6rem;
-  justify-content: flex-end;
-  margin: -0.28rem 0 0.55rem;
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-.pt-auto-refresh b {
-  color: var(--blue);
-  font-weight: 900;
-}
-.pt-auto-refresh span {
-  border-left: 1px solid rgba(122, 152, 184, 0.2);
-  padding-left: 0.6rem;
 }
 .pt-mover-grid {
   display: grid;
@@ -4625,15 +4627,6 @@ button, input, textarea, select {
   .pt-scanner-source span:last-child,
   .pt-news-feed-status span:last-child {
     margin-left: 0;
-  }
-  .pt-auto-refresh {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-  .pt-auto-refresh span {
-    border-left: 0;
-    padding-left: 0;
   }
   .pt-calendar-weekdays {
     display: none;

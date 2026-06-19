@@ -10,8 +10,8 @@ from html import escape
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 
+from components.live_ticker import render_live_ticker
 from data.market_scanner import MarketUniverseProvider, ScannerFilters, UNIVERSE_OPTIONS
 from data.market_news import (
     SOURCE_TYPES,
@@ -91,17 +91,6 @@ PAGES = [
 
 APP_STATE_VERSION = "pineterminal-dashboard-v3"
 DEFAULT_WATCHLIST = ["AMPX", "MRVL", "VICR", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
-WATCHLIST_REFRESH_INTERVAL_MS = 300_000
-PAGE_REFRESH_INTERVAL_MS = {
-    "Dashboard": 300_000,
-    "Sector Research": 300_000,
-    "Markets": 300_000,
-    "Scanner": 180_000,
-    "Watchlists": 300_000,
-    "Portfolio": 300_000,
-    "News Feed": 300_000,
-    "Economic Data": 900_000,
-}
 SCANNER_PROVIDER = MarketUniverseProvider()
 SCANNER_TABLE_COLUMNS = [0.16, 0.1, 0.11, 0.1, 0.1, 0.12, 0.12, 0.17, 0.13, 0.13]
 
@@ -434,93 +423,6 @@ def render_global_controls(page: str, analysis) -> None:
             st.session_state["global_refresh_token"] = int(st.session_state.get("global_refresh_token", 0) or 0) + 1
             st.cache_data.clear()
             st.rerun()
-
-
-def _marquee_price(row: dict[str, object]) -> str:
-    value = to_float(row.get("price"))
-    if value is None:
-        return "N/A"
-    asset_type = str(row.get("asset_type") or "")
-    if asset_type == "yield":
-        return f"{value:.2f}%"
-    if asset_type == "index":
-        return fmt_number(value, 2)
-    return f"${value:,.2f}"
-
-
-def render_market_marquee(snapshot: dict[str, object]) -> None:
-    rows = [row for row in snapshot.get("marquee", []) if to_float(row.get("price")) is not None]
-    if not rows:
-        html('<div class="pt-market-marquee-empty">Market marquee unavailable. Refresh when the data provider reconnects.</div>')
-        return
-    items = ""
-    for row in rows:
-        move = to_float(row.get("return_1d")) or 0.0
-        dollar_change = to_float(row.get("dollar_change"))
-        session_move = to_float(row.get("session_change_pct"))
-        session_label = str(row.get("session_label") or "")
-        extended = (
-            f'<small class="{tone_for_value(session_move)}">{escape(session_label)} {fmt_daily_move(session_move)}</small>'
-            if session_move is not None and session_label
-            else ""
-        )
-        items += f"""
-        <span title="Updated {escape(safe_format_datetime(row.get("last_updated")))}">
-          <b>{escape(str(row.get("display_symbol") or row.get("symbol") or ""))}</b>
-          {_marquee_price(row)}
-          <em class="{tone_for_value(dollar_change or 0)}">{escape(f"{dollar_change:+.2f}" if dollar_change is not None else "N/A")}</em>
-          <b class="{tone_for_value(move)}">{fmt_daily_move(move)}</b>
-          {extended}
-        </span>
-        """
-    html(
-        '<div class="pt-watch-tape pt-market-marquee" aria-label="Global moving market ticker">'
-        f'<div class="pt-watch-tape-inner">{items}{items}</div>'
-        "</div>"
-    )
-
-
-def _auto_refresh_interval_ms(page: str) -> int:
-    return PAGE_REFRESH_INTERVAL_MS.get(page, WATCHLIST_REFRESH_INTERVAL_MS)
-
-
-def _refresh_bucket(interval_ms: int) -> int:
-    seconds = max(1, int(interval_ms / 1000))
-    return int(now_et().timestamp() // seconds)
-
-
-def _format_refresh_interval(interval_ms: int) -> str:
-    minutes = max(1, round(interval_ms / 60_000))
-    return f"{minutes} min"
-
-
-def render_auto_refresh_timer(page: str) -> None:
-    interval_ms = _auto_refresh_interval_ms(page)
-    components.html(
-        f"""
-        <script>
-          window.setTimeout(() => window.parent.location.reload(), {interval_ms});
-        </script>
-        """,
-        height=0,
-        width=0,
-    )
-
-
-def render_auto_refresh_status(page: str) -> None:
-    if page not in PAGE_REFRESH_INTERVAL_MS:
-        return
-    interval_ms = _auto_refresh_interval_ms(page)
-    checked = now_et().strftime("%I:%M %p ET").lstrip("0")
-    html(
-        f"""
-        <div class="pt-auto-refresh">
-          <b>Auto-refresh</b>
-          <span>Every {escape(_format_refresh_interval(interval_ms))}</span>
-          <span>Last checked {escape(checked)}</span>
-        </div>
-        """
-    )
 
 
 def _social_momentum_symbols(market_snapshot: dict[str, object], selected_ticker: str | None = None) -> list[str]:
@@ -1449,7 +1351,6 @@ def _scanner_filters_from_state() -> ScannerFilters:
         if clean_ticker(part)
     )
     manual_refresh_token = int(st.session_state.get("scanner_refresh_token", 0) or 0)
-    timed_refresh_token = _refresh_bucket(_auto_refresh_interval_ms("Scanner"))
     return ScannerFilters(
         universe_type=UNIVERSE_OPTIONS.get(st.session_state.get("scanner_universe", "All U.S. Stocks"), "all_us_stocks"),
         session=str(st.session_state.get("scanner_session", "Regular Market")),
@@ -1464,7 +1365,7 @@ def _scanner_filters_from_state() -> ScannerFilters:
         include_etfs=bool(st.session_state.get("scanner_include_etfs", False)),
         exclude_low_liquidity=bool(st.session_state.get("scanner_exclude_low_liquidity", True)),
         custom_tickers=custom_values,
-        refresh_token=(manual_refresh_token * 1_000_000) + timed_refresh_token,
+        refresh_token=manual_refresh_token,
     )
 
 
@@ -2409,7 +2310,7 @@ def _economic_calendar_markup(year: int, month: int, today) -> str:
     enriched_events, calendar_status = enrich_economic_calendar_events(
         ECONOMIC_CALENDAR_EVENTS,
         current_date=today,
-        refresh_token=_refresh_bucket(_auto_refresh_interval_ms("Economic Data")),
+        refresh_token=int(st.session_state.get("global_refresh_token", 0) or 0),
     )
     events = [row for row in enriched_events if (event_date := _economic_event_date(row)).year == year and event_date.month == month]
     events_by_date: dict[object, list[dict[str, object]]] = defaultdict(list)
@@ -2733,15 +2634,13 @@ def render_page(page: str, analysis, market_snapshot: dict[str, object]) -> None
 def main() -> None:
     _init_state()
     _apply_session_valuation_specs()
-    refresh_token = int(st.session_state.get("global_refresh_token", 0) or 0) * 1_000_000 + _refresh_bucket(WATCHLIST_REFRESH_INTERVAL_MS)
+    refresh_token = int(st.session_state.get("global_refresh_token", 0) or 0)
     market_snapshot = get_market_snapshot(refresh_token)
     watchlist_rows = _watchlist_rows(market_snapshot)
     page = render_sidebar(watchlist_rows)
-    render_auto_refresh_timer(page)
     analysis = load_dashboard_analysis(st.session_state["selected_ticker"])
     render_global_controls(page, analysis)
-    render_market_marquee(market_snapshot)
-    render_auto_refresh_status(page)
+    render_live_ticker(_active_watchlist_tickers())
     render_page(page, analysis, market_snapshot)
 
 
