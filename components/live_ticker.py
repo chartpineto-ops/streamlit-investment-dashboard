@@ -5,6 +5,7 @@ from html import escape
 import pandas as pd
 import streamlit as st
 
+from components.refresh_status import mark_fragment_refresh
 from services.live_quotes import fetch_latest_quotes
 from utils.formatting import fmt_daily_move, fmt_price, now_et, safe_format_datetime, to_float
 
@@ -61,7 +62,9 @@ def _render_ticker_markup(quotes: pd.DataFrame) -> None:
         market_state = escape(str(row.get("market_state") or "Unknown"))
         source = escape(str(row.get("data_source") or "Quote provider"))
         updated = escape(safe_format_datetime(row.get("timestamp") or row.get("last_refresh")))
-        title = f"{source} | {market_state} | Updated {updated}"
+        bid = escape(fmt_price(row.get("bid")))
+        ask = escape(fmt_price(row.get("ask")))
+        title = f"{source} | {market_state} | Bid {bid} | Ask {ask} | Updated {updated}"
         items += f"""
         <span title="{title}">
           <b>{symbol}</b>
@@ -98,8 +101,21 @@ def _render_ticker_markup(quotes: pd.DataFrame) -> None:
 # WebSocket-backed provider in services/live_quotes.py later.
 @st.fragment(run_every="5s")
 def _live_ticker_fragment(tickers: tuple[str, ...]) -> None:
-    quotes = fetch_latest_quotes(list(tickers))
-    _render_ticker_markup(quotes)
+    try:
+        quotes = fetch_latest_quotes(list(tickers))
+        source = str(quotes["data_source"].dropna().iloc[0]) if quotes is not None and not quotes.empty and "data_source" in quotes else "Quote provider"
+        mark_fragment_refresh("live_prices", 5, "OK", source)
+        _render_ticker_markup(quotes)
+    except Exception as exc:
+        mark_fragment_refresh("live_prices", 5, "Error", str(exc)[:180])
+        st.markdown(
+            f"""
+            <div class="pt-market-marquee-empty">
+              Live ticker unavailable. {escape(str(exc)[:180])}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_live_ticker(tickers: list[str], refresh_seconds: int = 5) -> None:

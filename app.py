@@ -12,6 +12,11 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from components.live_ticker import render_live_ticker
+from components.live_market_movers import render_live_market_movers
+from components.news_updates import render_news_updates
+from components.economic_data_panel import render_economic_data_panel
+from components.economic_calendar import render_economic_calendar_panel
+from components.refresh_status import render_freshness_status_row
 from data.market_scanner import MarketUniverseProvider, ScannerFilters, UNIVERSE_OPTIONS
 from data.market_news import (
     SOURCE_TYPES,
@@ -651,14 +656,49 @@ def render_social_readthrough(symbol: str, df: pd.DataFrame) -> None:
         st.plotly_chart(_social_sentiment_figure(row), use_container_width=True, config={"displayModeBar": False})
 
 
+def _active_quote_card_markup(analysis) -> str:
+    company = analysis.company
+    day_change = company.daily_change
+    day_change_dollar = company.day_change_dollar
+    if day_change_dollar is None and company.current_price is not None and day_change is not None:
+        day_change_dollar = company.current_price * day_change / 100
+    extended_parts = []
+    if to_float(company.pre_market_change_percent) is not None:
+        extended_parts.append(f"Pre {percent(company.pre_market_change_percent, 2)}")
+    if to_float(company.after_hours_change_percent) is not None:
+        extended_parts.append(f"AH {percent(company.after_hours_change_percent, 2)}")
+    extended = " | ".join(extended_parts) if extended_parts else "No extended-hours move available"
+    return f"""
+    <div class="pt-active-quote-card">
+      <div>
+        <span>Active Ticker Quote</span>
+        <strong>{escape(company.ticker)}</strong>
+        <small>{escape(company.market_status)} | {escape(company.data_mode)} | {escape(company.data_source)}</small>
+      </div>
+      <div>
+        <span>Latest Price</span>
+        <strong>{price(company.current_price)}</strong>
+        <small class="{tone_for_value(day_change)}">{escape(f"{day_change_dollar:+.2f}" if day_change_dollar is not None else "N/A")} ({percent(day_change, 2)})</small>
+      </div>
+      <div>
+        <span>Extended Session</span>
+        <strong>{escape(extended)}</strong>
+        <small>Fundamentals remain cached separately.</small>
+      </div>
+    </div>
+    """
+
+
 def render_company_dashboard_with_social(analysis, social_df: pd.DataFrame) -> None:
     company_profile = company_profile_from_analysis(analysis)
     html(
         '<div class="pt-shell pt-decision-shell">'
         + render_company_header(company_profile)
         + render_investment_decision(analysis)
+        + _active_quote_card_markup(analysis)
         + "</div>"
     )
+    render_news_updates(ticker=analysis.company.ticker, title=f"{analysis.company.ticker} News Updates")
     render_social_readthrough(analysis.company.ticker, social_df)
     render_retail_attention_radar(social_df)
     html(
@@ -672,35 +712,28 @@ def render_company_dashboard_with_social(analysis, social_df: pd.DataFrame) -> N
     )
 
 
+def _snapshot_price_label(row: dict[str, object], asset_type: str = "index") -> str:
+    value = to_float(row.get("price"))
+    if value is None:
+        return "N/A"
+    if asset_type == "yield":
+        return f"{value:.2f}%"
+    if asset_type == "index":
+        return fmt_number(value, 2)
+    return price(value)
+
+
 def render_home_page(market_snapshot: dict[str, object]) -> None:
     quotes = market_snapshot.get("quotes", {})
     index_rows = []
     for symbol, name in (("SPY", "S&P 500"), ("QQQ", "Nasdaq 100"), ("DIA", "Dow"), ("IWM", "Russell 2000"), ("^VIX", "VIX"), ("^TNX", "10Y Yield")):
         quote = quotes.get(symbol, {})
         if quote.get("status") == "OK":
-            index_rows.append({"name": name, "price": _marquee_price({**quote, "asset_type": "yield" if symbol == "^TNX" else "index"}), "change": quote.get("return_1d") or 0.0})
+            index_rows.append({"name": name, "price": _snapshot_price_label(quote, "yield" if symbol == "^TNX" else "index"), "change": quote.get("return_1d") or 0.0})
     index_cards = "".join(
         f'<div class="pt-row-card"><span class="pt-mini-label">{escape(str(row["name"]))}</span><strong>{escape(str(row["price"]))}</strong><em class="{tone_for_value(float(row["change"]))}">{percent(float(row["change"]), 2)}</em></div>'
         for row in index_rows
     )
-    equity_rows = [
-        {"ticker": symbol, "company": symbol, "price": quote.get("price"), "change": quote.get("return_1d")}
-        for symbol, quote in quotes.items()
-        if quote.get("status") == "OK"
-        and to_float(quote.get("price")) is not None
-        and to_float(quote.get("return_1d")) is not None
-        and not symbol.startswith("^")
-        and "=" not in symbol
-        and not symbol.endswith("-USD")
-    ]
-    gainers = sorted((row for row in equity_rows if float(row["change"]) > 0), key=lambda row: float(row["change"]), reverse=True)
-    losers = sorted((row for row in equity_rows if float(row["change"]) < 0), key=lambda row: float(row["change"]))
-    mover_rows = []
-    for idx, row in enumerate(gainers[:10], start=1):
-        mover_rows.append({"Rank": idx, "Ticker": row["ticker"], "Company": row["company"], "Price": price(float(row["price"])), "Change": percent(float(row["change"]), 2)})
-    loser_rows = []
-    for idx, row in enumerate(losers[:10], start=1):
-        loser_rows.append({"Rank": idx, "Ticker": row["ticker"], "Company": row["company"], "Price": price(float(row["price"])), "Change": percent(float(row["change"]), 2)})
     highlights = []
     for update in MARKET_UPDATES[:4]:
         highlights.append(
@@ -717,14 +750,11 @@ def render_home_page(market_snapshot: dict[str, object]) -> None:
         + section("Market Index Strip", "Shared live market snapshot", f'<div class="pt-score-breakdown">{index_cards}</div>')
         + "</div>"
     )
+    render_live_market_movers(title="Market Movers")
+    render_news_updates(title="Market Headlines")
+    render_economic_data_panel()
+    render_economic_calendar_panel("Upcoming Economic Releases", days_forward=14)
     render_retail_attention_radar(_social_momentum_frame(market_snapshot, st.session_state.get("selected_ticker")))
-    col1, col2 = st.columns(2)
-    with col1:
-        html(section("Biggest Gainers", "", ""))
-        render_dataframe(mover_rows, 260)
-    with col2:
-        html(section("Biggest Losers", "", ""))
-        render_dataframe(loser_rows, 260)
     html(f'<div class="pt-home-grid">{section("Market Read-Through Highlights", "", render_plain_table(highlights))}{section("Upcoming Events", "", render_plain_table(UPCOMING_EVENTS))}</div>')
     render_dataframe(_watchlist_rows(market_snapshot), 270)
 
@@ -1195,6 +1225,9 @@ def render_sector_research(snapshot: dict[str, object]) -> None:
             key="sector_research_horizon",
             label_visibility="collapsed",
         ) or "5D"
+    render_live_market_movers(title="Sector ETF Movement")
+    render_news_updates(title="Sector News")
+    render_economic_data_panel("Macro Indicators")
     with st.spinner("Calculating live sector rotation..."):
         packet = build_sector_research_packet(snapshot, horizon)
     sectors = packet.get("sectors", pd.DataFrame())
@@ -1695,6 +1728,9 @@ def render_watchlist_page(market_snapshot: dict[str, object]) -> None:
     rows = _watchlist_rows(market_snapshot)
     group_by = st.segmented_control("Group by", ["Theme", "Investment Signal", "Risk Level", "Market Cap"], default="Theme")
     render_dataframe(rows, 440)
+    active_tickers = _active_watchlist_tickers()
+    render_news_updates(tickers=active_tickers, title="Watchlist News")
+    render_live_market_movers(tickers=active_tickers, title="Watchlist Movers")
     grouped: dict[str, list[str]] = {}
     for row in rows:
         key = str(row.get(group_by if group_by != "Market Cap" else "Theme", "Other"))
@@ -2365,6 +2401,8 @@ def _economic_calendar_markup(year: int, month: int, today) -> str:
 
 def render_economic_page() -> None:
     today = now_et().date()
+    render_economic_data_panel("Economic Data Snapshot")
+    render_economic_calendar_panel("Upcoming Economic Releases", days_forward=30)
     target_month = _render_economic_month_nav(today)
     html(_economic_calendar_markup(target_month.year, target_month.month, today))
 
@@ -2641,6 +2679,7 @@ def main() -> None:
     analysis = load_dashboard_analysis(st.session_state["selected_ticker"])
     render_global_controls(page, analysis)
     render_live_ticker(_active_watchlist_tickers())
+    render_freshness_status_row()
     render_page(page, analysis, market_snapshot)
 
 

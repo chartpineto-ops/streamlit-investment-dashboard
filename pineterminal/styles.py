@@ -787,6 +787,184 @@ button, input, textarea, select {
 .pt-live-ticker-caption span:first-child {
   color: var(--green);
 }
+.pt-refresh-status-row {
+  align-items: center;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: -0.15rem 0 0.72rem;
+}
+.pt-refresh-status-row span {
+  background: rgba(16, 28, 45, 0.76);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.42rem 0.58rem;
+}
+.pt-refresh-status-row b {
+  color: var(--text);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+.pt-refresh-status-row em {
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 850;
+}
+.pt-live-section {
+  margin-bottom: 0.72rem;
+}
+.pt-live-section-head {
+  align-items: center;
+  border-bottom: 1px solid rgba(122, 152, 184, 0.16);
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.5rem;
+}
+.pt-live-section-head h2 {
+  color: var(--text);
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+  margin: 0;
+  text-transform: uppercase;
+}
+.pt-live-section-head p {
+  color: var(--muted);
+  font-size: 0.76rem;
+  margin: 0.16rem 0 0;
+}
+.pt-live-section-head > span {
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--green);
+  font-size: 0.68rem;
+  font-weight: 900;
+  padding: 0.28rem 0.55rem;
+  white-space: nowrap;
+}
+.pt-live-mover-grid {
+  display: grid;
+  gap: 0.58rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pt-live-panel {
+  background: rgba(8, 17, 29, 0.56);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pt-live-panel h3 {
+  color: var(--text);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  margin: 0;
+  padding: 0.62rem 0.72rem;
+  text-transform: uppercase;
+}
+.pt-live-table {
+  font-size: 0.72rem;
+}
+.pt-live-table small {
+  color: var(--muted);
+  display: block;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  margin-top: 0.18rem;
+}
+.pt-news-live-table th:nth-child(2),
+.pt-news-live-table td:nth-child(2) {
+  min-width: 18rem;
+}
+.pt-live-badge {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  display: inline-block;
+  font-size: 0.66rem;
+  font-weight: 900;
+  padding: 0.18rem 0.38rem;
+}
+.pt-live-badge.good {
+  background: rgba(39, 201, 116, 0.12);
+  border-color: rgba(39, 201, 116, 0.34);
+  color: var(--green);
+}
+.pt-live-badge.bad {
+  background: rgba(255, 93, 105, 0.12);
+  border-color: rgba(255, 93, 105, 0.34);
+  color: var(--red);
+}
+.pt-live-badge.warn,
+.pt-live-badge.neutral {
+  background: rgba(247, 181, 0, 0.1);
+  border-color: rgba(247, 181, 0, 0.32);
+  color: var(--yellow);
+}
+.pt-sector-panel {
+  margin-top: 0.58rem;
+}
+.pt-sector-live-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0 0.72rem 0.72rem;
+}
+.pt-sector-live-strip span {
+  background: rgba(20, 34, 53, 0.72);
+  border: 1px solid rgba(122, 152, 184, 0.16);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  padding: 0.28rem 0.5rem;
+}
+.pt-sector-live-strip b {
+  color: var(--text);
+}
+.pt-sector-live-strip em {
+  font-style: normal;
+  font-weight: 900;
+  margin-left: 0.18rem;
+}
+.pt-active-quote-card {
+  background: rgba(8, 17, 29, 0.5);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0.72rem;
+  padding: 0.68rem;
+}
+.pt-active-quote-card > div {
+  border-right: 1px solid rgba(122, 152, 184, 0.14);
+  min-width: 0;
+  padding-right: 0.55rem;
+}
+.pt-active-quote-card > div:last-child {
+  border-right: 0;
+}
+.pt-active-quote-card span {
+  color: var(--muted);
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.pt-active-quote-card strong {
+  color: var(--text);
+  display: block;
+  font-size: 1rem;
+  margin: 0.18rem 0;
+}
+.pt-active-quote-card small {
+  color: var(--muted);
+  display: block;
+  font-size: 0.7rem;
+}
 .pt-social-section-head {
   align-items: center;
   display: flex;
