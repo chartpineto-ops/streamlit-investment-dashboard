@@ -971,6 +971,62 @@ button, input, textarea, select {
   justify-content: space-between;
   gap: 1rem;
 }
+.pt-social-market-shell {
+  margin-bottom: 0.72rem;
+}
+.pt-social-metric-grid {
+  display: grid;
+  gap: 0.58rem;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-top: 0.68rem;
+}
+.pt-social-subhead {
+  color: var(--text);
+  font-size: 0.9rem;
+  letter-spacing: 0.03em;
+  margin: 0.35rem 0 0.5rem;
+  text-transform: uppercase;
+}
+.pt-social-market-table {
+  min-width: 860px;
+}
+.pt-social-theme-grid {
+  display: grid;
+  gap: 0.58rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 0.75rem;
+}
+.pt-social-theme-card {
+  background: linear-gradient(135deg, rgba(16, 29, 48, 0.9), rgba(8, 17, 29, 0.92));
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 0.72rem;
+}
+.pt-social-theme-card strong {
+  color: var(--text);
+  display: block;
+  font-size: 0.86rem;
+}
+.pt-social-theme-card span {
+  color: var(--green);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 900;
+  margin-top: 0.28rem;
+}
+.pt-social-theme-card p {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.42;
+  margin: 0.42rem 0;
+}
+.pt-social-theme-card em {
+  color: var(--faint);
+  display: block;
+  font-size: 0.64rem;
+  font-style: normal;
+  font-weight: 850;
+}
 .pt-social-section-head strong {
   color: var(--text);
   display: block;

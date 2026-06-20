@@ -230,7 +230,7 @@ def _provider_for(source: str) -> SocialMomentumProvider:
     return PROVIDERS["demo"]
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_social_mentions(symbols: tuple[str, ...] | list[str] | None, source: str = "auto") -> tuple[pd.DataFrame, dict]:
     clean_symbols = _as_symbols(symbols)
     if not clean_symbols:

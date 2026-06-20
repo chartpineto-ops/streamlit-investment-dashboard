@@ -17,6 +17,7 @@ from components.news_updates import render_news_updates
 from components.economic_data_panel import render_economic_data_panel
 from components.economic_calendar import render_economic_calendar_panel
 from components.refresh_status import render_freshness_status_row
+from components.social_momentum import render_social_momentum_panel
 from data.market_scanner import MarketUniverseProvider, ScannerFilters, UNIVERSE_OPTIONS
 from data.market_news import (
     SOURCE_TYPES,
@@ -28,8 +29,7 @@ from data.market_news import (
 )
 from data.economic_calendar import enrich_economic_calendar_events
 from data.sector_research import build_sector_research_packet, get_market_snapshot
-from data.social import SOCIAL_WARNING, calculate_social_scores, fetch_social_mentions
-from data.market_universe import market_universe
+from services.social_sentiment_service import SOCIAL_WARNING, fetch_ticker_social_snapshot
 from pineterminal.components import (
     company_profile_from_analysis,
     html,
@@ -430,39 +430,6 @@ def render_global_controls(page: str, analysis) -> None:
             st.rerun()
 
 
-def _social_momentum_symbols(market_snapshot: dict[str, object], selected_ticker: str | None = None) -> list[str]:
-    quotes = market_snapshot.get("quotes", {})
-    symbols = []
-    if selected_ticker:
-        symbols.append(selected_ticker)
-    symbols.extend(_load_persistent_watchlist_tickers())
-    symbols.extend([
-        symbol
-        for symbol, quote in quotes.items()
-        if quote.get("status") == "OK"
-        and not str(symbol).startswith("^")
-        and "=" not in str(symbol)
-        and not str(symbol).endswith("-USD")
-    ])
-    if len(symbols) < 40:
-        symbols.extend(market_universe(include_etfs=False)[:90])
-    seen: set[str] = set()
-    output: list[str] = []
-    for symbol in symbols:
-        ticker = clean_ticker(symbol)
-        if ticker and ticker not in seen:
-            seen.add(ticker)
-            output.append(ticker)
-    return output[:120]
-
-
-def _social_momentum_frame(market_snapshot: dict[str, object], selected_ticker: str | None = None) -> pd.DataFrame:
-    raw, status = fetch_social_mentions(tuple(_social_momentum_symbols(market_snapshot, selected_ticker)), "auto")
-    frame = calculate_social_scores(raw)
-    frame.attrs["status"] = status
-    return frame
-
-
 def _social_signal_tone(label: object) -> str:
     text = str(label or "").casefold()
     if "confirmed" in text or "bullish" in text:
@@ -472,78 +439,6 @@ def _social_signal_tone(label: object) -> str:
     if "spike" in text or "squeeze" in text or "mixed" in text:
         return "warn"
     return "neutral"
-
-
-def _social_badge(label: object) -> str:
-    text = escape(str(label or "N/A"))
-    return f'<span class="pt-social-badge {_social_signal_tone(label)}">{text}</span>'
-
-
-def _social_logo(row: pd.Series | dict) -> str:
-    logo_url = str(row.get("logo_url") or "")
-    ticker = str(row.get("ticker") or "PT")
-    initials = escape("".join(ch for ch in ticker if ch.isalnum())[:2] or "PT")
-    return f'<img src="{escape(logo_url)}" alt="" />' if logo_url else f"<span>{initials}</span>"
-
-
-def _social_table(frame: pd.DataFrame, mode: str) -> str:
-    if frame is None or frame.empty:
-        return '<p class="pt-placeholder">No reliable social data available.</p>'
-    sort_map = {
-        "Most Mentioned": ("mentions_today", False),
-        "Fastest Rising": ("mention_change_24h_pct", False),
-        "Bullish Momentum": ("social_momentum_score", False),
-        "Bearish Pressure": ("bearish_pct", False),
-        "Meme / Pump Risk": ("risk_penalty", False),
-    }
-    column, ascending = sort_map.get(mode, ("social_momentum_score", False))
-    ranked = frame.sort_values(column, ascending=ascending).head(12).reset_index(drop=True)
-    rows = ""
-    for idx, (_, row) in enumerate(ranked.iterrows(), start=1):
-        catalyst = "Yes" if bool(row.get("catalyst_found")) else "No"
-        rows += f"""
-        <tr>
-          <td>{idx}</td>
-          <td><div class="pt-social-name"><i>{_social_logo(row)}</i><b>{escape(str(row.get("ticker")))}</b></div></td>
-          <td>{escape(str(row.get("company") or row.get("ticker")))}</td>
-          <td>{fmt_compact(row.get("mentions_today"), 1)}</td>
-          <td class="{tone_for_value(to_float(row.get("mention_change_24h_pct")) or 0)}">{fmt_percent(row.get("mention_change_24h_pct"), 0, True)}</td>
-          <td class="{tone_for_value(to_float(row.get("mention_change_7d_pct")) or 0)}">{fmt_percent(row.get("mention_change_7d_pct"), 0, True)}</td>
-          <td class="good">{fmt_percent(row.get("bullish_pct"), 0)}</td>
-          <td class="bad">{fmt_percent(row.get("bearish_pct"), 0)}</td>
-          <td>{_social_badge(row.get("sentiment_label"))}</td>
-          <td class="{tone_for_value(to_float(row.get("price_move_pct")) or 0)}">{fmt_daily_move(row.get("price_move_pct"))}</td>
-          <td>{fmt_multiple(row.get("volume_vs_30d_avg"))}</td>
-          <td>{escape(catalyst)}</td>
-          <td><div class="pt-social-score"><b>{to_float(row.get("social_momentum_score")) or 0:.0f}</b><i style="--score:{to_float(row.get("social_momentum_score")) or 0:.0f}%"></i></div></td>
-          <td>{_social_badge(row.get("signal_label"))}</td>
-        </tr>
-        """
-    return f"""
-    <div class="pt-social-table-wrap">
-      <table class="pt-social-table">
-        <thead><tr><th>Rank</th><th>Ticker</th><th>Company</th><th>Mentions Today</th><th>24h Change</th><th>7D Change</th><th>Bullish</th><th>Bearish</th><th>Sentiment</th><th>Price Move</th><th>Vol vs 30D</th><th>Catalyst</th><th>Social Momentum</th><th>Signal</th></tr></thead>
-        <tbody>{rows}</tbody>
-      </table>
-    </div>
-    """
-
-
-def render_retail_attention_radar(df: pd.DataFrame) -> None:
-    status = df.attrs.get("status", {}) if isinstance(df, pd.DataFrame) else {}
-    source = str(status.get("Source") or "Social providers")
-    status_label = str(status.get("Status") or "Unavailable")
-    body = f"""
-    <div class="pt-social-section-head">
-      <div><strong>Retail Attention Radar</strong><p>Most talked-about stocks across financial social platforms, scored as an attention signal.</p></div>
-      <div class="pt-social-source"><b>{escape(status_label)}</b><span>{escape(source)}</span><em title="{escape(SOCIAL_WARNING)}">Social signal warning</em></div>
-    </div>
-    """
-    html(section("Retail Attention Radar", "Social Momentum", body))
-    tabs = st.tabs(["Most Mentioned", "Fastest Rising", "Bullish Momentum", "Bearish Pressure", "Meme / Pump Risk"])
-    for label, tab in zip(["Most Mentioned", "Fastest Rising", "Bullish Momentum", "Bearish Pressure", "Meme / Pump Risk"], tabs):
-        with tab:
-            html(_social_table(df, label))
 
 
 def _social_mentions_figure(row: pd.Series) -> go.Figure:
@@ -610,8 +505,8 @@ def _social_readthrough_markup(symbol: str, row: pd.Series) -> str:
     signal = str(row.get("signal_label") or "Noise")
     narratives = "".join(f"<span>{escape(str(item))}</span>" for item in list(row.get("top_social_narratives") or [])[:4])
     interpretation = (
-        f"{symbol} is ranked #{int(row.get('social_rank') or 0)} in the current social dataset with "
-        f"{fmt_compact(row.get('mentions_today'), 1)} mentions today and {fmt_percent(row.get('mention_change_24h_pct'), 0, True)} 24h mention growth. "
+        f"{symbol} has {fmt_compact(row.get('mentions_today'), 1)} mentions today and "
+        f"{fmt_percent(row.get('mention_change_24h_pct'), 0, True)} 24h mention growth. "
         f"Sentiment is {str(row.get('sentiment_label') or 'neutral').lower()}, while price/volume confirmation is "
         f"{'supportive' if (to_float(row.get('price_volume_confirmation')) or 0) >= 70 else 'not yet confirmed'}. "
         f"The signal is {signal}; treat it as research input, not a standalone thesis."
@@ -619,7 +514,6 @@ def _social_readthrough_markup(symbol: str, row: pd.Series) -> str:
     return f"""
     <div class="pt-social-readthrough">
       <div class="pt-social-metrics">
-        {value_row("Current Social Rank", f"#{int(row.get('social_rank') or 0)}")}
         {value_row("Mentions Today", fmt_compact(row.get("mentions_today"), 1), "good")}
         {value_row("24h Mention Change", fmt_percent(row.get("mention_change_24h_pct"), 0, True), tone_for_value(to_float(row.get("mention_change_24h_pct")) or 0))}
         {value_row("30D Mention Z-Score", f"{to_float(row.get('mention_zscore')) or 0:.2f}")}
@@ -641,14 +535,14 @@ def _social_readthrough_markup(symbol: str, row: pd.Series) -> str:
 def render_social_readthrough(symbol: str, df: pd.DataFrame) -> None:
     ticker = clean_ticker(symbol)
     if df is None or df.empty or not ticker:
-        html(section("Social Read-Through", "", '<p class="pt-placeholder">No reliable social data available.</p>'))
+        html(section("Social Snapshot", "", '<p class="pt-placeholder">No reliable social data available for the active ticker.</p>'))
         return
     matches = df[df["ticker"].astype(str).str.upper() == ticker]
     if matches.empty:
-        html(section(f"Social Read-Through: {escape(ticker)}", "", '<p class="pt-placeholder">No reliable social data available.</p>'))
+        html(section(f"Social Snapshot: {escape(ticker)}", "", '<p class="pt-placeholder">No reliable social data available for the active ticker.</p>'))
         return
     row = matches.iloc[0]
-    html(section(f"Social Read-Through: {escape(ticker)}", "Social Momentum", _social_readthrough_markup(ticker, row)))
+    html(section(f"Social Snapshot: {escape(ticker)}", "Active ticker only", _social_readthrough_markup(ticker, row)))
     chart_cols = st.columns([0.58, 0.42])
     with chart_cols[0]:
         st.plotly_chart(_social_mentions_figure(row), use_container_width=True, config={"displayModeBar": False})
@@ -689,8 +583,9 @@ def _active_quote_card_markup(analysis) -> str:
     """
 
 
-def render_company_dashboard_with_social(analysis, social_df: pd.DataFrame) -> None:
+def render_company_dashboard_with_social(analysis) -> None:
     company_profile = company_profile_from_analysis(analysis)
+    social_df = fetch_ticker_social_snapshot(analysis.company.ticker)
     html(
         '<div class="pt-shell pt-decision-shell">'
         + render_company_header(company_profile)
@@ -700,7 +595,6 @@ def render_company_dashboard_with_social(analysis, social_df: pd.DataFrame) -> N
     )
     render_news_updates(ticker=analysis.company.ticker, title=f"{analysis.company.ticker} News Updates")
     render_social_readthrough(analysis.company.ticker, social_df)
-    render_retail_attention_radar(social_df)
     html(
         '<div class="pt-shell pt-decision-shell">'
         + f'<div class="pt-decision-row">{render_decision_business_quality(analysis)}{render_decision_future_value(analysis)}</div>'
@@ -754,7 +648,7 @@ def render_home_page(market_snapshot: dict[str, object]) -> None:
     render_news_updates(title="Market Headlines")
     render_economic_data_panel()
     render_economic_calendar_panel("Upcoming Economic Releases", days_forward=14)
-    render_retail_attention_radar(_social_momentum_frame(market_snapshot, st.session_state.get("selected_ticker")))
+    render_social_momentum_panel()
     html(f'<div class="pt-home-grid">{section("Market Read-Through Highlights", "", render_plain_table(highlights))}{section("Upcoming Events", "", render_plain_table(UPCOMING_EVENTS))}</div>')
     render_dataframe(_watchlist_rows(market_snapshot), 270)
 
@@ -2644,7 +2538,7 @@ def render_settings_page() -> None:
 
 def render_page(page: str, analysis, market_snapshot: dict[str, object]) -> None:
     if page == "Dashboard":
-        render_company_dashboard_with_social(analysis, _social_momentum_frame(market_snapshot, analysis.company.ticker))
+        render_company_dashboard_with_social(analysis)
     elif page == "Sector Research":
         render_sector_research(market_snapshot)
     elif page == "Markets":
