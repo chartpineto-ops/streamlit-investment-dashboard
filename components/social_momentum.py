@@ -14,6 +14,7 @@ from services.social_sentiment_service import (
     fetch_social_trending_tickers,
 )
 from utils.formatting import fmt_compact, fmt_daily_move, fmt_percent, now_et, to_float
+from utils.rendering import render_html
 
 
 def _tone(value: object) -> str:
@@ -157,54 +158,50 @@ def _render_social_momentum_ui(frame: pd.DataFrame, trending: pd.DataFrame, lead
     {warning}
     {_metric_cards(frame, leaders)}
     """
-    st.markdown(f'<div class="pt-shell pt-social-market-shell">{header}</div>', unsafe_allow_html=True)
+    render_html(f'<div class="pt-shell pt-social-market-shell">{header}</div>')
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("<h3 class='pt-social-subhead'>Most Mentioned Tickers</h3>", unsafe_allow_html=True)
-        st.markdown(
+        render_html("<h3 class='pt-social-subhead'>Most Mentioned Tickers</h3>")
+        render_html(
             _table(
                 trending.sort_values("mention_count", ascending=False) if trending is not None and not trending.empty else pd.DataFrame(),
                 [("Rank", "rank"), ("Ticker", "ticker"), ("Company", "company_name"), ("Mentions", "mention_count"), ("Mention Change", "mention_change_pct"), ("Sentiment", "sentiment_label"), ("Price Move", "price_change_pct")],
                 12,
-            ),
-            unsafe_allow_html=True,
+            )
         )
     with col2:
-        st.markdown("<h3 class='pt-social-subhead'>Fastest Rising Tickers</h3>", unsafe_allow_html=True)
-        st.markdown(
+        render_html("<h3 class='pt-social-subhead'>Fastest Rising Tickers</h3>")
+        render_html(
             _table(
                 frame.sort_values("mention_change_pct", ascending=False) if frame is not None and not frame.empty else pd.DataFrame(),
                 [("Rank", "rank"), ("Ticker", "ticker"), ("Acceleration", "mention_change_pct"), ("Price Move", "price_change_pct"), ("Volume Move", "volume_change_pct"), ("Sentiment", "sentiment_score"), ("Confidence", "confidence_score")],
                 12,
-            ),
-            unsafe_allow_html=True,
+            )
         )
 
     col3, col4 = st.columns(2)
     with col3:
-        st.markdown("<h3 class='pt-social-subhead'>Bullish / Bearish Sentiment Leaders</h3>", unsafe_allow_html=True)
-        st.markdown(
+        render_html("<h3 class='pt-social-subhead'>Bullish / Bearish Sentiment Leaders</h3>")
+        render_html(
             _table(
                 _sentiment_leaders(leaders),
                 [("Rank", "rank"), ("Side", "leader_type"), ("Ticker", "ticker"), ("Mentions", "mention_count"), ("Sentiment Score", "sentiment_score"), ("Price Move", "price_change_pct"), ("Confidence", "confidence_score")],
                 10,
-            ),
-            unsafe_allow_html=True,
+            )
         )
     with col4:
-        st.markdown("<h3 class='pt-social-subhead'>Social + Price Divergence</h3>", unsafe_allow_html=True)
-        st.markdown(
+        render_html("<h3 class='pt-social-subhead'>Social + Price Divergence</h3>")
+        render_html(
             _table(
                 _divergence_frame(frame),
                 [("Ticker", "ticker"), ("Social Signal", "social_signal"), ("Mention Change", "mention_change_pct"), ("Sentiment", "sentiment_label"), ("Price Move", "price_change_pct"), ("Volume Move", "volume_change_pct"), ("Interpretation", "interpretation")],
                 10,
-            ),
-            unsafe_allow_html=True,
+            )
         )
 
-    st.markdown("<h3 class='pt-social-subhead'>Trending Themes</h3>", unsafe_allow_html=True)
-    st.markdown(_theme_cards(themes), unsafe_allow_html=True)
+    render_html("<h3 class='pt-social-subhead'>Trending Themes</h3>")
+    render_html(_theme_cards(themes))
 
 
 @st.fragment(run_every="5min")
@@ -219,14 +216,13 @@ def _social_momentum_fragment() -> None:
         _render_social_momentum_ui(frame, trending, leaders, themes)
     except Exception as exc:
         mark_fragment_refresh("social", 300, "Error", str(exc)[:180])
-        st.markdown(
+        render_html(
             f"""
             <div class="pt-shell">
               <div class="pt-social-section-head"><div><strong>Social Momentum</strong><p>Track the tickers, sectors, and themes gaining attention across social platforms.</p></div></div>
               <p class="pt-placeholder">Social Momentum is temporarily unavailable: {escape(str(exc)[:180])}</p>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
 

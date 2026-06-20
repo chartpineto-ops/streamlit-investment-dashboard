@@ -8,6 +8,7 @@ import streamlit as st
 from components.refresh_status import mark_fragment_refresh
 from services.news_service import fetch_company_news, fetch_market_headlines
 from utils.formatting import clean_ticker
+from utils.rendering import render_html
 
 
 def _news_time(value: object) -> str:
@@ -88,7 +89,7 @@ def _news_fragment(ticker: str, tickers: tuple[str, ...], title: str) -> None:
             subtitle = "Market-wide headlines from the configured news provider."
         source = str(frame["data_source"].dropna().iloc[0]) if frame is not None and not frame.empty and "data_source" in frame else "News provider"
         mark_fragment_refresh("news", 300, "OK", source)
-        st.markdown(_news_markup(frame, title, subtitle), unsafe_allow_html=True)
+        render_html(_news_markup(frame, title, subtitle))
     except Exception as exc:
         mark_fragment_refresh("news", 300, "Error", str(exc)[:180])
         st.warning(f"News updates are temporarily unavailable: {exc}")

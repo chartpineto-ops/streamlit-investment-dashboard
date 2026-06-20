@@ -8,6 +8,7 @@ import streamlit as st
 from components.refresh_status import mark_fragment_refresh
 from services.live_quotes import fetch_latest_quotes
 from utils.formatting import fmt_daily_move, fmt_price, now_et, safe_format_datetime, to_float
+from utils.rendering import render_html
 
 
 DEFAULT_LIVE_TICKERS = ["SPY", "QQQ", "DIA", "IWM", "NVDA", "MSFT", "AAPL", "MRVL", "AMPX", "IONQ"]
@@ -29,26 +30,24 @@ def _caption_time(value: object) -> str:
 
 def _render_ticker_markup(quotes: pd.DataFrame) -> None:
     if quotes is None or quotes.empty:
-        st.markdown(
+        render_html(
             """
             <div class="pt-market-marquee-empty">
               Live ticker unavailable. Add tickers to the watchlist or refresh when the quote provider reconnects.
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
         return
 
     valid = quotes[pd.to_numeric(quotes.get("price"), errors="coerce").notna()].copy()
     if valid.empty:
         error = str(quotes.get("error", pd.Series(["Quote provider unavailable."])).dropna().head(1).iloc[0])
-        st.markdown(
+        render_html(
             f"""
             <div class="pt-market-marquee-empty">
               Live ticker unavailable. {escape(error)}
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
         return
 
@@ -77,7 +76,7 @@ def _render_ticker_markup(quotes: pd.DataFrame) -> None:
     sources = ", ".join(sorted({str(value) for value in valid.get("data_source", pd.Series(dtype=object)).dropna()}))
     unavailable = max(0, len(quotes) - len(valid))
     warning = f"<span>{unavailable} unavailable</span>" if unavailable else ""
-    st.markdown(
+    render_html(
         f"""
         <div class="pt-live-ticker-shell">
           <div class="pt-watch-tape pt-market-marquee" aria-label="Live market ticker">
@@ -89,8 +88,7 @@ def _render_ticker_markup(quotes: pd.DataFrame) -> None:
             {warning}
           </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -108,13 +106,12 @@ def _live_ticker_fragment(tickers: tuple[str, ...]) -> None:
         _render_ticker_markup(quotes)
     except Exception as exc:
         mark_fragment_refresh("live_prices", 5, "Error", str(exc)[:180])
-        st.markdown(
+        render_html(
             f"""
             <div class="pt-market-marquee-empty">
               Live ticker unavailable. {escape(str(exc)[:180])}
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from html import escape
 
 import pandas as pd
 import streamlit as st
 
+from components.data_freshness_bar import render_data_freshness_bar
 from utils.formatting import now_et
 
 
@@ -60,18 +60,20 @@ def render_freshness_status_row() -> None:
         ("Movers", "market_movers"),
         ("News", "news"),
         ("Macro", "macro"),
+        ("Social", "social"),
     ]
-    items = []
+    items: list[dict[str, object]] = []
     for label, key in labels:
         entry = registry.get(key, {})
         tone = _status_tone(entry)
-        message = escape(str(entry.get("message") or entry.get("status") or "Pending"))
+        message = str(entry.get("message") or entry.get("status") or "Pending")
         items.append(
-            f"""
-            <span title="{message}">
-              <b>{escape(label)}</b>
-              <em class="{tone}">refreshed {_time_label(entry.get("last_refresh"))}</em>
-            </span>
-            """
+            {
+                "label": label,
+                "status": tone,
+                "refreshed": _time_label(entry.get("last_refresh")),
+                "source": message,
+                "title": message,
+            }
         )
-    st.markdown(f'<div class="pt-refresh-status-row">{"".join(items)}</div>', unsafe_allow_html=True)
+    render_data_freshness_bar(items)

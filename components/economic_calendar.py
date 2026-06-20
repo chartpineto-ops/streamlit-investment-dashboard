@@ -9,6 +9,7 @@ import streamlit as st
 from data.economic_calendar import enrich_economic_calendar_events
 from pineterminal.demo_data import ECONOMIC_CALENDAR_EVENTS
 from utils.formatting import now_et
+from utils.rendering import render_html
 
 
 def _event_date(row: dict[str, object]) -> date | None:
@@ -65,7 +66,7 @@ def _calendar_markup(events: list[dict[str, object]], title: str, days_forward: 
 def _economic_calendar_fragment(title: str, days_forward: int) -> None:
     try:
         events, _ = _calendar_rows()
-        st.markdown(_calendar_markup(events, title, days_forward), unsafe_allow_html=True)
+        render_html(_calendar_markup(events, title, days_forward))
     except Exception as exc:
         st.warning(f"Economic calendar is temporarily unavailable: {exc}")
 

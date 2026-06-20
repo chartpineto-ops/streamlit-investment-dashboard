@@ -22,6 +22,7 @@ from pineterminal.types import (
     ValuationScenario,
 )
 from pineterminal.valuation import format_financial_value, get_scenario_labels_by_method, get_valuation_model
+from utils.rendering import render_html
 
 
 METRIC_BADGES = {
@@ -218,7 +219,7 @@ def data_label(label: str) -> str:
 
 def html(markup: str) -> None:
     compact_markup = " ".join(markup.split())
-    st.markdown(compact_markup, unsafe_allow_html=True)
+    render_html(compact_markup)
 
 
 def section(title: str, subtitle: str = "", body: str = "", action: str = "") -> str:

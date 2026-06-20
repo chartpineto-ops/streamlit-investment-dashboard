@@ -9,6 +9,7 @@ from components.refresh_status import mark_fragment_refresh
 from data.market_movers import get_whole_market_movers
 from services.live_quotes import fetch_latest_quotes
 from utils.formatting import clean_ticker, fmt_compact, fmt_daily_move, fmt_price, now_et, to_float
+from utils.rendering import render_html
 
 
 SECTOR_ETFS = ["XLK", "XLF", "XLV", "XLI", "XLE", "XLU", "XLY", "XLP", "XLC", "XLB", "SMH", "IGV"]
@@ -116,7 +117,7 @@ def _market_movers_fragment(tickers: tuple[str, ...], title: str) -> None:
           <div class="pt-live-panel pt-sector-panel"><h3>Sector ETF Movement</h3>{_sector_strip()}</div>
         </div>
         """
-        st.markdown(markup, unsafe_allow_html=True)
+        render_html(markup)
     except Exception as exc:
         mark_fragment_refresh("market_movers", 60, "Error", str(exc)[:180])
         st.warning(f"Market movers are temporarily unavailable: {exc}")

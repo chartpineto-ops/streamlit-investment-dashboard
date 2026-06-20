@@ -6,13 +6,14 @@ import pandas as pd
 import streamlit as st
 
 from utils.formatting import fmt_date, now_et, tone_for_number
+from utils.rendering import render_html
 
 
 def section(title: str, subtitle: str | None = None) -> None:
-    st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+    render_html('<div class="section-rule"></div>')
     st.subheader(title)
     if subtitle:
-        st.markdown(f'<div class="terminal-subtitle">{escape(subtitle)}</div>', unsafe_allow_html=True)
+        render_html(f'<div class="terminal-subtitle">{escape(subtitle)}</div>')
 
 
 def metric_card(label: str, value: str, caption: str = "", tone: str = "neutral", small: bool = False) -> str:
@@ -33,7 +34,7 @@ def render_metric_grid(cards: list[tuple[str, str, str, str]], columns: int = 4,
     cols = st.columns(columns)
     for idx, (label, value, caption, tone) in enumerate(cards):
         with cols[idx % columns]:
-            st.markdown(metric_card(label, value, caption, tone, small=small), unsafe_allow_html=True)
+            render_html(metric_card(label, value, caption, tone, small=small))
 
 
 def badge(label: str, tone: str = "neutral") -> str:
@@ -51,7 +52,7 @@ def source_line(source: str = "N/A", updated=None, status: str = "") -> None:
         parts.append(f"Updated: {fmt_date(updated)}")
     if not parts:
         parts.append(f"Updated: {fmt_date(now_et())}")
-    st.markdown(f'<div class="source-line">{" | ".join(escape(p) for p in parts)}</div>', unsafe_allow_html=True)
+    render_html(f'<div class="source-line">{" | ".join(escape(p) for p in parts)}</div>')
 
 
 def quote_header(quote: dict) -> None:
@@ -72,7 +73,7 @@ def quote_header(quote: dict) -> None:
     change_text = fmt_percent(change_pct, decimals=2, signed=True) if change_pct is not None else "N/A"
     price_text = fmt_price(price)
     change_abs = f"{'+' if change > 0 else '-' if change < 0 else ''}{fmt_price(abs(change))}" if change is not None else ""
-    st.markdown(
+    render_html(
         f"""
         <div class="quote-card">
           <div class="quote-logo">{logo}</div>
@@ -83,8 +84,7 @@ def quote_header(quote: dict) -> None:
             <div class="quote-sub" style="color:#e8f2f4;">{escape(price_text)} <span class="rt-neutral">{escape(change_abs)}</span></div>
           </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 

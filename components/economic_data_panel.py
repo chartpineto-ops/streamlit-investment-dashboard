@@ -8,6 +8,7 @@ import streamlit as st
 from components.refresh_status import mark_fragment_refresh
 from services.economic_data_service import fetch_macro_dashboard
 from utils.formatting import fmt_number, fmt_percent, to_float
+from utils.rendering import render_html
 
 
 def _macro_value(row: pd.Series) -> str:
@@ -62,7 +63,7 @@ def _economic_data_fragment(title: str) -> None:
         frame = fetch_macro_dashboard()
         source = str(frame["data_source"].dropna().iloc[0]) if frame is not None and not frame.empty and "data_source" in frame else "Macro provider"
         mark_fragment_refresh("macro", 1800, "OK", source)
-        st.markdown(_macro_markup(frame, title), unsafe_allow_html=True)
+        render_html(_macro_markup(frame, title))
     except Exception as exc:
         mark_fragment_refresh("macro", 1800, "Error", str(exc)[:180])
         st.warning(f"Economic data is temporarily unavailable: {exc}")

@@ -77,6 +77,7 @@ from storage.db import connect, init_db
 from storage.watchlist import add_ticker as store_add_ticker
 from storage.watchlist import latest_quote_snapshot, remove_ticker as store_remove_ticker
 from utils.formatting import clean_ticker, fmt_compact, fmt_currency, fmt_daily_move, fmt_multiple, fmt_number, fmt_percent, now_et, safe_format_datetime, to_float
+from utils.rendering import render_html
 
 
 PAGES = [
@@ -380,9 +381,9 @@ def render_watchlist_sidebar(rows: list[dict[str, object]]) -> None:
                 st.session_state["selected_ticker"] = ticker
                 st.rerun()
         with price_col:
-            st.markdown(f'<div class="pt-watch-price">{price(float(row.get("Price") or 0.0))}</div>', unsafe_allow_html=True)
+            render_html(f'<div class="pt-watch-price">{price(float(row.get("Price") or 0.0))}</div>')
         with change_col:
-            st.markdown(f'<div class="pt-watch-change {tone_for_value(change)}">{percent(change, 2)}</div>', unsafe_allow_html=True)
+            render_html(f'<div class="pt-watch-change {tone_for_value(change)}">{percent(change, 2)}</div>')
         with remove_col:
             if st.button("X", key=f"watch_remove_{ticker}", help=f"Remove {ticker}", use_container_width=True):
                 _remove_watchlist_ticker(ticker)
@@ -1472,26 +1473,26 @@ def _scanner_row_columns(row: pd.Series, prefix: str, idx: int) -> None:
         if st.button(ticker, key=f"{prefix}_ticker_{ticker}_{idx}", help=f"Open {ticker}", use_container_width=True):
             _open_scanner_ticker(row)
     with cols[1]:
-        st.markdown(f'<span class="pt-scanner-cell">{price(to_float(row.get("currentPrice")))}</span>', unsafe_allow_html=True)
+        render_html(f'<span class="pt-scanner-cell">{price(to_float(row.get("currentPrice")))}</span>')
     with cols[2]:
         move = to_float(row.get("priceChangePercent")) or 0.0
-        st.markdown(f'<span class="pt-scanner-cell {tone_for_value(move)}">{fmt_daily_move(move)}</span>', unsafe_allow_html=True)
+        render_html(f'<span class="pt-scanner-cell {tone_for_value(move)}">{fmt_daily_move(move)}</span>')
     with cols[3]:
-        st.markdown(f'<span class="pt-scanner-cell">{fmt_compact(row.get("currentVolume"), 1)}</span>', unsafe_allow_html=True)
+        render_html(f'<span class="pt-scanner-cell">{fmt_compact(row.get("currentVolume"), 1)}</span>')
     with cols[4]:
-        st.markdown(f'<span class="pt-scanner-cell">{fmt_multiple(row.get("relativeVolume"))}</span>', unsafe_allow_html=True)
+        render_html(f'<span class="pt-scanner-cell">{fmt_multiple(row.get("relativeVolume"))}</span>')
     with cols[5]:
-        st.markdown(f'<span class="pt-scanner-cell">{fmt_daily_move(row.get("unusualVolumePercent"))}</span>', unsafe_allow_html=True)
+        render_html(f'<span class="pt-scanner-cell">{fmt_daily_move(row.get("unusualVolumePercent"))}</span>')
     with cols[6]:
-        st.markdown(f'<span class="pt-scanner-cell">{fmt_currency(row.get("dollarVolume"), 1)}</span>', unsafe_allow_html=True)
+        render_html(f'<span class="pt-scanner-cell">{fmt_currency(row.get("dollarVolume"), 1)}</span>')
     with cols[7]:
-        st.markdown(f'<span class="pt-scanner-cell">{escape(str(row.get("theme") or "General"))}</span>', unsafe_allow_html=True)
+        render_html(f'<span class="pt-scanner-cell">{escape(str(row.get("theme") or "General"))}</span>')
     with cols[8]:
         anomaly = str(row.get("volumeAnomaly") or "Unknown")
-        st.markdown(f'<span class="pt-scanner-chip {_scanner_volume_tone(anomaly)}">{escape(anomaly)}</span>', unsafe_allow_html=True)
+        render_html(f'<span class="pt-scanner-chip {_scanner_volume_tone(anomaly)}">{escape(anomaly)}</span>')
     with cols[9]:
         signal = str(row.get("signal") or "Normal move")
-        st.markdown(f'<span class="pt-scanner-chip {_scanner_signal_tone(signal)}">{escape(signal)}</span>', unsafe_allow_html=True)
+        render_html(f'<span class="pt-scanner-chip {_scanner_signal_tone(signal)}">{escape(signal)}</span>')
 
 
 def _render_scanner_table(title: str, subtitle: str, frame: pd.DataFrame, prefix: str, limit: int = 8, action: str = "") -> None:
@@ -1503,7 +1504,7 @@ def _render_scanner_table(title: str, subtitle: str, frame: pd.DataFrame, prefix
     labels = ["Ticker", "Price", "% Change", "Volume", "Rel Vol", "Unusual", "$ Vol", "Theme", "Volume", "Signal"]
     for col, label in zip(header, labels):
         with col:
-            st.markdown(f'<div class="pt-scanner-header-cell">{escape(label)}</div>', unsafe_allow_html=True)
+            render_html(f'<div class="pt-scanner-header-cell">{escape(label)}</div>')
     for idx, (_, row) in enumerate(frame.head(limit).iterrows()):
         _scanner_row_columns(row, prefix, idx)
 
@@ -1733,7 +1734,7 @@ def render_portfolio_holdings(rows: list[dict[str, object]]) -> None:
     header_cols = st.columns(widths, gap="small")
     for col, label in zip(header_cols, headers):
         with col:
-            st.markdown(f'<div class="pt-mini-label">{escape(label)}</div>', unsafe_allow_html=True)
+            render_html(f'<div class="pt-mini-label">{escape(label)}</div>')
     for row in rows:
         ticker = str(row.get("ticker", ""))
         key = _portfolio_key(ticker)
@@ -1741,7 +1742,7 @@ def render_portfolio_holdings(rows: list[dict[str, object]]) -> None:
         row_cols = st.columns(widths, gap="small", vertical_alignment="center")
         with row_cols[0]:
             if is_cash:
-                st.markdown(f"**{escape(ticker)}**", unsafe_allow_html=True)
+                st.markdown(f"**{escape(ticker)}**")
             elif st.button(ticker, key=f"portfolio_select_{key}", use_container_width=True):
                 st.session_state["selected_ticker"] = key
                 st.rerun()
@@ -1749,12 +1750,12 @@ def render_portfolio_holdings(rows: list[dict[str, object]]) -> None:
             st.markdown(f'{_portfolio_weight(row.get("weight")):.1f}%')
         with row_cols[2]:
             signal = str(row.get("signal", "No Rating"))
-            st.markdown(f'<span class="{_portfolio_signal_tone(signal)}">{escape(signal)}</span>', unsafe_allow_html=True)
+            render_html(f'<span class="{_portfolio_signal_tone(signal)}">{escape(signal)}</span>')
         with row_cols[3]:
             risk = str(row.get("risk", "N/A"))
-            st.markdown(f'<span class="{_portfolio_risk_tone(risk)}">{escape(risk)}</span>', unsafe_allow_html=True)
+            render_html(f'<span class="{_portfolio_risk_tone(risk)}">{escape(risk)}</span>')
         with row_cols[4]:
-            st.markdown(escape(str(row.get("theme", "General"))), unsafe_allow_html=True)
+            st.markdown(escape(str(row.get("theme", "General"))))
         with row_cols[5]:
             if not is_cash and st.button("X", key=f"portfolio_remove_{key}", help=f"Remove {key}", use_container_width=True):
                 _remove_portfolio_ticker(key)
@@ -2026,36 +2027,36 @@ def _render_news_table(items: list[NewsItem]) -> None:
     labels = ["Date", "Ticker / Theme", "Headline", "Type", "Impact", "Thesis Lever", "Valuation Lever", "Adjustment", "Why It Matters", "Source"]
     for col, label in zip(header, labels):
         with col:
-            st.markdown(f'<div class="pt-news-header-cell">{escape(label)}</div>', unsafe_allow_html=True)
+            render_html(f'<div class="pt-news-header-cell">{escape(label)}</div>')
     for idx, item in enumerate(items[:20]):
         primary, extra = _news_primary_label(item)
         row = st.columns([0.09, 0.12, 0.26, 0.1, 0.08, 0.13, 0.13, 0.12, 0.22, 0.1], vertical_alignment="center")
         with row[0]:
-            st.markdown(f'<span class="pt-news-cell">{escape(item.timestamp.strftime("%Y-%m-%d"))}<small>{escape(item.timestamp.strftime("%I:%M %p ET").lstrip("0"))}</small></span>', unsafe_allow_html=True)
+            render_html(f'<span class="pt-news-cell">{escape(item.timestamp.strftime("%Y-%m-%d"))}<small>{escape(item.timestamp.strftime("%I:%M %p ET").lstrip("0"))}</small></span>')
         with row[1]:
             if primary in item.tickers:
                 if st.button(primary, key=f"news_primary_{item.id}_{idx}", help=f"Open {primary}", use_container_width=True):
                     _open_news_ticker(primary, item)
             else:
-                st.markdown(f'<span class="pt-news-cell"><b>{escape(primary)}</b></span>', unsafe_allow_html=True)
+                render_html(f'<span class="pt-news-cell"><b>{escape(primary)}</b></span>')
             if extra:
                 st.caption(extra)
         with row[2]:
-            st.markdown(f'<span class="pt-news-cell headline">{escape(item.headline)}</span>', unsafe_allow_html=True)
+            render_html(f'<span class="pt-news-cell headline">{escape(item.headline)}</span>')
         with row[3]:
-            st.markdown(_news_badge(item.updateType, "neutral"), unsafe_allow_html=True)
+            render_html(_news_badge(item.updateType, "neutral"))
         with row[4]:
-            st.markdown(_news_badge(item.impact), unsafe_allow_html=True)
+            render_html(_news_badge(item.impact))
         with row[5]:
-            st.markdown(f'<span class="pt-news-cell">{escape(item.affectedThesisLever)}</span>', unsafe_allow_html=True)
+            render_html(f'<span class="pt-news-cell">{escape(item.affectedThesisLever)}</span>')
         with row[6]:
-            st.markdown(f'<span class="pt-news-cell">{escape(item.affectedValuationLever)}</span>', unsafe_allow_html=True)
+            render_html(f'<span class="pt-news-cell">{escape(item.affectedValuationLever)}</span>')
         with row[7]:
-            st.markdown(f'<span class="pt-news-cell {_news_tone(item.dashboardAdjustment)}">{escape(item.dashboardAdjustment)}</span>', unsafe_allow_html=True)
+            render_html(f'<span class="pt-news-cell {_news_tone(item.dashboardAdjustment)}">{escape(item.dashboardAdjustment)}</span>')
         with row[8]:
-            st.markdown(f'<span class="pt-news-cell">{escape(item.whyItMatters)}</span>', unsafe_allow_html=True)
+            render_html(f'<span class="pt-news-cell">{escape(item.whyItMatters)}</span>')
         with row[9]:
-            st.markdown(f'<span class="pt-news-cell source">{_news_source_link(item)}</span>', unsafe_allow_html=True)
+            render_html(f'<span class="pt-news-cell source">{_news_source_link(item)}</span>')
         _render_news_item_expander(item, f"table_{idx}")
 
 
