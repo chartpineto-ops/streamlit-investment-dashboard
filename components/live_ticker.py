@@ -8,6 +8,7 @@ import streamlit as st
 from components.refresh_status import mark_fragment_refresh
 from services.live_quotes import fetch_latest_quotes
 from utils.formatting import fmt_daily_move, fmt_price, now_et, safe_format_datetime, to_float
+from utils.refresh_debug import is_refresh_stale, latest_refresh_from_frame, log_refresh, render_refresh_debug
 from utils.rendering import render_html
 
 
@@ -92,32 +93,51 @@ def _render_ticker_markup(quotes: pd.DataFrame) -> None:
     )
 
 
-# Browser/page auto-refresh was removed because it reran expensive dashboard
-# sections. This fragment gives only the ticker strip a small, isolated pulse.
-# Streamlit requires a static run_every decorator here; change "5s" below to
-# adjust the default ticker interval, or replace fetch_latest_quotes with a
-# WebSocket-backed provider in services/live_quotes.py later.
-@st.fragment(run_every="5s")
-def _live_ticker_fragment(tickers: tuple[str, ...]) -> None:
-    try:
-        quotes = fetch_latest_quotes(list(tickers))
-        source = str(quotes["data_source"].dropna().iloc[0]) if quotes is not None and not quotes.empty and "data_source" in quotes else "Quote provider"
-        mark_fragment_refresh("live_prices", 5, "OK", source)
-        _render_ticker_markup(quotes)
-    except Exception as exc:
-        mark_fragment_refresh("live_prices", 5, "Error", str(exc)[:180])
-        render_html(
-            f"""
-            <div class="pt-market-marquee-empty">
-              Live ticker unavailable. {escape(str(exc)[:180])}
-            </div>
-            """
-        )
-
-
 def render_live_ticker(tickers: list[str], refresh_seconds: int = 5) -> None:
     """Render the moving ticker strip without refreshing the full Streamlit app."""
 
-    del refresh_seconds
     cleaned = tuple(dict.fromkeys(tickers or DEFAULT_LIVE_TICKERS))
-    _live_ticker_fragment(cleaned)
+    cadence_seconds = max(1, int(refresh_seconds or 5))
+
+    # Browser/page auto-refresh was removed because it reran expensive dashboard
+    # sections. This fragment gives only the ticker strip a small, isolated pulse.
+    @st.fragment(run_every=f"{cadence_seconds}s")
+    def _live_ticker_fragment() -> None:
+        try:
+            quotes = fetch_latest_quotes(list(cleaned))
+            sources = quotes["data_source"].dropna() if quotes is not None and not quotes.empty and "data_source" in quotes else pd.Series(dtype=object)
+            source = str(sources.iloc[0]) if not sources.empty else "Quote provider"
+            last_refresh = latest_refresh_from_frame(quotes) or now_et()
+            stale = is_refresh_stale(last_refresh, cadence_seconds)
+            error = ""
+            if quotes is not None and not quotes.empty and "error" in quotes:
+                error = "; ".join(str(value) for value in quotes["error"].dropna().unique() if str(value))[:180]
+            log_refresh("live_prices", source)
+            mark_fragment_refresh(
+                "live_prices",
+                cadence_seconds,
+                "OK",
+                source,
+                last_refresh=last_refresh,
+                data_source=source,
+                cache_ttl=5,
+                rows=0 if quotes is None else len(quotes),
+                is_stale=stale,
+                error=error,
+            )
+            _render_ticker_markup(quotes)
+            render_refresh_debug("live_prices", last_refresh=last_refresh, data_source=source, cache_ttl=5, rows=0 if quotes is None else len(quotes), is_stale=stale, error=error)
+        except Exception as exc:
+            error = str(exc)[:180]
+            last_refresh = now_et()
+            mark_fragment_refresh("live_prices", cadence_seconds, "Error", error, last_refresh=last_refresh, data_source="Quote provider", cache_ttl=5, rows=0, is_stale=True, error=error)
+            render_html(
+                f"""
+                <div class="pt-market-marquee-empty">
+                  Live ticker unavailable. {escape(error)}
+                </div>
+                """
+            )
+            render_refresh_debug("live_prices", last_refresh=last_refresh, data_source="Quote provider", cache_ttl=5, rows=0, is_stale=True, error=error)
+
+    _live_ticker_fragment()

@@ -9,6 +9,7 @@ import streamlit as st
 from data.economic_calendar import enrich_economic_calendar_events
 from pineterminal.demo_data import ECONOMIC_CALENDAR_EVENTS
 from utils.formatting import now_et
+from utils.refresh_debug import log_refresh, render_refresh_debug
 from utils.rendering import render_html
 
 
@@ -66,9 +67,13 @@ def _calendar_markup(events: list[dict[str, object]], title: str, days_forward: 
 def _economic_calendar_fragment(title: str, days_forward: int) -> None:
     try:
         events, _ = _calendar_rows()
+        last_refresh = now_et()
+        log_refresh("economic_calendar", "Official source overlays + bundled schedule")
         render_html(_calendar_markup(events, title, days_forward))
+        render_refresh_debug("economic_calendar", last_refresh=last_refresh, data_source="Official source overlays + bundled schedule", cache_ttl=1800, rows=len(events), is_stale=False)
     except Exception as exc:
         st.warning(f"Economic calendar is temporarily unavailable: {exc}")
+        render_refresh_debug("economic_calendar", last_refresh=now_et(), data_source="Economic calendar provider", cache_ttl=1800, rows=0, is_stale=True, error=str(exc)[:180])
 
 
 def render_economic_calendar_panel(title: str = "Economic Calendar", days_forward: int = 14) -> None:

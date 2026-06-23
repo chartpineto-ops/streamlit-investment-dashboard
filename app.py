@@ -159,6 +159,7 @@ def _init_state() -> None:
     st.session_state.setdefault("portfolio_add_open", False)
     st.session_state.setdefault("portfolio_message", "")
     st.session_state.setdefault("valuation_assumption_specs", {})
+    st.session_state.setdefault("show_refresh_debug", False)
 
 
 def _apply_session_valuation_specs() -> None:
@@ -410,6 +411,10 @@ def render_sidebar(watchlist_rows: list[dict[str, object]]) -> str:
         render_brand()
         page = st.radio("Navigation", PAGES, index=PAGES.index(st.session_state.get("page", "Dashboard")), label_visibility="collapsed")
         st.session_state["page"] = page
+        st.session_state["show_refresh_debug"] = st.toggle(
+            "Show refresh debug",
+            value=bool(st.session_state.get("show_refresh_debug", False)),
+        )
         render_watchlist_sidebar(watchlist_rows)
     return page
 

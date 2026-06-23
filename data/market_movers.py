@@ -235,7 +235,7 @@ def _try_yahoo_whole_market_movers(min_price: float, min_volume: int, include_et
     }
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def get_whole_market_movers(
     min_price: float = 2.0,
     min_volume: int = 500_000,
@@ -394,7 +394,7 @@ def get_whole_market_movers(
     }
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def get_biggest_movers(
     limit: int = 10,
     include_etfs: bool = True,
@@ -450,7 +450,7 @@ def get_biggest_movers(
     return gainers, losers, status
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def get_market_movers(
     min_move_pct: float = 5.0,
     max_results: int = 50,
@@ -634,7 +634,7 @@ def get_market_movers(
     }
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def scan_market_movers(
     min_move_pct: float = 5.0,
     max_results: int = 50,

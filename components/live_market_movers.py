@@ -9,6 +9,7 @@ from components.refresh_status import mark_fragment_refresh
 from data.market_movers import get_whole_market_movers
 from services.live_quotes import fetch_latest_quotes
 from utils.formatting import clean_ticker, fmt_compact, fmt_daily_move, fmt_price, now_et, to_float
+from utils.refresh_debug import is_refresh_stale, latest_refresh_from_frame, log_refresh, render_refresh_debug
 from utils.rendering import render_html
 
 
@@ -54,19 +55,29 @@ def _compact_table(frame: pd.DataFrame, title: str, limit: int = 5) -> str:
     """
 
 
-def _quote_movers(tickers: list[str]) -> dict[str, pd.DataFrame]:
+def _quote_movers(tickers: list[str]) -> dict[str, object]:
     quotes = fetch_latest_quotes(tickers)
     if quotes.empty:
-        return {"gainers": pd.DataFrame(), "losers": pd.DataFrame(), "most_active": pd.DataFrame(), "status": pd.DataFrame()}
+        return {"gainers": pd.DataFrame(), "losers": pd.DataFrame(), "most_active": pd.DataFrame(), "status": quotes, "source_status": {}}
     frame = quotes.rename(columns={"ticker": "Ticker", "price": "Price", "change_pct": "Daily Move %"}).copy()
     frame["Volume"] = None
     frame["Relative Volume"] = None
     movers = frame[pd.to_numeric(frame["Daily Move %"], errors="coerce").notna()].copy()
+    sources = quotes["data_source"].dropna() if "data_source" in quotes else pd.Series(dtype=object)
+    source = str(sources.iloc[0]) if not sources.empty else "Watchlist live quotes"
+    last_refresh = latest_refresh_from_frame(quotes)
     return {
         "gainers": movers[movers["Daily Move %"] > 0].sort_values("Daily Move %", ascending=False),
         "losers": movers[movers["Daily Move %"] < 0].sort_values("Daily Move %", ascending=True),
         "most_active": movers.sort_values("Ticker"),
         "status": quotes,
+        "source_status": {
+            "source": source,
+            "provider": source,
+            "last_updated": last_refresh,
+            "status": "OK",
+            "message": "Watchlist live quotes",
+        },
     }
 
 
@@ -94,12 +105,27 @@ def _market_movers_fragment(tickers: tuple[str, ...], title: str) -> None:
     try:
         if tickers:
             packet = _quote_movers(list(tickers))
-            source = "Watchlist live quotes"
         else:
             packet = _fetch_market_movers_packet(_minute_cache_token())
-            source_status = packet.get("source_status", {}) if isinstance(packet, dict) else {}
-            source = str(source_status.get("source") or source_status.get("provider") or "Market movers provider")
-        mark_fragment_refresh("market_movers", 60, "OK", source)
+        source_status = packet.get("source_status", {}) if isinstance(packet, dict) else {}
+        source = str(source_status.get("source") or source_status.get("provider") or "Market movers provider")
+        last_refresh = source_status.get("last_updated") or source_status.get("Last Updated") or latest_refresh_from_frame(packet.get("status", pd.DataFrame()) if isinstance(packet, dict) else pd.DataFrame()) or now_et()
+        stale = is_refresh_stale(last_refresh, 60)
+        error = str(source_status.get("error_summary") or source_status.get("Error") or "")
+        rows_returned = sum(len(packet.get(key, pd.DataFrame())) for key in ("gainers", "losers", "most_active") if isinstance(packet, dict))
+        log_refresh("market_movers", source)
+        mark_fragment_refresh(
+            "market_movers",
+            60,
+            "OK" if not error else "Partial",
+            source,
+            last_refresh=last_refresh,
+            data_source=source,
+            cache_ttl=60,
+            rows=rows_returned,
+            is_stale=stale,
+            error=error[:180],
+        )
         gainers = packet.get("gainers", pd.DataFrame()) if isinstance(packet, dict) else pd.DataFrame()
         losers = packet.get("losers", pd.DataFrame()) if isinstance(packet, dict) else pd.DataFrame()
         active = packet.get("most_active", pd.DataFrame()) if isinstance(packet, dict) else pd.DataFrame()
@@ -118,9 +144,12 @@ def _market_movers_fragment(tickers: tuple[str, ...], title: str) -> None:
         </div>
         """
         render_html(markup)
+        render_refresh_debug("market_movers", last_refresh=last_refresh, data_source=source, cache_ttl=60, rows=rows_returned, is_stale=stale, error=error[:180])
     except Exception as exc:
-        mark_fragment_refresh("market_movers", 60, "Error", str(exc)[:180])
+        error = str(exc)[:180]
+        mark_fragment_refresh("market_movers", 60, "Error", error, last_refresh=now_et(), data_source="Market movers provider", cache_ttl=60, rows=0, is_stale=True, error=error)
         st.warning(f"Market movers are temporarily unavailable: {exc}")
+        render_refresh_debug("market_movers", last_refresh=now_et(), data_source="Market movers provider", cache_ttl=60, rows=0, is_stale=True, error=error)
 
 
 def render_live_market_movers(tickers: list[str] | None = None, title: str = "Market Movers") -> None:

@@ -14,6 +14,7 @@ from services.social_sentiment_service import (
     fetch_social_trending_tickers,
 )
 from utils.formatting import fmt_compact, fmt_daily_move, fmt_percent, now_et, to_float
+from utils.refresh_debug import is_refresh_stale, log_refresh, render_refresh_debug
 from utils.rendering import render_html
 
 
@@ -142,7 +143,12 @@ def _render_social_momentum_ui(frame: pd.DataFrame, trending: pd.DataFrame, lead
     status = frame.attrs.get("status", {}) if isinstance(frame, pd.DataFrame) else {}
     status_label = str(status.get("Status") or "Unavailable")
     source = str(status.get("Source") or "Social providers")
-    warning = "" if frame is not None and not frame.empty else '<p class="pt-placeholder">Social data is unavailable. Showing no market-wide social signals until the provider reconnects.</p>'
+    if frame is None or frame.empty:
+        warning = '<p class="pt-placeholder">No reliable social data available until a provider is configured or reconnects.</p>'
+    elif "provider not configured" in source.casefold() or "demo" in source.casefold():
+        warning = '<p class="pt-placeholder">Provider not configured. Showing clearly labelled fallback social data until a social API key is configured.</p>'
+    else:
+        warning = ""
     header = f"""
     <div class="pt-social-section-head">
       <div>
@@ -212,10 +218,17 @@ def _social_momentum_fragment() -> None:
         leaders = fetch_social_sentiment_leaders()
         themes = fetch_social_theme_trends()
         source = str(frame.attrs.get("status", {}).get("Source") or "Social provider") if isinstance(frame, pd.DataFrame) else "Social provider"
-        mark_fragment_refresh("social", 300, "OK", source)
+        status = frame.attrs.get("status", {}) if isinstance(frame, pd.DataFrame) else {}
+        last_refresh = status.get("Last Updated") or (frame["last_updated"].iloc[0] if isinstance(frame, pd.DataFrame) and not frame.empty and "last_updated" in frame else now_et())
+        stale = is_refresh_stale(last_refresh, 300)
+        refresh_status = "Fallback" if "provider not configured" in source.casefold() or "demo" in source.casefold() else "OK"
+        log_refresh("social", source)
+        mark_fragment_refresh("social", 300, refresh_status, source, last_refresh=last_refresh, data_source=source, cache_ttl=300, rows=0 if frame is None else len(frame), is_stale=stale)
         _render_social_momentum_ui(frame, trending, leaders, themes)
+        render_refresh_debug("social", last_refresh=last_refresh, data_source=source, cache_ttl=300, rows=0 if frame is None else len(frame), is_stale=stale)
     except Exception as exc:
-        mark_fragment_refresh("social", 300, "Error", str(exc)[:180])
+        error = str(exc)[:180]
+        mark_fragment_refresh("social", 300, "Error", error, last_refresh=now_et(), data_source="Social provider", cache_ttl=300, rows=0, is_stale=True, error=error)
         render_html(
             f"""
             <div class="pt-shell">
@@ -224,6 +237,7 @@ def _social_momentum_fragment() -> None:
             </div>
             """
         )
+        render_refresh_debug("social", last_refresh=now_et(), data_source="Social provider", cache_ttl=300, rows=0, is_stale=True, error=error)
 
 
 def render_social_momentum_panel() -> None:

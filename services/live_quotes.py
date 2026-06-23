@@ -263,7 +263,7 @@ def _fetch_yfinance_quotes_uncached(tickers: tuple[str, ...]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=QUOTE_COLUMNS)
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def _fetch_yfinance_quotes(tickers: tuple[str, ...]) -> pd.DataFrame:
     return _fetch_yfinance_quotes_uncached(tickers)
 

@@ -91,7 +91,7 @@ def _demo_macro_dashboard() -> pd.DataFrame:
     refreshed = now_et()
     rows = []
     for indicator, value, previous, frequency, source in DEMO_MACRO_ROWS:
-        rows.append(_row(indicator, value, previous, refreshed.date(), frequency, source, "Demo macro data"))
+        rows.append(_row(indicator, value, previous, refreshed.date(), frequency, source, "Provider not configured - demo macro fallback"))
     return pd.DataFrame(rows, columns=MACRO_COLUMNS)
 
 

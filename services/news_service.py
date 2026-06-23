@@ -94,14 +94,14 @@ def _news_items_to_frame(items: Iterable[NewsItem], data_source: str) -> pd.Data
 
 
 def _demo_market_headlines() -> pd.DataFrame:
-    return _news_items_to_frame(market_news_provider().getMarketNews(), "Demo news provider")
+    return _news_items_to_frame(market_news_provider().getMarketNews(), "Provider not configured - demo news fallback")
 
 
 def _demo_company_news(ticker: str) -> pd.DataFrame:
     symbol = clean_ticker(ticker)
     if not symbol:
         return _empty_news()
-    return _news_items_to_frame(market_news_provider().getTickerNews(symbol), "Demo news provider")
+    return _news_items_to_frame(market_news_provider().getTickerNews(symbol), "Provider not configured - demo news fallback")
 
 
 def _finnhub_request(path: str, params: dict[str, object]) -> list[dict]:

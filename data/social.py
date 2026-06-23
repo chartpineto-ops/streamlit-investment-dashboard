@@ -97,7 +97,7 @@ class FinBrainProvider(SocialMomentumProvider):
 
 
 class DemoSocialProvider(SocialMomentumProvider):
-    source = "Demo Data"
+    source = "Provider not configured - demo social fallback"
 
     def is_configured(self) -> bool:
         return True
@@ -237,7 +237,7 @@ def fetch_social_mentions(symbols: tuple[str, ...] | list[str] | None, source: s
         clean_symbols = market_universe(include_etfs=False)[:80]
     provider = _provider_for(source)
     frame, status = provider.fetch(clean_symbols)
-    if frame.empty and provider.source != "Demo Data":
+    if frame.empty and provider is not PROVIDERS["demo"]:
         frame, status = PROVIDERS["demo"].fetch(clean_symbols)
     return frame, {
         "Source": status.source,
