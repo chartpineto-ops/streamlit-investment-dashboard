@@ -73,17 +73,45 @@ def _fundamental_snapshot(symbol: str) -> dict[str, object]:
     try:
         info = yf.Ticker(symbol).get_info() or {}
         market_cap = to_float(info.get("marketCap"))
+        enterprise_value = to_float(info.get("enterpriseValue"))
+        total_revenue = to_float(info.get("totalRevenue"))
+        ebitda = to_float(info.get("ebitda"))
         free_cash_flow = to_float(info.get("freeCashflow"))
+        total_cash = to_float(info.get("totalCash"))
+        total_debt = to_float(info.get("totalDebt"))
+        current_price = to_float(info.get("currentPrice") or info.get("regularMarketPrice"))
+        target_price = to_float(info.get("targetMeanPrice"))
+        street_rating = str(info.get("recommendationKey") or "").strip()
+        if street_rating.casefold() in {"none", "null", "nan"}:
+            street_rating = ""
+        ev_to_sales = to_float(info.get("enterpriseToRevenue"))
+        if ev_to_sales is None and enterprise_value is not None and total_revenue not in (None, 0):
+            ev_to_sales = enterprise_value / total_revenue
+        ev_to_ebitda = to_float(info.get("enterpriseToEbitda"))
+        if ev_to_ebitda is None and enterprise_value is not None and ebitda not in (None, 0):
+            ev_to_ebitda = enterprise_value / ebitda
         return {
             "ticker": symbol,
             "company": info.get("shortName") or info.get("longName") or symbol,
             "market_cap": market_cap,
+            "enterprise_value": enterprise_value,
+            "revenue_ttm": total_revenue,
             "revenue_growth": to_float(info.get("revenueGrowth")),
+            "earnings_growth": to_float(info.get("earningsGrowth")),
             "gross_margin": to_float(info.get("grossMargins")),
             "operating_margin": to_float(info.get("operatingMargins")),
             "fcf_yield": (free_cash_flow / market_cap * 100) if free_cash_flow is not None and market_cap not in (None, 0) else None,
+            "return_on_equity": to_float(info.get("returnOnEquity")),
+            "net_cash": (total_cash - total_debt) if total_cash is not None and total_debt is not None else None,
             "forward_pe": to_float(info.get("forwardPE")),
             "price_to_sales": to_float(info.get("priceToSalesTrailing12Months")),
+            "ev_to_sales": ev_to_sales,
+            "ev_to_ebitda": ev_to_ebitda,
+            "target_price": target_price,
+            "target_upside": ((target_price / current_price) - 1) * 100 if target_price is not None and current_price not in (None, 0) else None,
+            "analyst_count": to_float(info.get("numberOfAnalystOpinions")),
+            "street_rating": street_rating.replace("_", " ").title(),
+            "beta": to_float(info.get("beta")),
             "status": "OK",
         }
     except Exception as exc:
@@ -101,7 +129,7 @@ def _relative_read(frame: pd.DataFrame) -> pd.Series:
 
     score = pd.Series(0.0, index=frame.index)
     available = pd.Series(0.0, index=frame.index)
-    for column, positive in (("return_3m", True), ("revenue_growth", True), ("gross_margin", True), ("operating_margin", True), ("price_to_sales", False)):
+    for column, positive in (("return_3m", True), ("revenue_growth", True), ("gross_margin", True), ("operating_margin", True), ("fcf_yield", True), ("ev_to_sales", False)):
         values = numeric_column(column)
         valid = values.notna()
         if valid.sum() < 2:
@@ -113,7 +141,7 @@ def _relative_read(frame: pd.DataFrame) -> pd.Series:
         available.loc[valid] += 1
     normalized = score.div(available.where(available > 0)).mul(100)
     labels = normalized.apply(lambda value: "Leading" if pd.notna(value) and value >= 67 else "Competitive" if pd.notna(value) and value >= 45 else "Lagging" if pd.notna(value) else "Insufficient data")
-    valuation_available = numeric_column("price_to_sales").notna() | numeric_column("forward_pe").notna()
+    valuation_available = numeric_column("ev_to_sales").notna() | numeric_column("forward_pe").notna()
     decision_grade = (available >= 3) & (numeric_column("revenue_growth").notna() | valuation_available)
     return labels.where(decision_grade, "Insufficient data")
 

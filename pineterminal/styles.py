@@ -3937,6 +3937,9 @@ button, input, textarea, select {
   grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
   gap: 0.72rem;
 }
+.pt-decision-row.pt-single-decision-row {
+  grid-template-columns: 1fr;
+}
 .pt-risk-decision-row {
   grid-template-columns: minmax(0, 0.45fr) minmax(0, 1fr);
 }
@@ -5322,6 +5325,85 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.pt-chart-anchor) [data-test
   font-size: 0.7rem;
   margin: 0;
 }
+.pt-terminal-command-strip {
+  background: #0b1217;
+  border-bottom: 1px solid #344049;
+  color: #829099;
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  margin: 0 -0.02rem;
+  padding: 0.35rem 0.42rem;
+  text-transform: uppercase;
+}
+.pt-terminal-command-strip b {
+  color: #f0bd4f;
+  font-size: 0.68rem;
+}
+.pt-terminal-command-strip i {
+  color: #41505a;
+  font-style: normal;
+  margin: 0 0.32rem;
+}
+.pt-analyst-monitor-grid {
+  background: #29343c;
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0.45rem 0;
+}
+.pt-analyst-monitor-grid section {
+  background: #080e12;
+  min-width: 0;
+}
+.pt-analyst-monitor-grid header {
+  align-items: center;
+  background: #10181e;
+  border-bottom: 1px solid #344049;
+  display: flex;
+  justify-content: space-between;
+  padding: 0.34rem 0.42rem;
+}
+.pt-analyst-monitor-grid header span {
+  color: #d69a2d;
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-size: 0.61rem;
+  font-weight: 800;
+}
+.pt-analyst-monitor-grid header small {
+  color: #687780;
+  font-size: 0.55rem;
+}
+.pt-analyst-row {
+  border-bottom: 1px solid #202a31;
+  display: grid;
+  gap: 0.1rem 0.28rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 3.1rem;
+  padding: 0.36rem 0.42rem;
+}
+.pt-analyst-row:last-child {
+  border-bottom: 0;
+}
+.pt-analyst-row span {
+  color: #8b989f;
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.pt-analyst-row strong {
+  color: #edf2f5;
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-size: 0.76rem;
+  text-align: right;
+  white-space: nowrap;
+}
+.pt-analyst-row small {
+  color: #718089;
+  font-size: 0.56rem;
+  grid-column: 1 / -1;
+  line-height: 1.3;
+}
 .pt-chart-coverage {
   border-left: 1px solid #354049;
   min-width: 100px;
@@ -5347,7 +5429,7 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.pt-chart-anchor) [data-test
   border: 1px solid #29343c;
   display: grid;
   gap: 1px;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   margin-top: 0.1rem;
 }
 .pt-decision-figure {
@@ -5427,7 +5509,7 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.pt-chart-anchor) [data-test
   margin: 0.16rem 0 0;
 }
 .pt-peer-figures {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin-bottom: 0.45rem;
 }
 .pt-chart-empty {
@@ -5587,6 +5669,9 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.pt-chart-anchor) [data-test
   min-width: 880px;
   width: 100%;
 }
+.pt-comp-table {
+  min-width: 1340px;
+}
 .pt-peer-table th,
 .pt-peer-table td {
   border-bottom: 1px solid #263139;
@@ -5622,6 +5707,14 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.pt-chart-anchor) [data-test
   background: rgba(214, 154, 45, 0.1);
   box-shadow: inset 3px 0 #d69a2d;
 }
+.pt-peer-table tr.peer-median {
+  background: #11191e;
+  border-top: 2px solid #53616a;
+}
+.pt-peer-table tr.peer-median td {
+  color: #aeb8be;
+  font-family: "IBM Plex Mono", Consolas, monospace;
+}
 .pt-peer-read {
   grid-template-columns: 140px 1fr;
 }
@@ -5645,6 +5738,9 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.pt-chart-anchor) [data-test
   }
   .pt-lt-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .pt-analyst-monitor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .pt-decision-figures {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5696,6 +5792,9 @@ div[data-testid="stVerticalBlockBorderWrapper"]:has(.pt-chart-anchor) [data-test
   }
   .pt-lt-grid {
     grid-template-columns: 1fr 1fr;
+  }
+  .pt-analyst-monitor-grid {
+    grid-template-columns: 1fr;
   }
   .pt-recommendation-read,
   .pt-peer-read {

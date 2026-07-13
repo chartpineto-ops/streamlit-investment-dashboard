@@ -42,7 +42,6 @@ from pineterminal.components import (
     render_brand,
     render_company_header,
     render_company_dashboard,
-    render_decision_business_quality,
     render_decision_checklist,
     render_decision_future_value,
     render_decision_recent_changes,
@@ -674,10 +673,14 @@ def render_company_dashboard_with_social(analysis) -> None:
     )
     render_long_term_company_stats(analysis)
     render_competitive_intelligence(analysis)
+    html(
+        '<div class="pt-shell pt-decision-shell">'
+        + f'<div class="pt-decision-row pt-single-decision-row">{render_decision_future_value(analysis)}</div>'
+        + "</div>"
+    )
     render_social_readthrough(analysis.company.ticker, social_df)
     html(
         '<div class="pt-shell pt-decision-shell">'
-        + f'<div class="pt-decision-row">{render_decision_business_quality(analysis)}{render_decision_future_value(analysis)}</div>'
         + render_decision_thesis_drivers(analysis)
         + f'<div class="pt-decision-row pt-risk-decision-row">{render_decision_checklist(analysis)}{render_decision_risks(analysis)}</div>'
         + render_decision_recent_changes(analysis)

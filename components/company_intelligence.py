@@ -1,140 +1,22 @@
 from __future__ import annotations
 
+from datetime import date
 from html import escape
 from math import log10
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
 
 from data.financials import load_latest_company_financials
-from pineterminal.components import money, percent, price, tone_for_signal, tone_for_value
+from pineterminal.components import money, percent, price, tone_for_value
 from services.competitive_intelligence_service import fetch_competitive_intelligence
 from utils.formatting import fmt_date, to_float
 from utils.rendering import render_html
 
 
-def _clean_values(frame: pd.DataFrame, key: str) -> list[tuple[str, float]]:
-    if frame is None or frame.empty or key not in frame:
-        return []
-    rows: list[tuple[str, float]] = []
-    for _, row in frame.tail(8).iterrows():
-        value = to_float(row.get(key))
-        if value is not None:
-            rows.append((str(row.get("period") or "Period"), value))
-    return rows
-
-
-def _comparison(points: list[tuple[str, float]], quarterly: bool) -> tuple[float | None, str]:
-    if len(points) < 2:
-        return None, "History unavailable"
-    comparison_index = -5 if quarterly and len(points) >= 5 else 0
-    prior_label, prior = points[comparison_index]
-    latest = points[-1][1]
-    return latest - prior, f"vs {prior_label}"
-
-
-def _trend(change: float | None, threshold: float, inverse: bool = False) -> tuple[str, str]:
-    if change is None:
-        return "Insufficient history", "neutral"
-    adjusted = -change if inverse else change
-    if adjusted > threshold:
-        return "Improving", "good"
-    if adjusted < -threshold:
-        return "Deteriorating", "bad"
-    return "Stable", "warn"
-
-
-def _sparkline(points: list[tuple[str, float]], tone: str) -> str:
-    values = [value for _, value in points[-6:]]
-    if len(values) < 2:
-        return '<div class="pt-trend-empty">No comparable history</div>'
-    low, high = min(values), max(values)
-    spread = high - low
-    coords = []
-    for index, value in enumerate(values):
-        x = 4 + index * (92 / max(1, len(values) - 1))
-        y = 30 if spread == 0 else 52 - ((value - low) / spread * 42)
-        coords.append(f"{x:.1f},{y:.1f}")
-    return f'<svg class="pt-trend-spark {tone}" viewBox="0 0 100 58" preserveAspectRatio="none" aria-hidden="true"><polyline points="{" ".join(coords)}"></polyline></svg>'
-
-
-def _metric_card(label: str, current: str, comparison: str, status: str, tone: str, points: list[tuple[str, float]], interpretation: str) -> str:
-    return f"""
-    <div class="pt-lt-metric">
-      <div class="pt-lt-metric-head"><span>{escape(label)}</span><b class="{tone}">{escape(status)}</b></div>
-      <strong>{escape(current)}</strong>
-      <small>{escape(comparison)}</small>
-      {_sparkline(points, tone)}
-      <p>{escape(interpretation)}</p>
-    </div>
-    """
-
-
 def _format_margin(value: float | None) -> str:
     return percent(value, 1, signed=False) if value is not None else "N/A"
-
-
-def _format_change(change: float | None, suffix: str, comparison_label: str) -> str:
-    if change is None:
-        return comparison_label
-    sign = "+" if change > 0 else ""
-    return f"{sign}{change:.1f}{suffix} {comparison_label}"
-
-
-def _long_term_metrics(analysis, financials: dict) -> tuple[list[str], dict[str, int], str]:
-    history = financials.get("quarterly_history")
-    quarterly = isinstance(history, pd.DataFrame) and not history.empty
-    if not quarterly:
-        history = financials.get("annual_history")
-    if not isinstance(history, pd.DataFrame):
-        history = pd.DataFrame()
-    cards: list[str] = []
-    counts = {"good": 0, "warn": 0, "bad": 0, "neutral": 0}
-
-    revenue = _clean_values(history, "revenue")
-    revenue_change, revenue_compare = _comparison(revenue, quarterly)
-    revenue_growth = (revenue_change / revenue[-5 if quarterly and len(revenue) >= 5 else 0][1] * 100) if revenue_change is not None and revenue[-5 if quarterly and len(revenue) >= 5 else 0][1] else None
-    status, tone = _trend(revenue_growth, 5)
-    counts[tone] += 1
-    cards.append(_metric_card("Revenue", money(revenue[-1][1]) if revenue else "N/A", _format_change(revenue_growth, "%", revenue_compare), status, tone, revenue, "Sustained top-line growth expands the earnings base; small-base spikes need confirmation."))
-
-    for label, key, threshold, interpretation in (
-        ("Gross Margin", "gross_margin", 1.0, "Gross-margin expansion signals pricing power and improving unit economics."),
-        ("Operating Margin", "operating_margin", 1.0, "Operating leverage matters more than revenue growth that never reaches the bottom line."),
-        ("Free Cash Flow Margin", "fcf_margin", 1.0, "Positive and rising free cash flow reduces financing and dilution dependence."),
-    ):
-        points = _clean_values(history, key)
-        change, compare = _comparison(points, quarterly)
-        status, tone = _trend(change, threshold)
-        counts[tone] += 1
-        cards.append(_metric_card(label, _format_margin(points[-1][1]) if points else "N/A", _format_change(change, " pts", compare), status, tone, points, interpretation))
-
-    net_cash_points = []
-    cash = _clean_values(history, "cash")
-    debt = _clean_values(history, "total_debt")
-    debt_by_period = dict(debt)
-    for period, cash_value in cash:
-        if period in debt_by_period:
-            net_cash_points.append((period, cash_value - debt_by_period[period]))
-    net_cash_change, net_cash_compare = _comparison(net_cash_points, quarterly)
-    status, tone = _trend(net_cash_change, max(abs(net_cash_points[-1][1]) * 0.05, 1.0) if net_cash_points else 1.0)
-    counts[tone] += 1
-    cards.append(_metric_card("Net Cash / Debt", money(net_cash_points[-1][1]) if net_cash_points else "N/A", (f"{money(net_cash_change)} {net_cash_compare}" if net_cash_change is not None else net_cash_compare), status, tone, net_cash_points, "Balance-sheet direction determines resilience and the need for outside capital."))
-
-    shares = _clean_values(history, "shares_outstanding")
-    current_shares = to_float(analysis.company.shares_outstanding)
-    if current_shares is not None and (not shares or shares[-1][1] != current_shares):
-        shares.append(("Current", current_shares))
-    shares_change, shares_compare = _comparison(shares, quarterly=False)
-    shares_growth = (shares_change / shares[0][1] * 100) if shares_change is not None and shares[0][1] else None
-    status, tone = _trend(shares_growth, 3.0, inverse=True)
-    counts[tone] += 1
-    cards.append(_metric_card("Share Count", f"{current_shares / 1_000_000:.1f}M" if current_shares is not None else "N/A", _format_change(shares_growth, "%", shares_compare), status, tone, shares, "Per-share value can lag company growth when issuance persistently expands the share count."))
-
-    period_label = str(history.iloc[-1].get("period") or "Latest filing") if not history.empty else "No reliable filing history"
-    return cards, counts, period_label
 
 
 def _financial_history(financials: dict) -> tuple[pd.DataFrame, bool]:
@@ -191,96 +73,6 @@ def _apply_terminal_chart_layout(figure: go.Figure, height: int = 300) -> go.Fig
     return figure
 
 
-def _operating_progression_figure(frame: pd.DataFrame) -> go.Figure | None:
-    if frame.empty:
-        return None
-    periods = _chart_periods(frame)
-    revenue = _numeric_series(frame, "revenue")
-    gross_margin = _numeric_series(frame, "gross_margin")
-    divisor, unit = _money_scale(revenue)
-    if revenue.dropna().empty and gross_margin.dropna().empty:
-        return None
-    figure = make_subplots(specs=[[{"secondary_y": True}]])
-    if not revenue.dropna().empty:
-        figure.add_trace(
-            go.Bar(
-                x=periods,
-                y=revenue / divisor,
-                name="Revenue",
-                marker_color="#36a9e1",
-                hovertemplate=f"%{{x}}<br>Revenue: {unit}%{{y:,.1f}}<extra></extra>",
-            ),
-            secondary_y=False,
-        )
-    if not gross_margin.dropna().empty:
-        figure.add_trace(
-            go.Scatter(
-                x=periods,
-                y=gross_margin,
-                name="Gross Margin",
-                mode="lines+markers",
-                line=dict(color="#48c97a", width=2),
-                marker=dict(size=6, color="#48c97a", line=dict(color="#07100b", width=1)),
-                hovertemplate="%{x}<br>Gross margin: %{y:.1f}%<extra></extra>",
-            ),
-            secondary_y=True,
-        )
-    figure.update_yaxes(title_text=f"Revenue ({unit})", secondary_y=False)
-    figure.update_yaxes(title_text="Gross Margin (%)", ticksuffix="%", secondary_y=True)
-    figure.update_layout(title=dict(text="REVENUE SCALE / UNIT ECONOMICS", x=0.01, font=dict(size=11, color="#d69a2d")))
-    return _apply_terminal_chart_layout(figure)
-
-
-def _capital_discipline_figure(frame: pd.DataFrame) -> go.Figure | None:
-    if frame.empty:
-        return None
-    periods = _chart_periods(frame)
-    operating_income = _numeric_series(frame, "operating_income")
-    free_cash_flow = _numeric_series(frame, "free_cash_flow")
-    cash = _numeric_series(frame, "cash")
-    debt = _numeric_series(frame, "total_debt")
-    net_cash = cash - debt
-    divisor, unit = _money_scale(operating_income, free_cash_flow, net_cash)
-    if operating_income.dropna().empty and free_cash_flow.dropna().empty and net_cash.dropna().empty:
-        return None
-    figure = go.Figure()
-    if not operating_income.dropna().empty:
-        figure.add_trace(
-            go.Bar(
-                x=periods,
-                y=operating_income / divisor,
-                name="Operating Income",
-                marker_color=["#36a9e1" if value >= 0 else "#9c4650" for value in operating_income.fillna(0)],
-                hovertemplate=f"%{{x}}<br>Operating income: {unit}%{{y:,.1f}}<extra></extra>",
-            )
-        )
-    if not free_cash_flow.dropna().empty:
-        figure.add_trace(
-            go.Bar(
-                x=periods,
-                y=free_cash_flow / divisor,
-                name="Free Cash Flow",
-                marker_color=["#48c97a" if value >= 0 else "#ee6670" for value in free_cash_flow.fillna(0)],
-                hovertemplate=f"%{{x}}<br>Free cash flow: {unit}%{{y:,.1f}}<extra></extra>",
-            )
-        )
-    if not net_cash.dropna().empty:
-        figure.add_trace(
-            go.Scatter(
-                x=periods,
-                y=net_cash / divisor,
-                name="Net Cash / Debt",
-                mode="lines+markers",
-                line=dict(color="#d69a2d", width=2),
-                marker=dict(size=6, color="#d69a2d"),
-                hovertemplate=f"%{{x}}<br>Net cash / debt: {unit}%{{y:,.1f}}<extra></extra>",
-            )
-        )
-    figure.update_yaxes(title_text=f"Reported Value ({unit})")
-    figure.update_layout(title=dict(text="PROFIT CONVERSION / FUNDING RISK", x=0.01, font=dict(size=11, color="#d69a2d")))
-    return _apply_terminal_chart_layout(figure)
-
-
 def _latest_value(frame: pd.DataFrame, key: str) -> float | None:
     values = _numeric_series(frame, key).dropna()
     return to_float(values.iloc[-1]) if not values.empty else None
@@ -308,7 +100,176 @@ def _figure_tile(label: str, value: str, context: str, tone: str = "neutral") ->
     return f'<div class="pt-decision-figure"><span>{escape(label)}</span><strong class="{escape(tone)}">{escape(value)}</strong><small>{escape(context)}</small></div>'
 
 
-def _company_decision_figures(frame: pd.DataFrame, quarterly: bool, analysis) -> str:
+def _estimate_value(frame: object, period: str, column: str) -> float | None:
+    if not isinstance(frame, pd.DataFrame) or frame.empty or column not in frame or period not in frame.index:
+        return None
+    value = frame.loc[period, column]
+    if isinstance(value, pd.Series):
+        value = value.iloc[0]
+    return to_float(value)
+
+
+def _multiple(value: float | None, label: str = "x") -> str:
+    return f"{value:.1f}{label}" if value is not None and value > 0 else "N/M"
+
+
+def _signed_money(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    prefix = "-" if value < 0 else ""
+    return prefix + money(abs(value))
+
+
+def _terminal_rows(rows: list[tuple[str, str, str, str]]) -> str:
+    return "".join(
+        f'<div class="pt-analyst-row"><span>{escape(label)}</span><strong class="{escape(tone)}">{escape(value)}</strong><small>{escape(context)}</small></div>'
+        for label, value, context, tone in rows
+    )
+
+
+def _analyst_monitor_panels(analysis, financials: dict, frame: pd.DataFrame, quarterly: bool) -> str:
+    latest = financials.get("latest_financials") or {}
+    quote = financials.get("latest_quote") or {}
+    earnings = financials.get("latest_reported_earnings") or {}
+    eps_estimates = financials.get("analyst_estimates")
+    revenue_estimates = financials.get("consensus_revenue")
+
+    revenue = to_float(latest.get("revenue"))
+    revenue_yoy = to_float(latest.get("revenue_yoy_growth"))
+    revenue_qoq = to_float(latest.get("revenue_qoq_growth"))
+    gross_margin = to_float(latest.get("gross_margin"))
+    gross_margin_change = _period_change(frame, "gross_margin", quarterly)
+    eps_actual = to_float(earnings.get("eps_actual"))
+    eps_estimate = to_float(earnings.get("eps_estimate"))
+    eps_surprise = to_float(earnings.get("eps_surprise_pct"))
+    fcf = to_float(latest.get("free_cash_flow"))
+
+    next_q_revenue = _estimate_value(revenue_estimates, "0q", "avg")
+    next_q_low = _estimate_value(revenue_estimates, "0q", "low")
+    next_q_high = _estimate_value(revenue_estimates, "0q", "high")
+    next_q_growth = _estimate_value(revenue_estimates, "0q", "growth")
+    next_q_analysts = _estimate_value(revenue_estimates, "0q", "numberOfAnalysts")
+    fy0_revenue = _estimate_value(revenue_estimates, "0y", "avg")
+    fy0_growth = _estimate_value(revenue_estimates, "0y", "growth")
+    fy1_revenue = _estimate_value(revenue_estimates, "+1y", "avg")
+    fy1_growth = _estimate_value(revenue_estimates, "+1y", "growth")
+    fy0_eps = _estimate_value(eps_estimates, "0y", "avg")
+    fy1_eps = _estimate_value(eps_estimates, "+1y", "avg")
+    fy1_eps_analysts = _estimate_value(eps_estimates, "+1y", "numberOfAnalysts")
+
+    market_cap = to_float(quote.get("market_cap")) or to_float(analysis.company.market_cap)
+    enterprise_value = to_float(quote.get("enterprise_value")) or to_float(analysis.company.enterprise_value)
+    quarterly_revenue = _numeric_series(frame.tail(4), "revenue").dropna()
+    ttm_revenue = to_float(quarterly_revenue.sum()) if len(quarterly_revenue) == 4 else None
+    ev_sales = enterprise_value / ttm_revenue if enterprise_value is not None and ttm_revenue not in (None, 0) else to_float(quote.get("price_to_sales"))
+    free_cash_flow = to_float(quote.get("free_cash_flow"))
+    fcf_yield = free_cash_flow / market_cap * 100 if free_cash_flow is not None and market_cap not in (None, 0) else None
+    cash = to_float(latest.get("cash")) or to_float(quote.get("total_cash"))
+    debt = to_float(latest.get("total_debt")) or to_float(quote.get("total_debt"))
+    net_cash = cash - debt if cash is not None and debt is not None else None
+    target = to_float(quote.get("target_mean_price"))
+    current_price = to_float(quote.get("price")) or to_float(analysis.company.current_price)
+    target_upside = ((target / current_price) - 1) * 100 if target is not None and current_price not in (None, 0) else None
+    street_rating = str(quote.get("recommendation") or "Unavailable").replace("_", " ").title()
+    next_earnings = quote.get("next_earnings_date")
+    next_earnings_valid = next_earnings if isinstance(next_earnings, date) and next_earnings >= date.today() else None
+    completeness = to_float((financials.get("source_metadata") or {}).get("financial_data_completeness"))
+
+    results_rows = [
+        ("Revenue", money(revenue) if revenue is not None else "N/A", f"{percent(revenue_yoy, 1)} YoY | {percent(revenue_qoq, 1)} QoQ", tone_for_value(revenue_yoy)),
+        ("EPS vs Consensus", f"{eps_actual:.2f}" if eps_actual is not None else "N/A", f"Street {eps_estimate:.2f} | surprise {percent(eps_surprise, 1)}" if eps_estimate is not None else "Consensus unavailable", tone_for_value(eps_surprise)),
+        ("Gross Margin", _format_margin(gross_margin), f"{gross_margin_change:+.1f} pts YoY" if gross_margin_change is not None else "Comparable period unavailable", tone_for_value(gross_margin_change)),
+        ("Free Cash Flow", _signed_money(fcf), f"{_format_margin(to_float(latest.get('fcf_margin')))} of revenue", tone_for_value(fcf)),
+    ]
+    estimate_rows = [
+        ("Next-Q Revenue", money(next_q_revenue) if next_q_revenue is not None else "N/A", f"Range {money(next_q_low)}-{money(next_q_high)} | {int(next_q_analysts)} analysts" if next_q_low is not None and next_q_high is not None and next_q_analysts is not None else "Consensus range unavailable", tone_for_value(next_q_growth)),
+        ("FY0 Revenue", money(fy0_revenue) if fy0_revenue is not None else "N/A", f"{percent((fy0_growth or 0) * 100, 1)} expected growth" if fy0_growth is not None else "Growth estimate unavailable", tone_for_value(fy0_growth)),
+        ("FY1 Revenue", money(fy1_revenue) if fy1_revenue is not None else "N/A", f"{percent((fy1_growth or 0) * 100, 1)} expected growth" if fy1_growth is not None else "Growth estimate unavailable", tone_for_value(fy1_growth)),
+        ("FY1 EPS", f"{fy1_eps:.2f}" if fy1_eps is not None else "N/A", f"FY0 {fy0_eps:.2f} | {int(fy1_eps_analysts)} analysts" if fy0_eps is not None and fy1_eps_analysts is not None else "Consensus breadth unavailable", "good" if fy1_eps is not None and fy1_eps > 0 else "warn"),
+    ]
+    valuation_rows = [
+        ("EV / TTM Sales", _multiple(ev_sales), f"EV {money(enterprise_value)} | TTM revenue {money(ttm_revenue)}", "warn" if ev_sales is not None and ev_sales > 10 else "neutral"),
+        ("Forward P/E", _multiple(to_float(quote.get("forward_pe"))), "Meaningful only if forward EPS is positive", "warn"),
+        ("FCF Yield", percent(fcf_yield, 1), "Negative yield signals external funding risk", tone_for_value(fcf_yield)),
+        ("Net Cash / Debt", money(net_cash) if net_cash is not None else "N/A", f"{percent(net_cash / enterprise_value * 100, 1)} of EV" if net_cash is not None and enterprise_value not in (None, 0) else "Balance-sheet share of EV unavailable", tone_for_value(net_cash)),
+    ]
+    catalyst_rows = [
+        ("Latest Results", fmt_date(earnings.get("earnings_date")), str(earnings.get("fiscal_period") or "Reported period"), "neutral"),
+        ("Next Earnings", fmt_date(next_earnings_valid) if next_earnings_valid else "N/A", "Provider date is historical" if next_earnings and not next_earnings_valid else "Scheduled event", "warn" if not next_earnings_valid else "good"),
+        ("Street Target", price(target) if target is not None else "N/A", f"{percent(target_upside, 1)} implied upside | {street_rating}", tone_for_value(target_upside)),
+        ("Data Coverage", f"{completeness:.0f}%" if completeness is not None else "N/A", str(financials.get("status") or "Unknown"), "good" if completeness is not None and completeness >= 95 else "warn"),
+    ]
+    return (
+        '<div class="pt-terminal-command-strip"><b>FA</b> Fundamentals <i>|</i> <b>EE</b> Estimates <i>|</i> <b>RV</b> Relative Value <i>|</i> <b>ANR</b> Consensus <i>|</i> <b>CAT</b> Catalysts</div>'
+        '<div class="pt-analyst-monitor-grid">'
+        f'<section><header><span>REPORTED RESULTS</span><small>{escape(str(earnings.get("fiscal_period") or "Latest quarter"))}</small></header>{_terminal_rows(results_rows)}</section>'
+        f'<section><header><span>STREET ESTIMATES</span><small>Forward consensus</small></header>{_terminal_rows(estimate_rows)}</section>'
+        f'<section><header><span>VALUATION / FUNDING</span><small>Market-implied risk</small></header>{_terminal_rows(valuation_rows)}</section>'
+        f'<section><header><span>CATALYST / CONSENSUS</span><small>Event monitor</small></header>{_terminal_rows(catalyst_rows)}</section>'
+        '</div>'
+    )
+
+
+def _revenue_consensus_figure(frame: pd.DataFrame, financials: dict) -> go.Figure | None:
+    if frame.empty:
+        return None
+    actual = _numeric_series(frame.tail(6), "revenue")
+    periods = _chart_periods(frame.tail(6))
+    estimates = financials.get("consensus_revenue")
+    estimate_values = [_estimate_value(estimates, "0q", "avg"), _estimate_value(estimates, "+1q", "avg")]
+    estimate_lows = [_estimate_value(estimates, "0q", "low"), _estimate_value(estimates, "+1q", "low")]
+    estimate_highs = [_estimate_value(estimates, "0q", "high"), _estimate_value(estimates, "+1q", "high")]
+    divisor, unit = _money_scale(actual, pd.Series([value for value in estimate_values if value is not None], dtype=float))
+    figure = go.Figure()
+    if not actual.dropna().empty:
+        figure.add_trace(go.Bar(x=periods, y=actual / divisor, name="Reported", marker_color="#36a9e1", hovertemplate=f"%{{x}}<br>Revenue: {unit}%{{y:,.1f}}<extra></extra>"))
+    valid_estimates = [(label, value, low, high) for label, value, low, high in zip(("Next Q Est.", "Q+2 Est."), estimate_values, estimate_lows, estimate_highs) if value is not None]
+    if valid_estimates:
+        figure.add_trace(
+            go.Bar(
+                x=[item[0] for item in valid_estimates],
+                y=[item[1] / divisor for item in valid_estimates],
+                name="Consensus",
+                marker_color="#d69a2d",
+                error_y=dict(
+                    type="data",
+                    symmetric=False,
+                    array=[max(0, (item[3] - item[1]) / divisor) if item[3] is not None else 0 for item in valid_estimates],
+                    arrayminus=[max(0, (item[1] - item[2]) / divisor) if item[2] is not None else 0 for item in valid_estimates],
+                    color="#f0c969",
+                ),
+                hovertemplate=f"%{{x}}<br>Consensus revenue: {unit}%{{y:,.1f}}<extra></extra>",
+            )
+        )
+    figure.update_yaxes(title_text=f"Revenue ({unit})")
+    figure.update_layout(title=dict(text="REVENUE: REPORTED / CONSENSUS", x=0.01, font=dict(size=11, color="#d69a2d")))
+    return _apply_terminal_chart_layout(figure, height=285)
+
+
+def _margin_progression_figure(frame: pd.DataFrame) -> go.Figure | None:
+    if frame.empty:
+        return None
+    periods = _chart_periods(frame)
+    figure = go.Figure()
+    traces = (("gross_margin", "Gross Margin", "#48c97a"), ("operating_margin", "Operating Margin", "#36a9e1"), ("fcf_margin", "FCF Margin", "#ee6670"))
+    for key, label, color in traces:
+        values = _numeric_series(frame, key)
+        if values.dropna().empty:
+            continue
+        figure.add_trace(go.Scatter(x=periods, y=values, name=label, mode="lines+markers", line=dict(color=color, width=2), marker=dict(size=5), hovertemplate=f"%{{x}}<br>{label}: %{{y:.1f}}%<extra></extra>"))
+    if not figure.data:
+        return None
+    figure.add_hline(y=0, line_color="#65737b", line_width=1)
+    figure.update_yaxes(title_text="Margin", ticksuffix="%")
+    figure.update_layout(title=dict(text="MARGIN / CASH CONVERSION", x=0.01, font=dict(size=11, color="#d69a2d")))
+    return _apply_terminal_chart_layout(figure, height=285)
+
+
+def _company_decision_figures(frame: pd.DataFrame, quarterly: bool, analysis, financials: dict | None = None) -> str:
+    financials = financials or {}
+    latest = financials.get("latest_financials") or {}
+    quote = financials.get("latest_quote") or {}
+    estimates = financials.get("consensus_revenue")
     revenue_growth = _period_growth(frame, "revenue", quarterly)
     gross_margin = _latest_value(frame, "gross_margin")
     gross_margin_change = _period_change(frame, "gross_margin", quarterly)
@@ -320,14 +281,25 @@ def _company_decision_figures(frame: pd.DataFrame, quarterly: bool, analysis) ->
     net_cash = cash - debt if cash is not None and debt is not None else None
     runway = (cash / abs(fcf * 4)) if quarterly and cash is not None and fcf is not None and fcf < 0 else (cash / abs(fcf)) if cash is not None and fcf is not None and fcf < 0 else None
     shares = to_float(analysis.company.shares_outstanding)
+    enterprise_value = to_float(quote.get("enterprise_value")) or to_float(analysis.company.enterprise_value)
+    quarterly_revenue = _numeric_series(frame.tail(4), "revenue").dropna()
+    ttm_revenue = to_float(quarterly_revenue.sum()) if len(quarterly_revenue) == 4 else None
+    ev_sales = enterprise_value / ttm_revenue if enterprise_value is not None and ttm_revenue not in (None, 0) else None
+    fcf_ttm = to_float(quote.get("free_cash_flow"))
+    market_cap = to_float(quote.get("market_cap")) or to_float(analysis.company.market_cap)
+    fcf_yield = fcf_ttm / market_cap * 100 if fcf_ttm is not None and market_cap not in (None, 0) else None
+    fy1_growth = _estimate_value(estimates, "+1y", "growth")
+    earnings = financials.get("latest_reported_earnings") or {}
+    eps_surprise = to_float(earnings.get("eps_surprise_pct"))
     tiles = [
         _figure_tile("Revenue Growth", percent(revenue_growth, 1) if revenue_growth is not None else "N/A", "YoY" if quarterly and len(frame) >= 5 else "vs earliest available", tone_for_value(revenue_growth)),
         _figure_tile("Gross Margin", _format_margin(gross_margin), f"{gross_margin_change:+.1f} pts vs prior year" if gross_margin_change is not None else "Comparable history unavailable", tone_for_value(gross_margin_change)),
         _figure_tile("Operating Margin", _format_margin(operating_margin), "Current reported period", tone_for_value(operating_margin)),
-        _figure_tile("FCF Margin", _format_margin(fcf_margin), f"FCF {money(fcf)}" if fcf is not None else "FCF unavailable", tone_for_value(fcf_margin)),
-        _figure_tile("Net Cash / Debt", money(net_cash) if net_cash is not None else "N/A", "Liquidity after reported debt", tone_for_value(net_cash)),
-        _figure_tile("Cash Runway", f"{runway:.1f} yrs" if runway is not None else "Self-funding" if fcf is not None and fcf >= 0 else "N/A", "At current reported burn rate", "warn" if runway is not None and runway < 2 else "good" if runway is not None or (fcf is not None and fcf >= 0) else "neutral"),
-        _figure_tile("Share Count", f"{shares / 1_000_000:.1f}M" if shares is not None else "N/A", "Monitor dilution per quarter", "warn"),
+        _figure_tile("EPS Surprise", percent(eps_surprise, 1), "Latest reported result vs consensus", tone_for_value(eps_surprise)),
+        _figure_tile("FY1 Revenue Growth", percent((fy1_growth or 0) * 100, 1) if fy1_growth is not None else "N/A", "Street consensus", tone_for_value(fy1_growth)),
+        _figure_tile("EV / Sales", _multiple(ev_sales), "TTM reported revenue", "warn" if ev_sales is not None and ev_sales > 10 else "neutral"),
+        _figure_tile("FCF Yield", percent(fcf_yield, 1), f"Runway {runway:.1f}y" if runway is not None else "Self-funding or unavailable", tone_for_value(fcf_yield)),
+        _figure_tile("Net Cash / Debt", money(net_cash) if net_cash is not None else "N/A", f"Shares {shares / 1_000_000:.1f}M" if shares is not None else "Share count unavailable", tone_for_value(net_cash)),
     ]
     return f'<div class="pt-decision-figures">{"".join(tiles)}</div>'
 
@@ -366,52 +338,26 @@ def _render_company_visual_research(analysis, financials: dict) -> None:
     if frame.empty:
         render_html('<div class="pt-shell pt-chart-empty"><strong>FUNDAMENTAL TREND MONITOR</strong><p>No reliable financial history is available for charting.</p></div>')
         return
-    operating_figure = _operating_progression_figure(frame)
-    capital_figure = _capital_discipline_figure(frame)
+    revenue_figure = _revenue_consensus_figure(frame, financials)
+    margin_figure = _margin_progression_figure(frame)
     with st.container(border=True):
-        render_html('<div class="pt-chart-anchor"><span>FUNDAMENTAL TREND MONITOR</span><h2>Operating Evidence in Motion</h2><p>Reported history only. Hover for period detail; figures below translate the chart into thesis evidence.</p></div>')
+        render_html('<div class="pt-chart-anchor"><span>FA / EE / RV</span><h2>Analyst Monitor</h2><p>Reported results, forward consensus, valuation, funding risk, and catalysts in one decision surface.</p></div>' + _analyst_monitor_panels(analysis, financials, frame, quarterly))
         chart_columns = st.columns(2)
         with chart_columns[0]:
-            if operating_figure is not None:
-                st.plotly_chart(operating_figure, use_container_width=True, config={"displayModeBar": False}, key=f"operating_progression_{analysis.company.ticker}")
+            if revenue_figure is not None:
+                st.plotly_chart(revenue_figure, use_container_width=True, config={"displayModeBar": False}, key=f"revenue_consensus_{analysis.company.ticker}")
             else:
-                st.info("Revenue and margin history are unavailable.")
+                st.info("Revenue history and consensus estimates are unavailable.")
         with chart_columns[1]:
-            if capital_figure is not None:
-                st.plotly_chart(capital_figure, use_container_width=True, config={"displayModeBar": False}, key=f"capital_discipline_{analysis.company.ticker}")
+            if margin_figure is not None:
+                st.plotly_chart(margin_figure, use_container_width=True, config={"displayModeBar": False}, key=f"margin_progression_{analysis.company.ticker}")
             else:
-                st.info("Cash-flow and balance-sheet history are unavailable.")
-        render_html(_company_decision_figures(frame, quarterly, analysis) + _thesis_workbench(analysis, frame, quarterly))
+                st.info("Margin and cash-conversion history are unavailable.")
+        render_html(_company_decision_figures(frame, quarterly, analysis, financials) + _thesis_workbench(analysis, frame, quarterly))
 
 
 def render_long_term_company_stats(analysis) -> None:
     financials = load_latest_company_financials(analysis.company.ticker)
-    cards, counts, period_label = _long_term_metrics(analysis, financials)
-    improving = counts["good"]
-    deteriorating = counts["bad"]
-    if improving > deteriorating:
-        trend, trend_tone = "Progressing", "good"
-    elif deteriorating > improving:
-        trend, trend_tone = "Declining", "bad"
-    else:
-        trend, trend_tone = "Mixed", "warn"
-    recommendation = analysis.investment_signal.signal
-    recommendation_tone = tone_for_signal(recommendation)
-    support = "supports" if trend_tone == "good" else "challenges" if trend_tone == "bad" else "does not yet fully confirm"
-    source = (financials.get("source_metadata") or {}).get("financials") or "SEC XBRL / Yahoo Finance financial statements"
-    render_html(
-        f"""
-        <div class="pt-shell pt-company-research-shell">
-          <div class="pt-research-head">
-            <div><span>LONG-TERM OPERATING TREND</span><h2>Progression That Matters</h2><p>Reported growth, margins, cash generation, balance-sheet direction, and per-share discipline.</p></div>
-            <div class="pt-research-verdict"><span>Operating Evidence</span><b class="{trend_tone}">{trend}</b><small>{improving} improving / {deteriorating} deteriorating</small></div>
-          </div>
-          <div class="pt-lt-grid">{"".join(cards)}</div>
-          <div class="pt-recommendation-read"><span>Read on Recommendation</span><strong class="{recommendation_tone}">{escape(recommendation)}</strong><p>The reported operating trend {support} the current recommendation. Valuation, catalysts, and risk controls remain separate inputs; social attention is not used as a standalone recommendation signal.</p></div>
-          <div class="pt-source-foot">Through {escape(period_label)} | {escape(str(source))}</div>
-        </div>
-        """
-    )
     _render_company_visual_research(analysis, financials)
 
 
@@ -435,7 +381,13 @@ def _peer_narrative(symbol: str, frame: pd.DataFrame) -> str:
         return "Peer-relative evidence is incomplete. PineTerminal will show unavailable fields rather than infer missing performance."
     row = selected.iloc[0]
     parts = []
-    for key, label, fractional in (("return_3m", "three-month price performance", False), ("revenue_growth", "revenue growth", True), ("gross_margin", "gross margin", True)):
+    for key, label, fractional, lower_is_better in (
+        ("return_3m", "three-month price performance", False, False),
+        ("revenue_growth", "revenue growth", True, False),
+        ("gross_margin", "gross margin", True, False),
+        ("fcf_yield", "free-cash-flow yield", False, False),
+        ("ev_to_sales", "EV/Sales", False, True),
+    ):
         if key not in peers:
             continue
         value = to_float(row.get(key))
@@ -444,8 +396,10 @@ def _peer_narrative(symbol: str, frame: pd.DataFrame) -> str:
             continue
         display_value = value * 100 if fractional else value
         display_median = float(median) * 100 if fractional else float(median)
-        relation = "above" if display_value > display_median else "below"
-        parts.append(f"{label} is {relation} the peer median ({display_value:.1f}% vs {display_median:.1f}%)")
+        relation = "below" if display_value < display_median else "above"
+        favorable = (display_value < display_median) if lower_is_better else (display_value > display_median)
+        suffix = "x" if key == "ev_to_sales" else "%"
+        parts.append(f"{label} is {relation} the peer median ({display_value:.1f}{suffix} vs {display_median:.1f}{suffix}; {'favorable' if favorable else 'unfavorable'})")
     return ("; ".join(parts) + ".") if parts else "Comparable peer metrics are not yet sufficiently complete for a reliable relative read."
 
 
@@ -473,17 +427,20 @@ def _peer_positioning_figure(symbol: str, frame: pd.DataFrame) -> go.Figure | No
             complete["marker_size"] = 20
         colors = ["#d69a2d" if ticker == symbol else "#36a9e1" for ticker in complete["ticker"]]
         outlines = ["#f4c65d" if ticker == symbol else "#1d6c91" for ticker in complete["ticker"]]
+        companies = complete["company"] if "company" in complete else complete["ticker"]
+        return_3m = pd.to_numeric(complete["return_3m"], errors="coerce") if "return_3m" in complete else pd.Series(float("nan"), index=complete.index)
+        ev_sales = pd.to_numeric(complete["ev_to_sales"], errors="coerce") if "ev_to_sales" in complete else pd.Series(float("nan"), index=complete.index)
         figure = go.Figure(
             go.Scatter(
                 x=complete["growth_pct"],
                 y=complete["margin_pct"],
                 text=complete["ticker"],
-                customdata=complete[["company", "return_3m"]].to_numpy(),
+                customdata=pd.DataFrame({"company": companies, "return_3m": return_3m, "ev_to_sales": ev_sales}).to_numpy(),
                 mode="markers+text",
                 textposition="top center",
                 textfont=dict(size=10, color="#dce4e8"),
                 marker=dict(size=complete["marker_size"], color=colors, line=dict(color=outlines, width=1.5), opacity=0.88),
-                hovertemplate="<b>%{text}</b><br>%{customdata[0]}<br>Revenue growth: %{x:.1f}%<br>Gross margin: %{y:.1f}%<br>3M return: %{customdata[1]:.1f}%<extra></extra>",
+                hovertemplate="<b>%{text}</b><br>%{customdata[0]}<br>Revenue growth: %{x:.1f}%<br>Gross margin: %{y:.1f}%<br>EV/Sales: %{customdata[2]:.1f}x<br>3M return: %{customdata[1]:.1f}%<extra></extra>",
                 name="Peer set",
             )
         )
@@ -522,24 +479,41 @@ def _peer_decision_figures(symbol: str, frame: pd.DataFrame) -> str:
         return '<div class="pt-decision-figures"><div class="pt-decision-figure"><span>Peer Read</span><strong>N/A</strong><small>Selected ticker data unavailable</small></div></div>'
     row = selected.iloc[0]
     tiles = []
-    for key, label, fractional in (("return_3m", "3M Relative Return", False), ("revenue_growth", "Revenue Growth", True), ("gross_margin", "Gross Margin", True), ("price_to_sales", "Price / Sales", False)):
+    for key, label, fractional, lower_is_better in (
+        ("return_3m", "3M Price", False, False),
+        ("revenue_growth", "Revenue Growth", True, False),
+        ("gross_margin", "Gross Margin", True, False),
+        ("fcf_yield", "FCF Yield", False, False),
+        ("ev_to_sales", "EV / Sales", False, True),
+        ("target_upside", "Street Upside", False, False),
+    ):
         value = to_float(row.get(key))
         peer_values = pd.to_numeric(peers[key], errors="coerce").dropna() if key in peers else pd.Series(dtype=float)
         median = to_float(peer_values.median()) if not peer_values.empty else None
         display = value * 100 if fractional and value is not None else value
         display_median = median * 100 if fractional and median is not None else median
-        suffix = "x" if key == "price_to_sales" else "%"
+        suffix = "x" if key == "ev_to_sales" else "%"
         value_label = f"{display:.1f}{suffix}" if display is not None else "N/A"
         if display is not None and display_median is not None:
-            better = display < display_median if key == "price_to_sales" else display > display_median
+            better = display < display_median if lower_is_better else display > display_median
             context = f"Peer median {display_median:.1f}{suffix}"
             tone = "good" if better else "bad"
         else:
             context, tone = "Peer comparison unavailable", "neutral"
         tiles.append(_figure_tile(label, value_label, context, tone))
-    relative = str(row.get("relative_read") or "Insufficient data")
-    tiles.append(_figure_tile("Relative Read", relative, "Growth, quality, valuation, and price", _peer_tone(relative)))
     return f'<div class="pt-decision-figures pt-peer-figures">{"".join(tiles)}</div>'
+
+
+def _peer_median(frame: pd.DataFrame, key: str) -> float | None:
+    if key not in frame:
+        return None
+    values = pd.to_numeric(frame[key], errors="coerce").dropna()
+    return to_float(values.median()) if not values.empty else None
+
+
+def _peer_market_cap(value: object) -> str:
+    number = to_float(value)
+    return money(number) if number is not None else "N/A"
 
 
 def render_competitive_intelligence(analysis) -> None:
@@ -553,35 +527,49 @@ def render_competitive_intelligence(analysis) -> None:
         ticker = str(row.get("ticker") or "")
         is_selected = ticker == company.ticker
         relative = str(row.get("relative_read") or "Insufficient data")
-        valuation = to_float(row.get("forward_pe"))
-        sales_multiple = to_float(row.get("price_to_sales"))
-        operating_margin = to_float(row.get("operating_margin"))
-        valuation_label = (
-            f"{valuation:.1f}x P/E"
-            if valuation is not None and valuation > 0 and operating_margin is not None and operating_margin > 0
-            else f"{sales_multiple:.1f}x P/S"
-            if sales_multiple is not None
-            else "N/A"
-        )
+        forward_pe = to_float(row.get("forward_pe"))
+        ev_sales = to_float(row.get("ev_to_sales"))
+        analyst_count = to_float(row.get("analyst_count"))
+        street_rating = str(row.get("street_rating") or "N/A")
         rows.append(
             f"""
             <tr class="{'selected' if is_selected else ''}">
               <td><strong>{escape(ticker)}</strong><small>{escape(str(row.get('company') or ticker))}</small></td>
-              <td class="{tone_for_value(to_float(row.get('return_1m')))}">{_fmt_peer_percent(row.get('return_1m'))}</td>
+              <td>{_peer_market_cap(row.get('market_cap'))}</td>
               <td class="{tone_for_value(to_float(row.get('return_3m')))}">{_fmt_peer_percent(row.get('return_3m'))}</td>
               <td class="{tone_for_value(to_float(row.get('return_1y')))}">{_fmt_peer_percent(row.get('return_1y'))}</td>
               <td>{_fmt_peer_percent(row.get('revenue_growth'), True)}</td>
               <td>{_fmt_peer_percent(row.get('gross_margin'), True)}</td>
               <td>{_fmt_peer_percent(row.get('operating_margin'), True)}</td>
-              <td>{escape(valuation_label)}</td>
-              <td><span class="pt-peer-badge {_peer_tone(relative)}">{escape(relative)}</span></td>
+              <td class="{tone_for_value(to_float(row.get('fcf_yield')))}">{_fmt_peer_percent(row.get('fcf_yield'))}</td>
+              <td>{_multiple(ev_sales)}</td>
+              <td>{_multiple(forward_pe)}</td>
+              <td class="{tone_for_value(to_float(row.get('target_upside')))}">{_fmt_peer_percent(row.get('target_upside'))}</td>
+              <td><span class="pt-peer-badge {_peer_tone(relative)}">{escape(relative)}</span><small>{escape(street_rating)}{f' / {int(analyst_count)}' if analyst_count is not None else ''}</small></td>
             </tr>
             """
         )
+    peers_only = frame.loc[frame["ticker"] != company.ticker]
+    median_row = f"""
+      <tr class="peer-median">
+        <td><strong>PEER MEDIAN</strong><small>Excludes {escape(company.ticker)}</small></td>
+        <td>{_peer_market_cap(_peer_median(peers_only, 'market_cap'))}</td>
+        <td>{_fmt_peer_percent(_peer_median(peers_only, 'return_3m'))}</td>
+        <td>{_fmt_peer_percent(_peer_median(peers_only, 'return_1y'))}</td>
+        <td>{_fmt_peer_percent(_peer_median(peers_only, 'revenue_growth'), True)}</td>
+        <td>{_fmt_peer_percent(_peer_median(peers_only, 'gross_margin'), True)}</td>
+        <td>{_fmt_peer_percent(_peer_median(peers_only, 'operating_margin'), True)}</td>
+        <td>{_fmt_peer_percent(_peer_median(peers_only, 'fcf_yield'))}</td>
+        <td>{_multiple(_peer_median(peers_only, 'ev_to_sales'))}</td>
+        <td>{_multiple(_peer_median(peers_only, 'forward_pe'))}</td>
+        <td>{_fmt_peer_percent(_peer_median(peers_only, 'target_upside'))}</td>
+        <td><span class="pt-peer-badge neutral">Reference</span></td>
+      </tr>
+    """
     peer_figure = _peer_positioning_figure(company.ticker, frame)
     with st.container(border=True):
         render_html(
-            f'<div class="pt-chart-anchor pt-peer-chart-anchor"><span>COMPETITIVE INTELLIGENCE</span><h2>Peer Performance</h2><p>Operating quality, valuation, and price confirmation against the closest available industry/theme cohort.</p><div class="pt-chart-coverage"><span>Coverage</span><b>{status.get("symbols_loaded", 0)}/{status.get("symbols_requested", len(frame))}</b><small>{escape(str(status.get("status") or "Unknown"))}</small></div></div>'
+            f'<div class="pt-chart-anchor pt-peer-chart-anchor"><span>COMP / RV</span><h2>Competitive Intelligence</h2><p>Growth, profitability, cash generation, relative valuation, price confirmation, and Street expectations.</p><div class="pt-chart-coverage"><span>Coverage</span><b>{status.get("symbols_loaded", 0)}/{status.get("symbols_requested", len(frame))}</b><small>{escape(str(status.get("status") or "Unknown"))}</small></div></div>'
         )
         if peer_figure is not None:
             st.plotly_chart(peer_figure, use_container_width=True, config={"displayModeBar": False}, key=f"peer_positioning_{company.ticker}")
@@ -589,7 +577,7 @@ def render_competitive_intelligence(analysis) -> None:
             st.info("Peer chart requires at least two comparable companies.")
         render_html(
             _peer_decision_figures(company.ticker, frame)
-            + f'<div class="pt-peer-table-wrap"><table class="pt-peer-table"><thead><tr><th>Company</th><th>1M</th><th>3M</th><th>1Y</th><th>Rev Growth</th><th>Gross Mgn TTM</th><th>Op Mgn TTM</th><th>Valuation</th><th>Relative Read</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>'
-            + f'<div class="pt-peer-read"><span>Analyst Comparison</span><p>{escape(_peer_narrative(company.ticker, frame))}</p></div>'
+            + f'<div class="pt-peer-table-wrap"><table class="pt-peer-table pt-comp-table"><thead><tr><th>Company</th><th>Mkt Cap</th><th>3M</th><th>1Y</th><th>Rev Gr</th><th>Gross Mgn</th><th>Op Mgn</th><th>FCF Yld</th><th>EV/Sales</th><th>Fwd P/E</th><th>Target</th><th>Street / Rank</th></tr></thead><tbody>{"".join(rows)}{median_row}</tbody></table></div>'
+            + f'<div class="pt-peer-read"><span>Relative-Value Read</span><p>{escape(_peer_narrative(company.ticker, frame))}</p></div>'
             + f'<div class="pt-source-foot">{escape(str(status.get("source") or "Yahoo Finance/yfinance"))} | refreshed {escape(fmt_date(status.get("last_updated")))}</div>'
         )
