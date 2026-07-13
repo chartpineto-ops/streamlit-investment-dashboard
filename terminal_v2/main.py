@@ -20,12 +20,12 @@ from utils.formatting import clean_ticker, now_et
 
 
 PAGES = {
-    "MARKET": ("MKT", "Market", "Regime, breadth, movers"),
-    "SECURITY": ("SEC", "Security", "Underwrite a company"),
-    "INTELLIGENCE": ("INTL", "Intelligence", "Catalyst transmission"),
-    "SCREENER": ("SCR", "Screener", "Find dislocations"),
-    "PORTFOLIO": ("PORT", "Portfolio", "Exposure and alerts"),
-    "DATA": ("DATA", "Data", "Sources and integrity"),
+    "MARKET": ("MKT", "Market Monitor", "Regime, breadth, and liquidity"),
+    "SECURITY": ("SEC", "Security Analysis", "Underwrite a company"),
+    "INTELLIGENCE": ("INTL", "Catalyst Wire", "News, macro, and positioning"),
+    "SCREENER": ("SCR", "Market Scanner", "Find price and volume dislocations"),
+    "PORTFOLIO": ("PORT", "Portfolio Risk", "Exposure, P&L, and alerts"),
+    "DATA": ("DATA", "Data Health", "Sources, freshness, and integrity"),
 }
 
 COMMANDS = {
@@ -93,9 +93,15 @@ def _render_sidebar() -> None:
             unsafe_allow_html=True,
         )
         st.markdown('<div class="pt-side-label">WORKSPACES</div>', unsafe_allow_html=True)
-        for page, (code, label, _) in PAGES.items():
+        for page, (code, label, description) in PAGES.items():
             button_label = f"{code}   {label}"
-            if st.button(button_label, key=f"nav_{page}", use_container_width=True, type="primary" if st.session_state.page == page else "secondary"):
+            if st.button(
+                button_label,
+                key=f"nav_{page}",
+                help=description,
+                use_container_width=True,
+                type="primary" if st.session_state.page == page else "secondary",
+            ):
                 _go(page)
                 st.rerun()
         st.markdown('<div class="pt-side-label">SECURITY LOOKUP</div>', unsafe_allow_html=True)

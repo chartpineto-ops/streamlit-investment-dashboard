@@ -4,7 +4,7 @@ import pandas as pd
 
 from terminal_v2.integrity import classify_frame, provider_health
 from terminal_v2.main import _parse_command
-from terminal_v2.views import _return_pct, _social_readthrough
+from terminal_v2.views import _return_pct, _score_bars, _sector_strip, _social_readthrough
 
 
 def test_terminal_commands_open_workspaces_and_tickers() -> None:
@@ -34,3 +34,24 @@ def test_valuation_return_formatter_accepts_fraction_or_percent() -> None:
 
 def test_social_readthrough_is_honest_when_missing() -> None:
     assert "No reliable social data available" in _social_readthrough(pd.DataFrame())
+
+
+def test_sector_strip_renders_market_direction_semantically() -> None:
+    html = _sector_strip(pd.DataFrame([{"ticker": "XLK", "change_pct": 1.24}]))
+    assert "pt-sector-strip" in html
+    assert "Technology" in html
+    assert "+1.2%" in html
+    assert "pt-up" in html
+
+
+def test_factor_bars_use_risk_aware_colors() -> None:
+    html = _score_bars(
+        {
+            "growth_score": 80,
+            "profitability_score": 55,
+            "balance_sheet_score": 30,
+        }
+    )
+    assert "pt-score-fill ok" in html
+    assert "pt-score-fill warn" in html
+    assert "pt-score-fill bad" in html

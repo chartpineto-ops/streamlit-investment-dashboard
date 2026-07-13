@@ -158,6 +158,25 @@ def _kpi_grid(items: Iterable[tuple[str, str, str, str]]) -> str:
     return f'<div class="pt-kpi-grid">{"".join(cards)}</div>'
 
 
+def _sector_strip(frame: pd.DataFrame) -> str:
+    if frame.empty:
+        return '<div class="pt-sector-strip"><div class="pt-sector"><span class="pt-sector-name">Sector feed</span><span class="pt-sector-move pt-flat">N/A</span></div></div>'
+    quote_map = {str(row.get("ticker")): row for _, row in frame.iterrows()}
+    short_names = {
+        "XLK": "Tech", "XLC": "Comm", "XLY": "Discret.", "XLF": "Financials", "XLI": "Industrials",
+        "XLE": "Energy", "XLV": "Health", "XLB": "Materials", "XLRE": "Real Est.", "XLP": "Staples", "XLU": "Utilities",
+    }
+    cells = []
+    for ticker in SECTOR_NAMES:
+        row = quote_map.get(ticker, {})
+        move = _number(row.get("change_pct"))
+        cells.append(
+            f'<div class="pt-sector" title="{_html(SECTOR_NAMES.get(ticker, ticker))}"><span class="pt-sector-name">{_html(short_names.get(ticker, ticker))}</span>'
+            f'<span class="pt-sector-move {_tone(move)}">{_pct(move, 1)}</span></div>'
+        )
+    return f'<div class="pt-sector-strip">{"".join(cells)}</div>'
+
+
 def _mover_table(frame: pd.DataFrame, limit: int = 8) -> str:
     if frame is None or frame.empty:
         return '<div class="pt-muted">No market-wide observations available.</div>'
@@ -288,6 +307,7 @@ def _render_market_pulse() -> None:
         move = _number(row.get("change_pct"))
         kpis.append((label, f"{price:,.2f}" if price is not None else "N/A", f"{symbol}  {_pct(move, 2)}", _tone(move)))
     st.markdown(_kpi_grid(kpis), unsafe_allow_html=True)
+    st.markdown(_sector_strip(sectors), unsafe_allow_html=True)
     breadth_frame = packet.get("all_scanned", pd.DataFrame()) if isinstance(packet, dict) else pd.DataFrame()
     advancers = int((pd.to_numeric(breadth_frame.get("Daily Move %"), errors="coerce") > 0).sum()) if not breadth_frame.empty else 0
     breadth_total = len(breadth_frame)
@@ -381,9 +401,10 @@ def _score_bars(signal: dict) -> str:
     for label, raw in metrics:
         score = _number(raw)
         width = max(0, min(100, score or 0))
+        tone = "ok" if (score or 0) >= 65 else "warn" if (score or 0) >= 45 else "bad"
         rows.append(
             f'<div class="pt-score"><span class="pt-score-label">{_html(label)}</span>'
-            f'<span class="pt-score-track"><span class="pt-score-fill" style="display:block;width:{width:.0f}%"></span></span>'
+            f'<span class="pt-score-track"><span class="pt-score-fill {tone}" style="display:block;width:{width:.0f}%"></span></span>'
             f'<span class="pt-score-value">{score:.0f}</span></div>' if score is not None else
             f'<div class="pt-score"><span class="pt-score-label">{_html(label)}</span><span class="pt-score-track"></span><span class="pt-score-value">N/A</span></div>'
         )
@@ -603,6 +624,13 @@ def render_security_page(ticker: str) -> None:
     expected_return = ((target / current_price) - 1) * 100 if target is not None and current_price not in (None, 0) else _number(getattr(analysis, "expected_value_detail", None) and getattr(analysis.expected_value_detail, "expected_return", None))
     if expected_return is not None and abs(expected_return) <= 3:
         expected_return *= 100
+    signal_lower = label.casefold()
+    call_tone = (
+        "ok" if any(word in signal_lower for word in ("buy", "bullish", "accumulate"))
+        else "bad" if any(word in signal_lower for word in ("sell", "avoid", "bearish", "trim"))
+        else "warn"
+    )
+    quality_label = str(financials.get("status") or "Partial")
 
     identity = (
         f'<div class="pt-panel"><div class="pt-section-head"><span class="pt-section-title">{_html(symbol)} / { _html(company_name)}</span>'
@@ -612,7 +640,12 @@ def render_security_page(ticker: str) -> None:
                 ("Last Price", f"${current_price:,.2f}" if current_price is not None else "N/A", _pct(quote.get("daily_change_pct"), 2), _tone(quote.get("daily_change_pct"))),
                 ("Market Cap", _money(quote.get("market_cap")), "Equity value", ""),
                 ("Street Target", f"${target:,.2f}" if target is not None else "N/A", f"Implied {_pct(expected_return, 1)}" if expected_return is not None else "Consensus unavailable", _tone(expected_return)),
-                ("Data Coverage", f"{data_complete:.0f}%" if data_complete is not None else "N/A", str(financials.get("status") or "Partial"), "pt-warn" if (data_complete or 0) < 70 else "pt-up"),
+                (
+                    "Data Quality",
+                    quality_label,
+                    f"Coverage {data_complete:.0f}%" if data_complete is not None else "Coverage unavailable",
+                    "pt-up" if quality_label.casefold() in {"ok", "valid"} else "pt-warn",
+                ),
             ]
         ) + "</div>"
     )
@@ -622,7 +655,7 @@ def render_security_page(ticker: str) -> None:
     with left:
         score_copy = f'<span>Composite {score:.0f}/100</span>' if score is not None else '<span>Composite score unavailable</span>'
         call_html = (
-            '<div class="pt-call"><div class="pt-call-label">PineTerminal Recommendation</div>'
+            f'<div class="pt-call {call_tone}"><div class="pt-call-label">PineTerminal Recommendation</div>'
             f'<div class="pt-call-value">{_html(label)}</div><div class="pt-call-copy">{_html(call_copy)}</div>'
             f'<div class="pt-source-line" style="margin-top:10px">{_badge(confidence + " conviction", "warn")}'
             f'{score_copy}'
@@ -633,14 +666,14 @@ def render_security_page(ticker: str) -> None:
 
     chart_col, progression_col = st.columns([1.35, 1])
     with chart_col:
-        st.markdown('<div class="pt-panel"><div class="pt-section-head"><span class="pt-section-title">Price / Volume</span><span class="pt-section-meta">2Y DAILY</span></div>', unsafe_allow_html=True)
-        st.plotly_chart(_price_figure(packet.get("history", pd.DataFrame()), symbol), use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div class="pt-section-head"><span class="pt-section-title">Price / Volume</span><span class="pt-section-meta">2Y DAILY</span></div>', unsafe_allow_html=True)
+            st.plotly_chart(_price_figure(packet.get("history", pd.DataFrame()), symbol), use_container_width=True, config={"displayModeBar": False})
     history = _history_frame(financials)
     with progression_col:
-        st.markdown('<div class="pt-panel"><div class="pt-section-head"><span class="pt-section-title">Operating Progression</span><span class="pt-section-meta">REPORTED PERIODS</span></div>', unsafe_allow_html=True)
-        st.plotly_chart(_financial_figure(history), use_container_width=True, config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div class="pt-section-head"><span class="pt-section-title">Operating Progression</span><span class="pt-section-meta">REPORTED PERIODS</span></div>', unsafe_allow_html=True)
+            st.plotly_chart(_financial_figure(history), use_container_width=True, config={"displayModeBar": False})
 
     st.markdown(_panel("Long-Term Decision Metrics", _progression_tiles(history, quote), "TREND + LEVEL"), unsafe_allow_html=True)
 
