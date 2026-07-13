@@ -16,6 +16,7 @@ from components.live_market_movers import render_live_market_movers
 from components.news_updates import render_news_updates
 from components.economic_data_panel import render_economic_data_panel
 from components.economic_calendar import render_economic_calendar_panel
+from components.company_intelligence import render_competitive_intelligence, render_long_term_company_stats
 from components.refresh_status import render_freshness_status_row
 from components.social_momentum import render_social_momentum_panel
 from data.market_scanner import MarketUniverseProvider, ScannerFilters, UNIVERSE_OPTIONS
@@ -671,6 +672,8 @@ def render_company_dashboard_with_social(analysis) -> None:
         + render_investment_decision(analysis)
         + "</div>"
     )
+    render_long_term_company_stats(analysis)
+    render_competitive_intelligence(analysis)
     render_social_readthrough(analysis.company.ticker, social_df)
     html(
         '<div class="pt-shell pt-decision-shell">'
@@ -2613,7 +2616,7 @@ def render_settings_page() -> None:
     source_rows = [
         {"Dataset": "Prices", "Provider": quote_source, "Refresh": "5 seconds", "Use": "Trading context"},
         {"Dataset": "Market movers", "Provider": "Yahoo Finance broad-market feed", "Refresh": "60 seconds", "Use": "Flow / anomaly detection"},
-        {"Dataset": "News", "Provider": news_source, "Refresh": "5 minutes", "Use": "Catalyst evidence"},
+        {"Dataset": "News", "Provider": news_source, "Refresh": "2 minutes", "Use": "Catalyst evidence"},
         {"Dataset": "Macro", "Provider": macro_source, "Refresh": "30 minutes", "Use": "Rates / regime context"},
         {"Dataset": "Social", "Provider": social_source, "Refresh": "5 minutes", "Use": "Attention / perception"},
         {"Dataset": "Fundamentals", "Provider": "SEC XBRL + period-aligned Yahoo fallback", "Refresh": "Daily / filing driven", "Use": "Reported evidence"},
@@ -2657,15 +2660,36 @@ def render_monitor_workspace(market_snapshot: dict[str, object]) -> None:
     render_home_page(market_snapshot)
 
 
-def render_intelligence_workspace(market_snapshot: dict[str, object]) -> None:
-    view = _workspace_selector("Intelligence view", ["News", "Read-Through", "Sector"], "intelligence_view", "News")
-    if view == "Read-Through":
-        render_market_readthrough_page()
-    elif view == "Sector":
+def render_intelligence_workspace(market_snapshot: dict[str, object], analysis) -> None:
+    view = _workspace_selector("Intelligence view", ["Catalyst Desk", "Sector Rotation"], "intelligence_view", "Catalyst Desk")
+    if view == "Sector Rotation":
+        html('<div class="pt-workspace-head"><div><span>INTELLIGENCE / ROTATION</span><h1>Sector & Theme Positioning</h1><p>Where price, volume, breadth, and persistence show capital moving.</p></div><b>5 MINUTE MARKET HISTORY</b></div>')
         render_sector_research(market_snapshot)
+        return
+
+    html(
+        '<div class="pt-workspace-head"><div><span>INTELLIGENCE / CATALYSTS</span><h1>Catalyst Desk</h1>'
+        '<p>Fresh headlines translated into company, watchlist, and thesis relevance.</p></div><b>2 MINUTE NEWS REFRESH</b></div>'
+    )
+    scope = _workspace_selector(
+        "Catalyst scope",
+        ["Market Wire", f"{analysis.company.ticker} Company", "Watchlist"],
+        "intelligence_scope",
+        "Market Wire",
+    )
+    if scope == "Watchlist":
+        render_news_updates(tickers=_active_watchlist_tickers(), title="Watchlist Catalyst Wire")
+    elif scope.endswith(" Company"):
+        render_news_updates(ticker=analysis.company.ticker, title=f"{analysis.company.ticker} Company Catalysts")
     else:
-        html('<div class="pt-workspace-head"><div><span>INTELLIGENCE</span><h1>Live News Wire</h1><p>Latest market and company catalysts from the configured provider.</p></div><b>5 MINUTE REFRESH</b></div>')
-        render_news_updates(title="Market / Company Intelligence")
+        render_news_updates(title="Market Catalyst Wire")
+    html(
+        section(
+            "Thesis Read-Through",
+            f"How current catalysts map into {analysis.company.ticker}'s model",
+            render_readthrough_table(analysis.market_read_through[:6]),
+        )
+    )
 
 
 def render_portfolio_workspace(market_snapshot: dict[str, object]) -> None:
@@ -2684,7 +2708,7 @@ def render_page(page: str, analysis, market_snapshot: dict[str, object]) -> None
     elif page == "Scanner":
         render_scanner_page()
     elif page == "Intelligence":
-        render_intelligence_workspace(market_snapshot)
+        render_intelligence_workspace(market_snapshot, analysis)
     elif page == "Portfolio":
         render_portfolio_workspace(market_snapshot)
     elif page == "Settings":

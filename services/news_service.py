@@ -139,7 +139,7 @@ def _finnhub_rows(items: list[dict], ticker: str = "") -> pd.DataFrame:
     return frame[frame["headline"].astype(str).str.len() > 0].sort_values("published_at", ascending=False).reset_index(drop=True)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_company_news(ticker: str) -> pd.DataFrame:
     """Fetch company-specific headlines without AI summarization or scraping."""
 
@@ -161,7 +161,7 @@ def fetch_company_news(ticker: str) -> pd.DataFrame:
     return _demo_company_news(symbol)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_market_headlines() -> pd.DataFrame:
     """Fetch market-wide headlines from a configured provider or demo fallback."""
 

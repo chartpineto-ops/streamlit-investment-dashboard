@@ -46,7 +46,7 @@ def _news_markup(frame: pd.DataFrame, title: str, subtitle: str, limit: int = 6)
     if frame is None or frame.empty:
         return f"""
         <div class="pt-shell pt-live-section">
-          <div class="pt-live-section-head"><div><h2>{escape(title)}</h2><p>{escape(subtitle)}</p></div><span>Every 5min</span></div>
+          <div class="pt-live-section-head"><div><h2>{escape(title)}</h2><p>{escape(subtitle)}</p></div><span>Every 2min</span></div>
           <p class="pt-placeholder">Provider not configured or no reliable headlines available.</p>
         </div>
         """
@@ -70,7 +70,7 @@ def _news_markup(frame: pd.DataFrame, title: str, subtitle: str, limit: int = 6)
         """
     return f"""
     <div class="pt-shell pt-live-section">
-      <div class="pt-live-section-head"><div><h2>{escape(title)}</h2><p>{escape(subtitle)}</p></div><span>Every 5min</span></div>
+      <div class="pt-live-section-head"><div><h2>{escape(title)}</h2><p>{escape(subtitle)}</p></div><span>Every 2min</span></div>
       {provider_notice}
       <table class="pt-table pt-live-table pt-news-live-table">
         <thead><tr><th>Ticker</th><th>Headline</th><th>Source</th><th>Time</th><th>Sentiment</th><th>URL</th></tr></thead>
@@ -80,7 +80,7 @@ def _news_markup(frame: pd.DataFrame, title: str, subtitle: str, limit: int = 6)
     """
 
 
-@st.fragment(run_every="5min")
+@st.fragment(run_every="2min")
 def _news_fragment(ticker: str, tickers: tuple[str, ...], title: str) -> None:
     try:
         if ticker:
@@ -97,17 +97,17 @@ def _news_fragment(ticker: str, tickers: tuple[str, ...], title: str) -> None:
         sources = frame["data_source"].dropna() if frame is not None and not frame.empty and "data_source" in frame else pd.Series(dtype=object)
         source = str(sources.iloc[0]) if not sources.empty else "News provider"
         last_refresh = latest_refresh_from_frame(frame) or now_et()
-        stale = is_refresh_stale(last_refresh, 300)
+        stale = is_refresh_stale(last_refresh, 120)
         status = "Fallback" if "provider not configured" in source.casefold() or "demo" in source.casefold() else "OK"
         log_refresh("news", source)
-        mark_fragment_refresh("news", 300, status, source, last_refresh=last_refresh, data_source=source, cache_ttl=300, rows=0 if frame is None else len(frame), is_stale=stale)
+        mark_fragment_refresh("news", 120, status, source, last_refresh=last_refresh, data_source=source, cache_ttl=120, rows=0 if frame is None else len(frame), is_stale=stale)
         render_html(_news_markup(frame, title, subtitle))
-        render_refresh_debug("news", last_refresh=last_refresh, data_source=source, cache_ttl=300, rows=0 if frame is None else len(frame), is_stale=stale)
+        render_refresh_debug("news", last_refresh=last_refresh, data_source=source, cache_ttl=120, rows=0 if frame is None else len(frame), is_stale=stale)
     except Exception as exc:
         error = str(exc)[:180]
-        mark_fragment_refresh("news", 300, "Error", error, last_refresh=now_et(), data_source="News provider", cache_ttl=300, rows=0, is_stale=True, error=error)
+        mark_fragment_refresh("news", 120, "Error", error, last_refresh=now_et(), data_source="News provider", cache_ttl=120, rows=0, is_stale=True, error=error)
         st.warning(f"News updates are temporarily unavailable: {exc}")
-        render_refresh_debug("news", last_refresh=now_et(), data_source="News provider", cache_ttl=300, rows=0, is_stale=True, error=error)
+        render_refresh_debug("news", last_refresh=now_et(), data_source="News provider", cache_ttl=120, rows=0, is_stale=True, error=error)
 
 
 def render_news_updates(ticker: str | None = None, tickers: list[str] | None = None, title: str = "Market Headlines") -> None:
