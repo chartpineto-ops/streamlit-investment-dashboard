@@ -8,6 +8,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from services.economic_data_service import (
+    audit_macro_dashboard,
+    macro_poll_interval_seconds,
+    next_scheduled_macro_release,
+)
+from services.macro_alert_service import list_macro_alerts, macro_notification_status, process_macro_updates
 from storage.watchlist import add_ticker, list_alerts, list_watchlist, remove_ticker
 from terminal_v2.data_hub import (
     benchmark_quotes,
@@ -202,21 +208,93 @@ def _mover_table(frame: pd.DataFrame, limit: int = 8) -> str:
 
 def _macro_table(frame: pd.DataFrame, limit: int = 8) -> str:
     if frame.empty:
-        return '<div class="pt-muted">Macro feed unavailable.</div>'
+        return '<div class="pt-muted">Official macro feed unavailable. Synthetic values are disabled.</div>'
+
+    def stamp(value: object, include_time: bool = False) -> str:
+        parsed = pd.to_datetime(value, errors="coerce", utc=True)
+        if pd.isna(parsed):
+            return "N/A"
+        local = pd.Timestamp(parsed).tz_convert("America/New_York")
+        return local.strftime("%m/%d %H:%M ET" if include_time else "%m/%d/%y")
+
     rows = []
     for _, row in frame.head(limit).iterrows():
-        change = _number(row.get("change_pct"))
+        change = _number(row.get("change"))
+        source_url = str(row.get("source_url") or "")
+        source = _html(row.get("source") or row.get("data_source") or "Official source")
+        source_link = f'<a class="pt-source-link" href="{_html(source_url)}" target="_blank">{source}</a>' if source_url.startswith("https://") else source
+        next_release = stamp(row.get("next_release_at"), include_time=True)
         rows.append(
             "<tr>"
-            f'<td class="pt-strong">{_html(row.get("indicator"))}</td>'
-            f'<td class="pt-mono">{_html(row.get("value"))}</td>'
-            f'<td class="pt-mono {_tone(change)}">{_pct(change, 2)}</td>'
-            f'<td class="pt-mono pt-muted">{_html(row.get("release_date"))}</td>'
+            f'<td><span class="pt-strong">{_html(row.get("indicator"))}</span><br><span class="pt-micro">{source_link}</span></td>'
+            f'<td class="pt-mono pt-strong">{_html(row.get("display_value"))}</td>'
+            f'<td class="pt-mono {_tone(change)}">{_html(row.get("display_change"))}</td>'
+            f'<td class="pt-mono">{_html(row.get("observation_period"))}</td>'
+            f'<td class="pt-mono pt-muted">{stamp(row.get("official_release_at"), include_time=True)}</td>'
+            f'<td class="pt-mono pt-warn">{next_release}</td>'
             "</tr>"
         )
     return (
-        '<table class="pt-table"><thead><tr><th>Series</th><th style="width:19%">Latest</th>'
-        f'<th style="width:19%">Change</th><th style="width:23%">Release</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
+        '<table class="pt-table pt-macro-table"><thead><tr><th>Series / Source</th><th style="width:13%">Latest</th>'
+        '<th style="width:13%">Change</th><th style="width:14%">Period</th><th style="width:18%">Published</th>'
+        f'<th style="width:18%">Next Release</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
+def _macro_audit_table(frame: pd.DataFrame) -> str:
+    if frame.empty:
+        return '<div class="pt-muted">No macro audit result available.</div>'
+    rows = []
+    for _, row in frame.iterrows():
+        status = str(row.get("audit_status") or "REVIEW")
+        tone = "ok" if status == "VERIFIED" else "bad" if status == "BLOCKED" else "warn"
+        next_release = pd.to_datetime(row.get("next_release_at"), errors="coerce", utc=True)
+        next_label = pd.Timestamp(next_release).tz_convert("America/New_York").strftime("%m/%d %H:%M ET") if not pd.isna(next_release) else "N/A"
+        source_url = str(row.get("source_url") or "")
+        source = _html(row.get("source") or "Official source")
+        source_link = f'<a class="pt-source-link" href="{_html(source_url)}" target="_blank">{source}</a>' if source_url.startswith("https://") else source
+        rows.append(
+            "<tr>"
+            f'<td class="pt-strong">{_html(row.get("indicator"))}</td><td>{_badge(status, tone)}</td>'
+            f'<td>{_html(row.get("audit_message"))}</td><td class="pt-mono">{_html(row.get("observation_period"))}</td>'
+            f'<td class="pt-mono pt-warn">{next_label}</td><td>{source_link}</td>'
+            "</tr>"
+        )
+    return (
+        '<table class="pt-table"><thead><tr><th style="width:17%">Series</th><th style="width:10%">Audit</th>'
+        '<th>Finding</th><th style="width:12%">Period</th><th style="width:16%">Next</th>'
+        f'<th style="width:16%">Authority</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
+@st.fragment(run_every="15s")
+def render_macro_release_monitor() -> None:
+    frame = macro_dashboard()
+    alerts = process_macro_updates(frame)
+    shown = st.session_state.setdefault("shown_macro_alerts", set())
+    for alert in alerts:
+        alert_id = int(alert.get("id") or 0)
+        if alert_id and alert_id not in shown:
+            st.toast(str(alert.get("message") or "Official macro data updated."))
+            shown.add(alert_id)
+    upcoming = next_scheduled_macro_release()
+    release_at = pd.to_datetime(upcoming.get("release_at"), errors="coerce", utc=True)
+    if pd.isna(release_at):
+        return
+    local = pd.Timestamp(release_at).tz_convert("America/New_York")
+    hours = (local - pd.Timestamp(now_et())).total_seconds() / 3_600
+    if hours > 48:
+        return
+    cadence = macro_poll_interval_seconds()
+    cadence_label = f"{cadence}s POLL" if cadence <= 300 else "WAKE 5M PRE-RELEASE"
+    st.markdown(
+        '<div class="pt-release-bar">'
+        '<span class="pt-release-kicker">NEXT OFFICIAL MACRO</span>'
+        f'<span class="pt-release-name">{_html(upcoming.get("release_name"))}</span>'
+        f'<span class="pt-mono">{local.strftime("%a %m/%d %I:%M %p ET")}</span>'
+        f'<span class="pt-release-state">ALERTS ARMED / {cadence_label}</span>'
+        '</div>',
+        unsafe_allow_html=True,
     )
 
 
@@ -741,10 +819,10 @@ def _intelligence_rows(news: pd.DataFrame, social: pd.DataFrame, macro: pd.DataF
     for _, item in macro.head(12).iterrows():
         rows.append(
             {
-                "timestamp": item.get("release_date"),
+                "timestamp": item.get("official_release_at") or item.get("observation_date"),
                 "type": "Macro",
                 "scope": item.get("indicator"),
-                "event": f"{item.get('value')} vs {item.get('previous_value')} prior",
+                "event": f"{item.get('display_value')} for {item.get('observation_period')} ({item.get('display_change')} vs prior)",
                 "impact": "Tightening" if (_number(item.get("change")) or 0) > 0 else "Easing",
                 "transmission": "Rates / margins / growth expectations",
                 "source": item.get("data_source"),
@@ -1056,6 +1134,40 @@ def render_data_page() -> None:
     )
     st.markdown(_panel("Provider Registry", _integrity_table(health), "SECRETS MASKED"), unsafe_allow_html=True)
 
+    macro = macro_dashboard()
+    macro_audit = audit_macro_dashboard(macro)
+    verified = int((macro_audit["audit_status"] == "VERIFIED").sum()) if not macro_audit.empty else 0
+    blocked = int((macro_audit["audit_status"] == "BLOCKED").sum()) if not macro_audit.empty else 0
+    notification = macro_notification_status()
+    cadence = macro_poll_interval_seconds()
+    cadence_note = (
+        f"Next check in {cadence}s; release cadence is active."
+        if cadence <= 300
+        else "Background checks remain armed and wake five minutes before the next official release."
+    )
+    alert_mode = "In-app + webhook" if notification.get("webhook_configured") else "In-app"
+    st.markdown(
+        _panel(
+            "Macro Data Audit",
+            _macro_audit_table(macro_audit),
+            f"{verified} VERIFIED / {blocked} BLOCKED / RELEASE-AWARE",
+        ),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="pt-grid-3">'
+        f'<div class="pt-stat green"><div class="pt-stat-label">Release Monitor</div><div class="pt-stat-value">Active</div><div class="pt-stat-note">{_html(cadence_note)}</div></div>'
+        f'<div class="pt-stat blue"><div class="pt-stat-label">Alert Delivery</div><div class="pt-stat-value">{_html(alert_mode)}</div><div class="pt-stat-note">Webhook delivery activates when MACRO_ALERT_WEBHOOK_URL is configured.</div></div>'
+        '<div class="pt-stat amber"><div class="pt-stat-label">Embargo Guard</div><div class="pt-stat-value">Enforced</div><div class="pt-stat-note">Scheduled releases remain upcoming until the official observation period changes.</div></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    macro_alerts = list_macro_alerts(limit=12)
+    if not macro_alerts.empty:
+        display_alerts = macro_alerts[["detected_at", "indicator", "observation_period", "alert_message", "delivery_status"]].copy()
+        display_alerts.columns = ["Detected", "Series", "Period", "Alert", "Delivery"]
+        st.markdown(_panel("Macro Release Alerts", display_alerts.to_html(index=False, escape=True, classes="pt-table", border=0), "DEDUPLICATED"), unsafe_allow_html=True)
+
     policy = (
         '<div class="pt-grid-3">'
         '<div class="pt-stat green"><div class="pt-stat-label">Financial Data</div><div class="pt-stat-value">Filed facts first</div><div class="pt-stat-note">SEC companyfacts anchors reported metrics. Estimates remain separately labeled and fiscal periods are reconciled.</div></div>'
@@ -1071,7 +1183,7 @@ def render_data_page() -> None:
         '<tr><td>Market scan</td><td class="pt-mono">60 seconds</td><td>Price and volume dislocations</td><td>Show scan universe and fallback status</td></tr>'
         '<tr><td>News</td><td class="pt-mono">120 seconds</td><td>Catalyst discovery</td><td>Label demo fallback when provider is absent</td></tr>'
         '<tr><td>Social</td><td class="pt-mono">300 seconds</td><td>Attention velocity and narrative shifts</td><td>Demo label or no reliable data</td></tr>'
-        '<tr><td>Macro</td><td class="pt-mono">3,600 seconds</td><td>Official series update on release cadence</td><td>Preserve last timestamp and mark demo fallback</td></tr>'
+        f'<tr><td>Macro</td><td class="pt-mono">{cadence}s release-aware</td><td>Accelerates around official scheduled times</td><td>Use last verified snapshot with REVIEW; never synthesize a value</td></tr>'
         '<tr><td>Filings</td><td class="pt-mono">Daily + event refresh</td><td>Authoritative reported fundamentals</td><td>Keep missing concepts explicit</td></tr>'
         '</tbody></table>'
     )

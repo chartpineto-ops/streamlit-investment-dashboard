@@ -70,16 +70,28 @@ AMPX is the default company, with reusable sample data for AMPX, MRVL, IONQ, MP,
 
 ## Data Sources
 
-V2 currently uses demo data only. The code is structured so future integrations can be added for:
+PineTerminal uses provider contracts and labels every live, delayed, partial, unavailable, or demo feed. Missing official data is never replaced with an unlabeled synthetic value.
 
-- Market prices
-- Fundamentals
-- News
-- SEC filings
-- Earnings transcripts
-- Economic data
-- Analyst estimates
-- Portfolio holdings
+- BLS Public Data API: CPI, unemployment, and total nonfarm payrolls
+- BLS and BEA official calendars: scheduled economic release times
+- FRED: supplementary macro series when `FRED_API_KEY` is configured
+- SEC EDGAR: reported company facts and filings
+- Finnhub: quotes, estimates, and news when `FINNHUB_API_KEY` is configured
+- Yahoo Finance: explicitly labeled delayed or partial fallback data
+
+Optional environment variables or Streamlit secrets:
+
+```toml
+BLS_API_KEY = "optional-key-for-higher-release-window-limits"
+FRED_API_KEY = "required-for-pce-claims-rates-and-supplementary-macro-series"
+MACRO_ALERT_WEBHOOK_URL = "optional-slack-discord-or-compatible-webhook"
+DATA_USER_AGENT = "PineTerminal/2.0 contact@example.com"
+```
+
+The app conserves the public BLS quota between releases, schedules its next check for five minutes before a tracked event, polls every 60 seconds through the public release window, and polls every 15 seconds in that window when `BLS_API_KEY` is configured. In-app alerts are enabled by default. To keep webhook monitoring active independently of an open browser session, run the release worker alongside Streamlit:
+
+```bash
+uv run --python 3.12 --with-requirements requirements.txt python -m scripts.macro_release_monitor
+```
 
 PineTerminal is a research workflow prototype, not investment advice.
-

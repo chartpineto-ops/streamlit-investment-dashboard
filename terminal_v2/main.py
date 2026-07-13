@@ -11,6 +11,7 @@ from terminal_v2.styles import inject_styles
 from terminal_v2.views import (
     render_data_page,
     render_intelligence_page,
+    render_macro_release_monitor,
     render_market_page,
     render_portfolio_page,
     render_screener_page,
@@ -159,6 +160,7 @@ def run() -> None:
         st.session_state.ticker = query_ticker
     _render_sidebar()
     _render_command_line()
+    render_macro_release_monitor()
 
     page = st.session_state.page
     if page == "MARKET":
