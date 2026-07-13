@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from datetime import timedelta
 from typing import Iterable
 
@@ -10,6 +9,7 @@ import streamlit as st
 
 from data.market_news import NewsItem, market_news_provider
 from utils.formatting import clean_ticker, now_et
+from utils.secrets import secret_or_env
 
 
 NEWS_COLUMNS = [
@@ -30,14 +30,7 @@ def _empty_news() -> pd.DataFrame:
 
 
 def _secret_or_env(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if value:
-        return value
-    try:
-        secret_value = st.secrets.get(name, "")
-    except Exception:
-        secret_value = ""
-    return str(secret_value or "").strip()
+    return secret_or_env(name)
 
 
 def _configured_provider() -> str:

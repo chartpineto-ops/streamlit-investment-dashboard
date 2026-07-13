@@ -12,6 +12,7 @@ import streamlit as st
 from data.market_data import fetch_quote
 from data.market_universe import market_universe
 from utils.formatting import clean_ticker, now_et, to_float
+from utils.secrets import secret_or_env
 
 
 SOCIAL_WARNING = (
@@ -21,19 +22,7 @@ SOCIAL_WARNING = (
 
 
 def _secret(name: str) -> str | None:
-    value = os.getenv(name)
-    if value:
-        return value
-    try:
-        secrets = getattr(st, "secrets", {})
-        if name in secrets:
-            return str(secrets[name])
-        social = secrets.get("social", {}) if hasattr(secrets, "get") else {}
-        if isinstance(social, dict) and name in social:
-            return str(social[name])
-    except Exception:
-        return None
-    return None
+    return secret_or_env(name, section="social") or None
 
 
 def _stable_int(*parts: object) -> int:

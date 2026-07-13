@@ -23,9 +23,10 @@ def render_data_freshness_bar(status_items: list[dict[str, object]]) -> None:
 
         html_parts.append(
             f"""
-            <span class="freshness-pill" title="{title}">
+            <span class="freshness-item" title="{title}">
                 <b>{label}</b>
-                <em class="{status_class}">refreshed {refreshed}</em>
+                <i class="{status_class}"></i>
+                <em class="{status_class}">{refreshed}</em>
             </span>
             """
         )
@@ -33,51 +34,74 @@ def render_data_freshness_bar(status_items: list[dict[str, object]]) -> None:
     render_html(
         f"""
         <div class="freshness-bar">
+            <strong>DATA</strong>
             {"".join(html_parts)}
         </div>
 
         <style>
         .freshness-bar {{
             display: flex;
-            gap: 10px;
+            gap: 0;
             align-items: center;
-            justify-content: flex-end;
+            justify-content: flex-start;
             flex-wrap: wrap;
-            font-size: 12px;
-            margin-bottom: 8px;
+            min-height: 26px;
+            border-top: 1px solid #26313a;
+            border-bottom: 1px solid #26313a;
+            background: #05090c;
+            color: #aab3bb;
+            font-family: Consolas, "Cascadia Mono", monospace;
+            font-size: 10px;
+            margin: 0 0 6px;
         }}
 
-        .freshness-pill {{
+        .freshness-bar > strong {{
+            align-self: stretch;
+            display: inline-flex;
+            align-items: center;
+            padding: 0 10px;
+            color: #f2a900;
+            border-right: 1px solid #26313a;
+            letter-spacing: .08em;
+        }}
+
+        .freshness-item {{
             display: inline-flex;
             gap: 6px;
             align-items: center;
-            padding: 4px 8px;
-            border-radius: 999px;
-            background: rgba(18, 26, 36, 0.95);
-            border: 1px solid rgba(90, 110, 130, 0.35);
-            color: #d7e1ea;
+            min-height: 25px;
+            padding: 0 9px;
+            border-right: 1px solid #26313a;
             white-space: nowrap;
         }}
 
-        .freshness-pill b {{
-            color: #f3f6f9;
-            font-weight: 700;
+        .freshness-item b {{
+            color: #dce3e8;
+            font-weight: 800;
+            text-transform: uppercase;
         }}
 
-        .freshness-pill em {{
+        .freshness-item i {{
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: currentColor;
+        }}
+
+        .freshness-item em {{
             font-style: normal;
             font-weight: 600;
         }}
 
-        .freshness-pill em.good {{
+        .freshness-item .good {{
             color: #58d68d;
         }}
 
-        .freshness-pill em.warn {{
+        .freshness-item .warn {{
             color: #f4d03f;
         }}
 
-        .freshness-pill em.bad {{
+        .freshness-item .bad {{
             color: #ff6b6b;
         }}
         </style>

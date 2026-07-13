@@ -256,10 +256,11 @@ def render_watchlist_sidebar(rows: list[dict[str, object]]) -> None:
 
 
 def render_topbar(page: str, ticker: str, currency: str, data_mode: str = "Demo", last_updated: str = "2026-05-31 13:45 ET") -> None:
+    context = f"ACTIVE {ticker}" if page != "Company" else f"EQUITY RESEARCH / {ticker}"
     html(
         f"""
         <div class="pt-topbar">
-          <div class="pt-breadcrumb">Dashboard / Company Analysis / <b>{escape(ticker)}</b></div>
+          <div class="pt-breadcrumb"><span>PT</span> / <b>{escape(page.upper())}</b> / {escape(context)}</div>
         </div>
         """
     )
@@ -353,14 +354,11 @@ def render_company_header(profile: CompanyProfile) -> str:
       <div class="pt-header-market">
         <div class="pt-kpi pt-current-price"><span>Current Price</span><strong>{price(profile.current_price)}</strong><b class="{tone_for_value(profile.day_change_percent)}">{day_change_label} ({percent(profile.day_change_percent, 2)})</b>{price_detail}</div>
         <div class="pt-kpi"><span>Market Cap</span><strong>{money(profile.market_cap)}</strong></div>
-        <div class="pt-kpi"><span>Enterprise Value</span><strong>{money(profile.enterprise_value)}</strong></div>
         <div class="pt-kpi pt-range-kpi"><span>52W Range</span><strong>{price(profile.week52_low)} to {price(profile.week52_high)}</strong><div class="pt-range"><div class="pt-range-track"><i style="left:{profile.week52_current_position:.1f}%"></i></div></div></div>
       </div>
       <div class="pt-header-signal">
-        <div class="pt-kpi pt-score-big"><span>Fundamental Score</span><strong>{profile.fundamental_score:.1f}</strong><b>/10</b><small class="good">{escape(profile.fundamental_label)}</small></div>
-        <div class="pt-kpi"><span>Expected 36M Return</span><strong class="{tone_for_value(profile.expected36m_return)}">{percent(profile.expected36m_return, 0)}</strong><b>{escape(profile.expected_return_label)}</b></div>
         <div class="pt-kpi pt-signal-kpi">
-          <div><span>Investment Signal</span><strong class="{signal_tone}">{escape(profile.investment_signal)}</strong><b>Conf: {escape(profile.confidence)}<br>Risk: {escape(profile.risk_level)}</b></div>
+          <div><span>Analyst Call</span><strong class="{signal_tone}">{escape(profile.investment_signal)}</strong><b>Conviction {escape(profile.confidence)} | Risk {escape(profile.risk_level)}</b></div>
           {gauge}
         </div>
       </div>
@@ -772,16 +770,16 @@ def render_investment_decision(analysis: CompanyAnalysis) -> str:
       <div class="pt-decision-main">
         {signal_badge_icon(signal.signal)}
         <div class="pt-decision-copy">
-          <div class="pt-section-title flat"><span>Investment Decision</span></div>
+          <div class="pt-section-title flat"><span>Analyst View</span></div>
           <strong class="{signal_tone}">{escape(signal.signal)}</strong>
           <p>{escape(_decision_summary(signal.signal, signal.risk_level))}</p>
           <div class="pt-bottom-line-callout">{escape(_bottom_line(analysis))}</div>
         </div>
         <div class="pt-decision-quick">
-          {value_row("Expected 36M Return", percent(expected_return, 0), tone_for_value(expected_return))}
-          {value_row("Thesis Status", status, status_tone)}
+          {value_row("Implied 36M Return", percent(expected_return, 0), tone_for_value(expected_return))}
+          {value_row("Thesis Direction", status, status_tone)}
           {value_row("Conviction", signal.conviction, "warn")}
-          {value_row("Risk Level", signal.risk_level, tone_for_impact(signal.risk_level))}
+          {value_row("Principal Risk", signal.risk_level, tone_for_impact(signal.risk_level))}
         </div>
       </div>
       <div class="pt-decision-breakdown">
@@ -894,7 +892,7 @@ def render_decision_business_quality(analysis: CompanyAnalysis) -> str:
         </div>
         """
     body = f'<div class="pt-quality-pillars">{cards}</div>{render_fundamental_engine_details(analysis)}'
-    return section("Business Quality", "", body)
+    return section("Operating Quality", "Evidence from the latest reported period", body)
 
 
 def _scenario_tone(name: str) -> str:
@@ -1113,7 +1111,7 @@ def render_decision_future_value(analysis: CompanyAnalysis) -> str:
       {render_valuation_details(analysis, model)}
     </div>
     """
-    return section("Future Value Scenarios", "", body)
+    return section("Valuation Framework", "Scenario-weighted, not a point target", body)
 
 
 def _driver_items(analysis: CompanyAnalysis, *, positive: bool) -> list[str]:
@@ -1159,7 +1157,7 @@ def render_decision_thesis_drivers(analysis: CompanyAnalysis) -> str:
       <div class="pt-key-levers"><h4>Key Levers</h4><ul>{lever_rows}</ul></div>
     </div>
     """
-    return section("Thesis Drivers", "", body)
+    return section("Thesis Evidence", "What is strengthening or weakening conviction", body)
 
 
 def render_decision_checklist(analysis: CompanyAnalysis) -> str:
@@ -1175,7 +1173,7 @@ def render_decision_checklist(analysis: CompanyAnalysis) -> str:
         '</div>'
     )
     body = f'{legend}<ul class="pt-simple-checklist">{rows}</ul><p class="pt-bottom-line">Bottom line: Upside depends on execution, not just hype.</p>'
-    return section("What Must Be True", "", body)
+    return section("Conditions for Upside", "Evidence required for the base case", body)
 
 
 def render_decision_risks(analysis: CompanyAnalysis) -> str:
@@ -1198,7 +1196,7 @@ def render_decision_risks(analysis: CompanyAnalysis) -> str:
     </table>
     {render_all_risks_details(analysis)}
     """
-    return section("Key Risks", "Top 3", body)
+    return section("Principal Risks", "Top 3", body)
 
 
 def render_all_risks_details(analysis: CompanyAnalysis) -> str:
@@ -1287,7 +1285,7 @@ def render_decision_recent_changes(analysis: CompanyAnalysis) -> str:
     </table>
     {render_all_updates_details(analysis)}
     """
-    return section("Recent Thesis Changes", "", body)
+    return section("Thesis Delta", "What changed, why it matters, and model impact", body)
 
 
 def render_key_stats_panel(analysis: CompanyAnalysis) -> str:
@@ -1322,8 +1320,8 @@ def render_advanced_model_details(analysis: CompanyAnalysis) -> str:
       <summary>
         <span class="pt-lock-icon"></span>
         <span>
-          <strong>Advanced Model Details <small>(Expand)</small></strong>
-          <p>Full fundamental engine, sensitivity table, valuation bridge, market-implied assumptions, full read-through feed, key stats, next events, and more.</p>
+          <strong>Model & Source Detail <small>(Expand)</small></strong>
+          <p>Assumptions, sensitivities, market-implied expectations, source provenance, and the full evidence trail.</p>
         </span>
         <b class="pt-accordion-caret"></b>
       </summary>

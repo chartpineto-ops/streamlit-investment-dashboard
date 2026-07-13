@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
-
 import pandas as pd
 import requests
 import streamlit as st
 
 from utils.formatting import now_et, to_float
+from utils.secrets import secret_or_env
 
 
 MACRO_COLUMNS = [
@@ -58,14 +57,7 @@ def _empty_macro() -> pd.DataFrame:
 
 
 def _secret_or_env(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if value:
-        return value
-    try:
-        secret_value = st.secrets.get(name, "")
-    except Exception:
-        secret_value = ""
-    return str(secret_value or "").strip()
+    return secret_or_env(name)
 
 
 def _row(indicator: str, value, previous, release_date, frequency: str, source: str, data_source: str) -> dict[str, object]:

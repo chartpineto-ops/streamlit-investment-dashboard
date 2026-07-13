@@ -3,7 +3,7 @@ from __future__ import annotations
 import calendar
 import os
 from collections import defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, datetime
 from html import escape
 
@@ -30,6 +30,7 @@ from data.market_news import (
 from data.economic_calendar import enrich_economic_calendar_events
 from data.sector_research import build_sector_research_packet, get_market_snapshot
 from services.social_sentiment_service import SOCIAL_WARNING, fetch_ticker_social_snapshot
+from services.live_quotes import fetch_latest_quotes
 from pineterminal.components import (
     company_profile_from_analysis,
     html,
@@ -78,30 +79,31 @@ from storage.watchlist import add_ticker as store_add_ticker
 from storage.watchlist import latest_quote_snapshot, remove_ticker as store_remove_ticker
 from utils.formatting import clean_ticker, fmt_compact, fmt_currency, fmt_daily_move, fmt_multiple, fmt_number, fmt_percent, now_et, safe_format_datetime, to_float
 from utils.rendering import render_html
+from utils.secrets import secret_or_env
 
 
-PAGES = [
-    "Dashboard",
-    "Sector Research",
-    "Markets",
-    "Market Read-Through",
-    "Scanner",
-    "Watchlists",
-    "Portfolio",
-    "News Feed",
-    "Alerts",
-    "Economic Data",
-    "Calendar",
-    "Settings",
-]
+PAGES = ["Monitor", "Company", "Scanner", "Intelligence", "Portfolio", "Settings"]
+PAGE_MIGRATIONS = {
+    "Dashboard": "Company",
+    "Sector Research": "Intelligence",
+    "Markets": "Monitor",
+    "Market Read-Through": "Intelligence",
+    "Screener": "Scanner",
+    "Watchlists": "Portfolio",
+    "Thesis Tracker": "Portfolio",
+    "News Feed": "Intelligence",
+    "Alerts": "Intelligence",
+    "Economic Data": "Monitor",
+    "Calendar": "Monitor",
+}
 
-APP_STATE_VERSION = "pineterminal-dashboard-v3"
+APP_STATE_VERSION = "pineterminal-terminal-v4"
 DEFAULT_WATCHLIST = ["AMPX", "MRVL", "VICR", "IONQ", "MP", "FBTC", "CEG", "NVDA"]
 SCANNER_PROVIDER = MarketUniverseProvider()
 SCANNER_TABLE_COLUMNS = [0.16, 0.1, 0.11, 0.1, 0.1, 0.12, 0.12, 0.17, 0.13, 0.13]
 
 
-st.set_page_config(page_title="PineTerminal", page_icon="P", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="PineTerminal", page_icon="P", layout="wide", initial_sidebar_state="auto")
 apply_theme()
 
 
@@ -136,19 +138,20 @@ def _default_portfolio_holdings() -> list[dict[str, object]]:
 
 
 def _init_state() -> None:
+    previous_page = str(st.session_state.get("page") or "Company")
     if st.session_state.get("_pt_app_state_version") != APP_STATE_VERSION:
-        for key in ("currency", "page"):
-            st.session_state.pop(key, None)
+        st.session_state.pop("currency", None)
+        st.session_state["page"] = PAGE_MIGRATIONS.get(previous_page, previous_page if previous_page in PAGES else "Company")
         st.session_state["_pt_app_state_version"] = APP_STATE_VERSION
     st.session_state.setdefault("selected_ticker", "AMPX")
     st.session_state.setdefault("currency", "USD")
-    st.session_state.setdefault("page", "Dashboard")
-    if st.session_state["page"] == "Thesis Tracker":
-        st.session_state["page"] = "Portfolio"
-    elif st.session_state["page"] == "Screener":
-        st.session_state["page"] = "Scanner"
-    elif st.session_state["page"] not in PAGES:
-        st.session_state["page"] = "Dashboard"
+    st.session_state.setdefault("page", "Company")
+    st.session_state["page"] = PAGE_MIGRATIONS.get(st.session_state["page"], st.session_state["page"])
+    if st.session_state["page"] not in PAGES:
+        st.session_state["page"] = "Company"
+    st.session_state.setdefault("monitor_view", "Market Tape")
+    st.session_state.setdefault("intelligence_view", "News")
+    st.session_state.setdefault("portfolio_view", "Holdings")
     if "watchlist_tickers" not in st.session_state:
         st.session_state["watchlist_tickers"] = _load_persistent_watchlist_tickers()
     st.session_state.setdefault("watchlist_add_open", False)
@@ -200,10 +203,17 @@ def _analysis_watchlist_row(ticker: str) -> dict[str, object]:
     }
 
 
-def _watchlist_rows(market_snapshot: dict[str, object] | None = None) -> list[dict[str, object]]:
+def _watchlist_rows(market_snapshot: dict[str, object] | None = None, live_quote_frame: pd.DataFrame | None = None) -> list[dict[str, object]]:
     built_in = {str(row["Ticker"]): row for row in all_watchlist_rows()}
     rows = []
     live_quotes = (market_snapshot or {}).get("quotes", {})
+    if live_quote_frame is None:
+        live_quote_frame = fetch_latest_quotes(_active_watchlist_tickers())
+    live_quote_rows = {
+        clean_ticker(str(row.get("ticker") or "")): row
+        for row in (live_quote_frame.to_dict("records") if isinstance(live_quote_frame, pd.DataFrame) else [])
+        if clean_ticker(str(row.get("ticker") or ""))
+    }
     for ticker in _active_watchlist_tickers():
         try:
             result = _analysis_watchlist_row(ticker)
@@ -238,8 +248,67 @@ def _watchlist_rows(market_snapshot: dict[str, object] | None = None) -> list[di
                     "Source": "Shared Yahoo Finance market snapshot",
                 }
             )
+        latest_quote = live_quote_rows.get(ticker, {})
+        if latest_quote.get("status") == "OK" and to_float(latest_quote.get("price")) is not None:
+            result.update(
+                {
+                    "Price": latest_quote.get("price"),
+                    "Daily Change": latest_quote.get("change_pct") if latest_quote.get("change_pct") is not None else result.get("Daily Change"),
+                    "Last Updated": latest_quote.get("timestamp") or latest_quote.get("last_refresh") or result.get("Last Updated"),
+                    "Source": latest_quote.get("data_source") or result.get("Source"),
+                }
+            )
         rows.append(result)
     return rows
+
+
+def _analysis_with_live_quote(analysis, live_quote_frame: pd.DataFrame):
+    if live_quote_frame is None or live_quote_frame.empty:
+        return analysis
+    symbol = clean_ticker(analysis.company.ticker)
+    matches = live_quote_frame[live_quote_frame["ticker"].astype(str).str.upper() == symbol]
+    if matches.empty:
+        return analysis
+    quote = matches.iloc[0]
+    current_price = to_float(quote.get("price"))
+    change_pct = to_float(quote.get("change_pct"))
+    change_value = to_float(quote.get("change"))
+    if str(quote.get("status") or "") != "OK" or current_price is None:
+        return analysis
+    source = str(quote.get("data_source") or analysis.company.data_source)
+    combined_source = source if analysis.company.data_source in source else f"{source} | {analysis.company.data_source}"
+    updated_at = quote.get("timestamp") or quote.get("last_refresh") or analysis.company.last_updated
+    company = replace(
+        analysis.company,
+        current_price=current_price,
+        daily_change=change_pct if change_pct is not None else analysis.company.daily_change,
+        day_change_dollar=change_value if change_value is not None else analysis.company.day_change_dollar,
+        market_status=str(quote.get("market_state") or analysis.company.market_status),
+        last_updated=safe_format_datetime(updated_at),
+        data_mode="Delayed" if "delayed" in source.casefold() else "Live",
+        data_source=combined_source,
+        pre_market_change_percent=None,
+        after_hours_change_percent=None,
+    )
+    expected_return = calculate_expected_return(analysis.expected_value, current_price)
+    expected_value_detail = replace(
+        analysis.expected_value_detail,
+        current_price=current_price,
+        expected_return=expected_return,
+    )
+    valuation_model = analysis.valuation_model
+    if valuation_model is not None:
+        valuation_model = replace(
+            valuation_model,
+            current_price=current_price,
+            expected_return=calculate_expected_return(valuation_model.expected_value, current_price),
+        )
+    return replace(
+        analysis,
+        company=company,
+        expected_value_detail=expected_value_detail,
+        valuation_model=valuation_model,
+    )
 
 
 def _add_watchlist_ticker(symbol: str) -> None:
@@ -409,20 +478,21 @@ def render_watchlist_sidebar(rows: list[dict[str, object]]) -> None:
 def render_sidebar(watchlist_rows: list[dict[str, object]]) -> str:
     with st.sidebar:
         render_brand()
-        page = st.radio("Navigation", PAGES, index=PAGES.index(st.session_state.get("page", "Dashboard")), label_visibility="collapsed")
+        page = st.radio("Navigation", PAGES, index=PAGES.index(st.session_state.get("page", "Company")), label_visibility="collapsed")
         st.session_state["page"] = page
-        st.session_state["show_refresh_debug"] = st.toggle(
-            "Show refresh debug",
-            value=bool(st.session_state.get("show_refresh_debug", False)),
-        )
         render_watchlist_sidebar(watchlist_rows)
+        with st.expander("Terminal controls", expanded=False):
+            st.session_state["show_refresh_debug"] = st.toggle(
+                "Show refresh debug",
+                value=bool(st.session_state.get("show_refresh_debug", False)),
+            )
     return page
 
 
 def render_global_controls(page: str, analysis) -> None:
-    search_col, topbar_col, refresh_col = st.columns([0.16, 0.72, 0.12], vertical_alignment="center")
+    search_col, topbar_col, refresh_col = st.columns([0.18, 0.70, 0.12], vertical_alignment="center")
     with search_col:
-        search_value = st.text_input("Ticker", value=st.session_state["selected_ticker"], placeholder="Search ticker")
+        search_value = st.text_input("Security", value=st.session_state["selected_ticker"], placeholder="Ticker / symbol")
         searched = clean_ticker(search_value)
         if searched and searched != st.session_state["selected_ticker"]:
             st.session_state["selected_ticker"] = searched
@@ -430,7 +500,7 @@ def render_global_controls(page: str, analysis) -> None:
     with topbar_col:
         render_topbar(page, analysis.company.ticker, st.session_state["currency"], analysis.company.data_mode, analysis.company.last_updated)
     with refresh_col:
-        if st.button("Refresh Data", key="global_market_refresh", use_container_width=True):
+        if st.button("Refresh", key="global_market_refresh", use_container_width=True):
             st.session_state["global_refresh_token"] = int(st.session_state.get("global_refresh_token", 0) or 0) + 1
             st.cache_data.clear()
             st.rerun()
@@ -510,12 +580,15 @@ def _social_readthrough_markup(symbol: str, row: pd.Series) -> str:
     risk_label = str(row.get("risk_label") or "N/A")
     signal = str(row.get("signal_label") or "Noise")
     narratives = "".join(f"<span>{escape(str(item))}</span>" for item in list(row.get("top_social_narratives") or [])[:4])
+    mention_change = to_float(row.get("mention_change_24h_pct")) or 0
+    confirmation = to_float(row.get("price_volume_confirmation")) or 0
+    attention_view = "accelerating" if mention_change > 15 else "cooling" if mention_change < -10 else "stable"
+    confirmation_view = "confirmed by price and volume" if confirmation >= 70 else "not yet confirmed by price and volume"
     interpretation = (
-        f"{symbol} has {fmt_compact(row.get('mentions_today'), 1)} mentions today and "
-        f"{fmt_percent(row.get('mention_change_24h_pct'), 0, True)} 24h mention growth. "
-        f"Sentiment is {str(row.get('sentiment_label') or 'neutral').lower()}, while price/volume confirmation is "
-        f"{'supportive' if (to_float(row.get('price_volume_confirmation')) or 0) >= 70 else 'not yet confirmed'}. "
-        f"The signal is {signal}; treat it as research input, not a standalone thesis."
+        f"Retail attention is {attention_view}: {fmt_compact(row.get('mentions_today'), 1)} mentions today, "
+        f"{fmt_percent(mention_change, 0, True)} over 24 hours. Perception is "
+        f"{str(row.get('sentiment_label') or 'neutral').lower()} and {confirmation_view}. "
+        f"Our read is {signal}. This can change catalyst conviction, but it does not replace the fundamental thesis."
     )
     return f"""
     <div class="pt-social-readthrough">
@@ -541,14 +614,14 @@ def _social_readthrough_markup(symbol: str, row: pd.Series) -> str:
 def render_social_readthrough(symbol: str, df: pd.DataFrame) -> None:
     ticker = clean_ticker(symbol)
     if df is None or df.empty or not ticker:
-        html(section("Social Snapshot", "", '<p class="pt-placeholder">No reliable social data available for the active ticker.</p>'))
+        html(section("Social Read-Through", "Attention and perception", '<p class="pt-placeholder">No reliable social data available for the active ticker.</p>'))
         return
     matches = df[df["ticker"].astype(str).str.upper() == ticker]
     if matches.empty:
-        html(section(f"Social Snapshot: {escape(ticker)}", "", '<p class="pt-placeholder">No reliable social data available for the active ticker.</p>'))
+        html(section(f"Social Read-Through: {escape(ticker)}", "Attention and perception", '<p class="pt-placeholder">No reliable social data available for the active ticker.</p>'))
         return
     row = matches.iloc[0]
-    html(section(f"Social Snapshot: {escape(ticker)}", "Active ticker only", _social_readthrough_markup(ticker, row)))
+    html(section(f"Social Read-Through: {escape(ticker)}", "Retail attention, sentiment, and market confirmation", _social_readthrough_markup(ticker, row)))
     chart_cols = st.columns([0.58, 0.42])
     with chart_cols[0]:
         st.plotly_chart(_social_mentions_figure(row), use_container_width=True, config={"displayModeBar": False})
@@ -596,10 +669,8 @@ def render_company_dashboard_with_social(analysis) -> None:
         '<div class="pt-shell pt-decision-shell">'
         + render_company_header(company_profile)
         + render_investment_decision(analysis)
-        + _active_quote_card_markup(analysis)
         + "</div>"
     )
-    render_news_updates(ticker=analysis.company.ticker, title=f"{analysis.company.ticker} News Updates")
     render_social_readthrough(analysis.company.ticker, social_df)
     html(
         '<div class="pt-shell pt-decision-shell">'
@@ -623,6 +694,30 @@ def _snapshot_price_label(row: dict[str, object], asset_type: str = "index") -> 
     return price(value)
 
 
+def _market_brief_markup(quotes: dict[str, dict[str, object]]) -> str:
+    spy = to_float(quotes.get("SPY", {}).get("return_1d"))
+    qqq = to_float(quotes.get("QQQ", {}).get("return_1d"))
+    iwm = to_float(quotes.get("IWM", {}).get("return_1d"))
+    vix = to_float(quotes.get("^VIX", {}).get("price"))
+    ten_year = to_float(quotes.get("^TNX", {}).get("price"))
+    available_moves = [value for value in (spy, qqq, iwm) if value is not None]
+    risk_tone = "constructive" if available_moves and sum(available_moves) / len(available_moves) > 0.25 else "defensive" if available_moves and sum(available_moves) / len(available_moves) < -0.25 else "mixed"
+    if qqq is not None and spy is not None and qqq > spy + 0.2:
+        leadership = "growth leadership is outperforming the broad tape"
+    elif iwm is not None and spy is not None and iwm > spy + 0.2:
+        leadership = "participation is broadening into smaller-cap equities"
+    else:
+        leadership = "leadership is not materially diverging from the broad market"
+    volatility = f"VIX is {vix:.1f}" if vix is not None else "volatility data are unavailable"
+    rates = f"the 10-year yield is {ten_year:.2f}%" if ten_year is not None else "the rates feed is unavailable"
+    return f"""
+    <div class="pt-analyst-brief">
+      <span>Analyst Read</span>
+      <p>Risk appetite is <b>{escape(risk_tone)}</b>; {escape(leadership)}. {escape(volatility)} and {escape(rates)}. Confirm the tape with breadth, volume, catalysts, and the social-attention read below.</p>
+    </div>
+    """
+
+
 def render_home_page(market_snapshot: dict[str, object]) -> None:
     quotes = market_snapshot.get("quotes", {})
     index_rows = []
@@ -634,29 +729,19 @@ def render_home_page(market_snapshot: dict[str, object]) -> None:
         f'<div class="pt-row-card"><span class="pt-mini-label">{escape(str(row["name"]))}</span><strong>{escape(str(row["price"]))}</strong><em class="{tone_for_value(float(row["change"]))}">{percent(float(row["change"]), 2)}</em></div>'
         for row in index_rows
     )
-    highlights = []
-    for update in MARKET_UPDATES[:4]:
-        highlights.append(
-            {
-                "Date": update["date"],
-                "Theme": update["theme"],
-                "Market Update": update["market_update"],
-                "Impact": update["impact"],
-                "Affected Valuation Lever": update["affected_valuation_lever"],
-            }
-        )
     html(
-        '<div class="pt-shell">'
-        + section("Market Index Strip", "Shared live market snapshot", f'<div class="pt-score-breakdown">{index_cards}</div>')
+        '<div class="pt-workspace-head"><div><span>MARKET MONITOR</span><h1>Cross-Asset Tape</h1><p>Price, flow, catalysts, and retail perception in one decision surface.</p></div><b>LIVE / DELAYED BY PROVIDER</b></div>'
+        + '<div class="pt-shell pt-monitor-shell">'
+        + section("Cross-Asset Snapshot", "Latest shared market snapshot", f'<div class="pt-score-breakdown">{index_cards}</div>{_market_brief_markup(quotes)}')
         + "</div>"
     )
-    render_live_market_movers(title="Market Movers")
-    render_news_updates(title="Market Headlines")
-    render_economic_data_panel()
-    render_economic_calendar_panel("Upcoming Economic Releases", days_forward=14)
+    render_live_market_movers(title="Price / Volume Leaders")
     render_social_momentum_panel()
-    html(f'<div class="pt-home-grid">{section("Market Read-Through Highlights", "", render_plain_table(highlights))}{section("Upcoming Events", "", render_plain_table(UPCOMING_EVENTS))}</div>')
-    render_dataframe(_watchlist_rows(market_snapshot), 270)
+    news_col, macro_col = st.columns([0.58, 0.42], gap="small")
+    with news_col:
+        render_news_updates(title="Market Intelligence")
+    with macro_col:
+        render_economic_calendar_panel("Macro Catalyst Calendar", days_forward=14)
 
 
 def _sector_flow_tone(value: object) -> str:
@@ -1341,7 +1426,7 @@ def _open_scanner_ticker(row: pd.Series) -> None:
         return
     if ticker in ANALYSES or ticker in COMPANIES:
         st.session_state["selected_ticker"] = ticker
-        st.session_state["page"] = "Dashboard"
+        st.session_state["page"] = "Company"
         st.rerun()
     st.session_state["scanner_detail_ticker"] = ticker
     st.session_state["scanner_detail_row"] = {column: row.get(column) for column in row.index}
@@ -1856,7 +1941,7 @@ def _open_news_ticker(ticker: str, item: NewsItem) -> None:
         return
     if symbol in ANALYSES or symbol in COMPANIES:
         st.session_state["selected_ticker"] = symbol
-        st.session_state["page"] = "Dashboard"
+        st.session_state["page"] = "Company"
         st.rerun()
     st.session_state["news_detail_ticker"] = symbol
     st.session_state["news_detail_item"] = item.id
@@ -2516,17 +2601,29 @@ def render_valuation_assumptions_editor() -> None:
         st.rerun()
 
 
+def _credential_present(*names: str) -> bool:
+    return any(bool(secret_or_env(name, section="social")) for name in names)
+
+
 def render_settings_page() -> None:
+    quote_source = "Finnhub / configured real-time provider" if _credential_present("FINNHUB_API_KEY", "POLYGON_API_KEY", "MASSIVE_API_KEY", "ALPACA_API_KEY") else "Yahoo Finance delayed fallback"
+    news_source = "Configured live news provider" if _credential_present("FINNHUB_API_KEY", "BENZINGA_API_KEY", "MARKETAUX_API_KEY", "POLYGON_API_KEY", "ALPHA_VANTAGE_API_KEY") else "Clearly labelled demo news fallback"
+    macro_source = "FRED official series" if _credential_present("FRED_API_KEY") else "Clearly labelled macro fallback"
+    social_source = "Configured social provider" if _credential_present("STOCKTWITS_API_KEY", "FINBRAIN_API_KEY", "REDDIT_CLIENT_ID") else "Clearly labelled demo social fallback"
+    source_rows = [
+        {"Dataset": "Prices", "Provider": quote_source, "Refresh": "5 seconds", "Use": "Trading context"},
+        {"Dataset": "Market movers", "Provider": "Yahoo Finance broad-market feed", "Refresh": "60 seconds", "Use": "Flow / anomaly detection"},
+        {"Dataset": "News", "Provider": news_source, "Refresh": "5 minutes", "Use": "Catalyst evidence"},
+        {"Dataset": "Macro", "Provider": macro_source, "Refresh": "30 minutes", "Use": "Rates / regime context"},
+        {"Dataset": "Social", "Provider": social_source, "Refresh": "5 minutes", "Use": "Attention / perception"},
+        {"Dataset": "Fundamentals", "Provider": "SEC XBRL + period-aligned Yahoo fallback", "Refresh": "Daily / filing driven", "Use": "Reported evidence"},
+    ]
     html(
         section(
-            "Settings",
-            "Demo configuration",
-            """
-            <p class="pt-placeholder">
-              PineTerminal V2 is running on mock/demo data. The data model is structured so live market prices,
-              fundamentals, SEC filings, earnings transcripts, analyst estimates, and portfolio integrations can be added later.
-            </p>
-            """,
+            "Data & Refresh",
+            "Provider-aware cadences and fallback policy",
+            render_plain_table(source_rows)
+            + '<p class="pt-placeholder">PineTerminal never presents fallback social, news, or macro data as live. Add provider credentials through environment variables or Streamlit secrets to replace those fallbacks.</p>',
         )
     )
     render_valuation_assumptions_editor()
@@ -2534,37 +2631,62 @@ def render_settings_page() -> None:
         {
             "default_ticker": "AMPX",
             "currency": st.session_state["currency"],
-            "calculation_mode": "transparent demo helpers",
-            "theme_engine": "theme exposure map plus ticker exposure",
-            "live_integrations": False,
+            "calculation_mode": "source-aware deterministic models",
+            "theme_engine": "theme exposure plus ticker-level read-through",
+            "live_integrations": quote_source,
             "configured_valuation_tickers": configured_valuation_tickers(),
         }
     )
 
 
-def render_page(page: str, analysis, market_snapshot: dict[str, object]) -> None:
-    if page == "Dashboard":
-        render_company_dashboard_with_social(analysis)
-    elif page == "Sector Research":
-        render_sector_research(market_snapshot)
-    elif page == "Markets":
-        render_home_page(market_snapshot)
-    elif page == "Market Read-Through":
+def _workspace_selector(label: str, options: list[str], key: str, default: str) -> str:
+    current = st.session_state.get(key, default)
+    if current not in options:
+        current = default
+    st.session_state[key] = current
+    selected = st.segmented_control(label, options, key=key, label_visibility="collapsed")
+    return str(selected or current)
+
+
+def render_monitor_workspace(market_snapshot: dict[str, object]) -> None:
+    view = _workspace_selector("Monitor view", ["Market Tape", "Macro Calendar"], "monitor_view", "Market Tape")
+    if view == "Macro Calendar":
+        html('<div class="pt-workspace-head"><div><span>MACRO MONITOR</span><h1>Economic Calendar</h1><p>Official releases, consensus expectations, and prior-period context.</p></div><b>OFFICIAL ACTUALS / SCHEDULED RELEASES</b></div>')
+        render_economic_page()
+        return
+    render_home_page(market_snapshot)
+
+
+def render_intelligence_workspace(market_snapshot: dict[str, object]) -> None:
+    view = _workspace_selector("Intelligence view", ["News", "Read-Through", "Sector"], "intelligence_view", "News")
+    if view == "Read-Through":
         render_market_readthrough_page()
+    elif view == "Sector":
+        render_sector_research(market_snapshot)
+    else:
+        html('<div class="pt-workspace-head"><div><span>INTELLIGENCE</span><h1>Live News Wire</h1><p>Latest market and company catalysts from the configured provider.</p></div><b>5 MINUTE REFRESH</b></div>')
+        render_news_updates(title="Market / Company Intelligence")
+
+
+def render_portfolio_workspace(market_snapshot: dict[str, object]) -> None:
+    view = _workspace_selector("Portfolio view", ["Holdings", "Watchlist"], "portfolio_view", "Holdings")
+    if view == "Watchlist":
+        render_watchlist_page(market_snapshot)
+    else:
+        render_portfolio_page()
+
+
+def render_page(page: str, analysis, market_snapshot: dict[str, object]) -> None:
+    if page == "Monitor":
+        render_monitor_workspace(market_snapshot)
+    elif page == "Company":
+        render_company_dashboard_with_social(analysis)
     elif page == "Scanner":
         render_scanner_page()
-    elif page == "Watchlists":
-        render_watchlist_page(market_snapshot)
+    elif page == "Intelligence":
+        render_intelligence_workspace(market_snapshot)
     elif page == "Portfolio":
-        render_portfolio_page()
-    elif page == "News Feed":
-        render_news_feed_page()
-    elif page == "Alerts":
-        html(section("Alerts", "Configured thesis and valuation monitors", '<p class="pt-placeholder">No active alerts in demo mode.</p>'))
-    elif page == "Economic Data":
-        render_economic_page()
-    elif page == "Calendar":
-        render_calendar_page()
+        render_portfolio_workspace(market_snapshot)
     elif page == "Settings":
         render_settings_page()
 
@@ -2574,11 +2696,15 @@ def main() -> None:
     _apply_session_valuation_specs()
     refresh_token = int(st.session_state.get("global_refresh_token", 0) or 0)
     market_snapshot = get_market_snapshot(refresh_token)
-    watchlist_rows = _watchlist_rows(market_snapshot)
+    active_tickers = _active_watchlist_tickers()
+    quote_tickers = list(dict.fromkeys([*active_tickers, st.session_state["selected_ticker"]]))
+    live_quote_frame = fetch_latest_quotes(quote_tickers)
+    watchlist_rows = _watchlist_rows(market_snapshot, live_quote_frame)
     page = render_sidebar(watchlist_rows)
     analysis = load_dashboard_analysis(st.session_state["selected_ticker"])
+    analysis = _analysis_with_live_quote(analysis, live_quote_frame)
     render_global_controls(page, analysis)
-    render_live_ticker(_active_watchlist_tickers())
+    render_live_ticker(active_tickers)
     render_freshness_status_row()
     render_page(page, analysis, market_snapshot)
 

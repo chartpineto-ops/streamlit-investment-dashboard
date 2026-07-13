@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -12,6 +11,7 @@ import yfinance as yf
 
 from data.market_data import get_market_session_et
 from utils.formatting import clean_ticker, now_et, to_float
+from utils.secrets import secret_or_env
 
 
 QUOTE_COLUMNS = [
@@ -45,14 +45,7 @@ def _normalize_tickers(tickers: Iterable[str]) -> list[str]:
 
 
 def _secret_or_env(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if value:
-        return value
-    try:
-        secret_value = st.secrets.get(name, "")
-    except Exception:
-        secret_value = ""
-    return str(secret_value or "").strip()
+    return secret_or_env(name)
 
 
 def _configured_provider() -> str:
