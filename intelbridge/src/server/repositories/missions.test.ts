@@ -1,7 +1,7 @@
-import { MissionStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
 import { missionScopeWhere } from "@/server/repositories/mission-scope";
+import { MissionStatus } from "@/shared/domain";
 
 describe("missionScopeWhere", () => {
   it("always scopes mission queries through the authenticated workspace", () => {

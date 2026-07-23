@@ -104,7 +104,7 @@ export default async function HomePage() {
               Recently updated missions
             </h2>
             <p className="mb-0 mt-1 text-[10px] text-[var(--text-3)]">
-              Values below are read from PostgreSQL and scoped to the
+              Values below are read from persistent D1 storage and scoped to the
               authenticated workspace.
             </p>
           </div>

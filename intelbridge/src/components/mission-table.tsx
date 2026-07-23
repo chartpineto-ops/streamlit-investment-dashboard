@@ -1,11 +1,11 @@
+import { ArrowRight, Database, RadioTower } from "lucide-react";
+import Link from "next/link";
+
 import type {
   MissionStatus,
   MonitoringMode,
   ResearchDepth,
-} from "@prisma/client";
-import { ArrowRight, Database, RadioTower } from "lucide-react";
-import Link from "next/link";
-
+} from "@/shared/domain";
 import { formatDateTime, formatEnumLabel } from "@/shared/presentation";
 import { StatusBadge } from "./status-badge";
 

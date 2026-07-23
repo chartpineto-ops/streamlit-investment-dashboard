@@ -22,9 +22,8 @@ export default function GlobalError({
               IntelBridge could not load persisted data
             </h1>
             <p className="mb-4 mt-2 text-[12px] leading-5 text-[var(--text-2)]">
-              The application did not substitute fixture rows. Confirm the
-              PostgreSQL database is running, migrated, and seeded before
-              retrying.
+              The application did not substitute transient browser data. Confirm
+              the persistent Sites database is available before retrying.
             </p>
             <button
               className="rounded-[3px] border border-[var(--accent)] bg-[var(--accent)] px-4 py-2 text-[11px] font-semibold text-[var(--accent-contrast)]"

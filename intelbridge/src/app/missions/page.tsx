@@ -1,10 +1,10 @@
-import { MissionStatus } from "@prisma/client";
 import { Plus } from "lucide-react";
 import Link from "next/link";
 
 import { MissionTable } from "@/components/mission-table";
 import { PageHeader } from "@/components/page-header";
 import { getMissionListData } from "@/server/services/missions";
+import { MissionStatus } from "@/shared/domain";
 import { formatEnumLabel } from "@/shared/presentation";
 
 export const metadata = {

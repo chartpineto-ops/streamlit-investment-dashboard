@@ -1,7 +1,11 @@
 .env
+.wrangler/
 .next/
 coverage/
+dist/
 node_modules/
 playwright-report/
 test-results/
+vinext-dev-*.err
+vinext-dev-*.log
 *.tsbuildinfo

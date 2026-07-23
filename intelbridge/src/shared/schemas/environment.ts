@@ -2,8 +2,6 @@ import { z } from "zod";
 
 export const serverEnvironmentSchema = z.object({
   AI_PROVIDER: z.enum(["mock", "openai"]).default("mock"),
-  DATABASE_URL: z.string().url().startsWith("postgresql://"),
-  DIRECT_URL: z.string().url().startsWith("postgresql://").optional(),
   INTELBRIDGE_DEMO_USER_EMAIL: z
     .email()
     .default("alex.parker@intelbridge.demo"),

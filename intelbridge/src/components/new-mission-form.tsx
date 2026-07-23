@@ -1,6 +1,5 @@
 "use client";
 
-import type { ConnectorStatus, ConnectorType } from "@prisma/client";
 import Link from "next/link";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
@@ -9,6 +8,7 @@ import {
   createMissionAction,
   type CreateMissionState,
 } from "@/app/missions/new/actions";
+import type { ConnectorStatus, ConnectorType } from "@/shared/domain";
 import { formatEnumLabel } from "@/shared/presentation";
 import { StatusBadge } from "./status-badge";
 
@@ -53,7 +53,7 @@ export function NewMissionForm({
 
   return (
     <form action={action} className="grid gap-4">
-      {state.message ? (
+      {state?.message ? (
         <div
           className="rounded-[3px] border border-[var(--status-negative-border)] bg-[var(--status-negative-fill)] px-4 py-3 text-[11px] text-[var(--status-negative-text)]"
           role="alert"

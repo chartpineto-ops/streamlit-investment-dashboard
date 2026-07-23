@@ -7,9 +7,10 @@ export default defineConfig([
   ...nextTypescript,
   globalIgnores([
     ".next/**",
+    ".wrangler/**",
     "coverage/**",
+    "dist/**",
     "node_modules/**",
     "next-env.d.ts",
-    "prisma/generated/**",
   ]),
 ]);

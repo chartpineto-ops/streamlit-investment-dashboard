@@ -1,5 +1,6 @@
-import { MonitoringMode, ResearchDepth } from "@prisma/client";
 import { z } from "zod";
+
+import { MonitoringMode, ResearchDepth } from "@/shared/domain";
 
 export const missionScopeSchema = z.object({
   focusAreas: z.array(z.string().min(1)).min(1),

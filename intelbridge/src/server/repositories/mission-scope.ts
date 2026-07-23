@@ -1,4 +1,4 @@
-import type { MissionStatus, Prisma } from "@prisma/client";
+import type { MissionStatus } from "@/shared/domain";
 
 export type MissionListOptions = {
   projectId?: string;
@@ -8,7 +8,13 @@ export type MissionListOptions = {
 export function missionScopeWhere(
   workspaceId: string,
   options: MissionListOptions = {},
-): Prisma.MissionWhereInput {
+): {
+  project: {
+    id?: string;
+    workspaceId: string;
+  };
+  status?: MissionStatus;
+} {
   return {
     project: {
       workspaceId,
