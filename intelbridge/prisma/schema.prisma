@@ -1,0 +1,520 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  ANALYST
+  VIEWER
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum MissionStatus {
+  DRAFT
+  READY
+  ACTIVE
+  PAUSED
+  COMPLETED
+  FAILED
+  ARCHIVED
+}
+
+enum ResearchDepth {
+  RAPID
+  STANDARD
+  DEEP
+}
+
+enum MonitoringMode {
+  MANUAL
+  HOURLY
+  DAILY
+  WEEKLY
+}
+
+enum ConnectorType {
+  RSS_ATOM
+  PUBLIC_WEB
+  MANUAL_URL
+  FILE_UPLOAD
+  GITHUB_PUBLIC
+  DEMO
+  GOOGLE_DRIVE
+  GMAIL
+  SLACK
+  NOTION
+  CRM
+  DATA_WAREHOUSE
+  MARKET_DATA
+}
+
+enum ConnectorStatus {
+  AVAILABLE
+  NOT_CONNECTED
+  DEGRADED
+  ERROR
+  DISABLED
+}
+
+enum RunTriggerType {
+  MANUAL
+  SCHEDULED
+  RETRY
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  CANCELLING
+  CANCELLED
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum RunStepStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  SKIPPED
+  FAILED
+}
+
+enum EvidenceType {
+  FACT
+  METRIC
+  EVENT
+  QUOTE
+  FORECAST
+  OPINION
+  RISK
+  OPPORTUNITY
+}
+
+enum EvidenceValidationStatus {
+  UNVALIDATED
+  SUPPORTED
+  CONTESTED
+  CONTRADICTED
+  DUPLICATE
+  SUPERSEDED
+  REJECTED
+}
+
+enum ClaimType {
+  FACT
+  TREND
+  RISK
+  OPPORTUNITY
+  FORECAST
+  OPINION
+}
+
+enum ClaimStatus {
+  NEW
+  CONFIRMED
+  STRENGTHENED
+  WEAKENED
+  CONTRADICTED
+  SUPERSEDED
+  UNCHANGED
+  REJECTED
+}
+
+enum EvidenceRelationship {
+  SUPPORTS
+  CONTRADICTS
+  CONTEXTUALIZES
+  DUPLICATES
+  SUPERSEDES
+}
+
+enum InsightCategory {
+  STRATEGIC
+  PRODUCT_GAP
+  OPPORTUNITY
+  RISK
+  CONTRADICTION
+  KNOWLEDGE_GAP
+}
+
+enum Severity {
+  INFORMATIONAL
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum InsightStatus {
+  NEW
+  REVIEWED
+  ASSIGNED
+  RESOLVED
+  DISMISSED
+}
+
+enum MonitorStatus {
+  ACTIVE
+  PAUSED
+  DISABLED
+  ERROR
+}
+
+enum AlertType {
+  MATERIAL_CHANGE
+  CONTRADICTION
+  SOURCE_FAILURE
+  MONITOR_FAILURE
+}
+
+enum AlertStatus {
+  NEW
+  READ
+  ACKNOWLEDGED
+  DISMISSED
+}
+
+enum ReportType {
+  EXECUTIVE_BRIEF
+  SOURCE_APPENDIX
+  COMPETITOR_MATRIX
+  EVIDENCE_CSV
+  JSON_PACKAGE
+}
+
+enum ReportStatus {
+  QUEUED
+  GENERATING
+  COMPLETED
+  FAILED
+}
+
+model Workspace {
+  id         String            @id @default(cuid())
+  name       String
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  users      User[]
+  projects   Project[]
+  connectors SourceConnector[]
+
+  @@index([name])
+}
+
+model User {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  email       String    @unique
+  role        UserRole  @default(ANALYST)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  missions    Mission[] @relation("MissionCreator")
+
+  @@index([workspaceId, role])
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  workspaceId String
+  name        String
+  description String
+  status      ProjectStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  missions    Mission[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, status])
+}
+
+model Mission {
+  id                 String          @id @default(cuid())
+  projectId          String
+  title              String
+  objective          String
+  scope              Json
+  status             MissionStatus   @default(DRAFT)
+  researchDepth      ResearchDepth   @default(STANDARD)
+  monitoringMode     MonitoringMode  @default(MANUAL)
+  monitoringInterval Int?
+  createdById        String
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  project            Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy          User            @relation("MissionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  sources            MissionSource[]
+  researchRuns       ResearchRun[]
+  evidence           Evidence[]
+  claims             Claim[]
+  insights           Insight[]
+  monitors           Monitor[]
+  reports            Report[]
+
+  @@index([projectId, status])
+  @@index([createdById])
+  @@index([updatedAt])
+}
+
+model SourceConnector {
+  id                     String           @id @default(cuid())
+  workspaceId            String
+  name                   String
+  type                   ConnectorType
+  status                 ConnectorStatus  @default(NOT_CONNECTED)
+  configurationEncrypted String?
+  lastSuccessfulSyncAt   DateTime?
+  lastErrorAt            DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  workspace              Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  missions               MissionSource[]
+  documents              SourceDocument[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, type, status])
+}
+
+model MissionSource {
+  missionId         String
+  sourceConnectorId String
+  inclusionRules    Json?
+  exclusionRules    Json?
+  priority          Int             @default(50)
+  mission           Mission         @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  sourceConnector   SourceConnector @relation(fields: [sourceConnectorId], references: [id], onDelete: Cascade)
+
+  @@id([missionId, sourceConnectorId])
+  @@index([sourceConnectorId])
+}
+
+model ResearchRun {
+  id                 String         @id @default(cuid())
+  missionId          String
+  triggerType        RunTriggerType
+  status             RunStatus      @default(QUEUED)
+  startedAt          DateTime?
+  completedAt        DateTime?
+  progressPercent    Int            @default(0)
+  sourcesScanned     Int            @default(0)
+  documentsProcessed Int            @default(0)
+  evidenceCreated    Int            @default(0)
+  insightsCreated    Int            @default(0)
+  confidenceScore    Float?
+  errorSummary       String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  mission            Mission        @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  steps              RunStep[]
+  evidence           Evidence[]
+  insights           Insight[]
+  reports            Report[]
+
+  @@index([missionId, createdAt])
+  @@index([status, createdAt])
+}
+
+model RunStep {
+  id            String        @id @default(cuid())
+  researchRunId String
+  agentType     String
+  name          String
+  status        RunStepStatus @default(PENDING)
+  startedAt     DateTime?
+  completedAt   DateTime?
+  inputSummary  String?
+  outputSummary String?
+  toolName      String?
+  tokenUsage    Int?
+  errorMessage  String?
+  sequence      Int
+  researchRun   ResearchRun   @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+
+  @@unique([researchRunId, sequence])
+  @@index([researchRunId, status])
+}
+
+model SourceDocument {
+  id                String          @id @default(cuid())
+  connectorId       String
+  externalId        String
+  canonicalUrl      String?
+  title             String
+  author            String?
+  publisher         String?
+  publishedAt       DateTime?
+  retrievedAt       DateTime
+  contentHash       String
+  rawContent        String
+  normalizedContent String
+  metadata          Json
+  version           Int             @default(1)
+  connector         SourceConnector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  evidence          Evidence[]
+
+  @@unique([connectorId, externalId, version])
+  @@unique([connectorId, contentHash])
+  @@index([canonicalUrl])
+  @@index([retrievedAt])
+}
+
+model Evidence {
+  id                 String                   @id @default(cuid())
+  sourceDocumentId   String
+  researchRunId      String
+  missionId          String
+  evidenceType       EvidenceType
+  excerpt            String
+  normalizedClaim    String
+  entities           String[]
+  topics             String[]
+  eventDate          DateTime?
+  extractedAt        DateTime
+  relevanceScore     Float
+  sourceQualityScore Float
+  noveltyScore       Float
+  confidenceScore    Float
+  validationStatus   EvidenceValidationStatus @default(UNVALIDATED)
+  contentHash        String
+  sourceDocument     SourceDocument           @relation(fields: [sourceDocumentId], references: [id], onDelete: Restrict)
+  researchRun        ResearchRun              @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  mission            Mission                  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  claims             ClaimEvidence[]
+
+  @@unique([researchRunId, contentHash])
+  @@index([missionId, validationStatus])
+  @@index([sourceDocumentId])
+}
+
+model Claim {
+  id               String          @id @default(cuid())
+  missionId        String
+  statement        String
+  claimType        ClaimType
+  status           ClaimStatus     @default(NEW)
+  confidenceScore  Float
+  firstObservedAt  DateTime
+  lastObservedAt   DateTime
+  materialityScore Float
+  mission          Mission         @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  evidence         ClaimEvidence[]
+  insights         InsightClaim[]
+
+  @@unique([missionId, statement])
+  @@index([missionId, status, materialityScore])
+}
+
+model ClaimEvidence {
+  claimId         String
+  evidenceId      String
+  relationship    EvidenceRelationship
+  supportStrength Float
+  claim           Claim                @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  evidence        Evidence             @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  @@id([claimId, evidenceId])
+  @@index([evidenceId, relationship])
+}
+
+model Insight {
+  id                String          @id @default(cuid())
+  missionId         String
+  researchRunId     String
+  title             String
+  summary           String
+  category          InsightCategory
+  severity          Severity
+  confidenceScore   Float
+  materialityScore  Float
+  noveltyScore      Float
+  status            InsightStatus   @default(NEW)
+  recommendedAction String?
+  owner             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  mission           Mission         @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  researchRun       ResearchRun     @relation(fields: [researchRunId], references: [id], onDelete: Cascade)
+  claims            InsightClaim[]
+  alerts            Alert[]
+
+  @@index([missionId, status, materialityScore])
+  @@index([researchRunId])
+}
+
+model InsightClaim {
+  insightId  String
+  claimId    String
+  importance Float
+  insight    Insight @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  claim      Claim   @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@id([insightId, claimId])
+  @@index([claimId])
+}
+
+model Monitor {
+  id                   String        @id @default(cuid())
+  missionId            String
+  status               MonitorStatus @default(PAUSED)
+  schedule             String
+  materialityThreshold Float
+  notificationPolicy   Json
+  lastCheckedAt        DateTime?
+  nextCheckAt          DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  mission              Mission       @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  alerts               Alert[]
+
+  @@index([missionId, status])
+  @@index([status, nextCheckAt])
+}
+
+model Alert {
+  id          String      @id @default(cuid())
+  monitorId   String
+  insightId   String?
+  alertType   AlertType
+  title       String
+  summary     String
+  status      AlertStatus @default(NEW)
+  deliveredAt DateTime?
+  createdAt   DateTime    @default(now())
+  monitor     Monitor     @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  insight     Insight?    @relation(fields: [insightId], references: [id], onDelete: SetNull)
+
+  @@index([monitorId, status, createdAt])
+  @@index([insightId])
+}
+
+model Report {
+  id            String       @id @default(cuid())
+  missionId     String
+  researchRunId String?
+  type          ReportType
+  status        ReportStatus @default(QUEUED)
+  content       Json?
+  generatedAt   DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  mission       Mission      @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  researchRun   ResearchRun? @relation(fields: [researchRunId], references: [id], onDelete: SetNull)
+
+  @@index([missionId, createdAt])
+  @@index([researchRunId])
+}

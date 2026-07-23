@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+:root {
+  --canvas: #f5f6f9;
+  --surface-1: #ffffff;
+  --surface-2: #f8f9fc;
+  --surface-3: #f1f3f8;
+  --row-hover: #fafaff;
+  --rule: #dfe3ec;
+  --rule-subtle: #eceef4;
+  --text-1: #171a2a;
+  --text-2: #545c72;
+  --text-3: #7c8497;
+  --accent: #5747ef;
+  --accent-hover: #4938df;
+  --accent-strong: #4837df;
+  --accent-soft: #efedff;
+  --accent-tint: #e5e1ff;
+  --accent-contrast: #ffffff;
+  --focus: #4432df;
+  --brand-user: #9c236d;
+  --positive: #14975d;
+  --warning: #9b6a06;
+  --negative: #bd3a47;
+  --status-positive-border: #bfe7d2;
+  --status-positive-fill: #edf9f3;
+  --status-positive-text: #137a4c;
+  --status-info-border: #cdc8ff;
+  --status-info-fill: #f1efff;
+  --status-info-text: #4a39dd;
+  --status-warning-border: #efdaa8;
+  --status-warning-fill: #fff8e6;
+  --status-warning-text: #8a5a00;
+  --status-negative-border: #efc1c7;
+  --status-negative-fill: #fff1f2;
+  --status-negative-text: #a62f3b;
+  --status-neutral-border: #dfe3ec;
+  --status-neutral-fill: #f7f8fb;
+  --shadow-control: 0 1px 2px rgba(18, 22, 38, 0.14);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--canvas);
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: var(--canvas);
+  color: var(--text-1);
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-size: 13px;
+}
+
+button,
+input,
+select,
+textarea {
+  color: inherit;
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-tint);
+  color: var(--text-1);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
