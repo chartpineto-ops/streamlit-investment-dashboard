@@ -116,6 +116,9 @@ export const missions = sqliteTable(
 export const missionSources = sqliteTable(
   "mission_sources",
   {
+    createdAt: text("created_at"),
+    exclusionRulesJson: text("exclusion_rules_json").notNull().default("[]"),
+    inclusionRulesJson: text("inclusion_rules_json").notNull().default("[]"),
     missionId: text("mission_id")
       .notNull()
       .references(() => missions.id, { onDelete: "cascade" }),
@@ -138,6 +141,9 @@ export const connectorConfigurations = sqliteTable("connector_configurations", {
     .references(() => sourceConnectors.id, { onDelete: "cascade" }),
   lastErrorAt: text("last_error_at"),
   lastSuccessfulSyncAt: text("last_successful_sync_at"),
+  lastTestedAt: text("last_tested_at"),
+  lastTestMessage: text("last_test_message"),
+  responseTimeMs: integer("response_time_ms"),
   updatedAt: text("updated_at").notNull(),
 });
 
@@ -145,12 +151,17 @@ export const researchRuns = sqliteTable(
   "research_runs",
   {
     completedAt: text("completed_at"),
+    cancelRequestedAt: text("cancel_requested_at"),
     confidenceScore: real("confidence_score"),
     createdById: text("created_by_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
     dataStatus: text("data_status").notNull(),
     documentsProcessed: integer("documents_processed").notNull().default(0),
+    documentsCreated: integer("documents_created").notNull().default(0),
+    documentsDiscovered: integer("documents_discovered").notNull().default(0),
+    documentsUnchanged: integer("documents_unchanged").notNull().default(0),
+    documentsUpdated: integer("documents_updated").notNull().default(0),
     errorSummary: text("error_summary"),
     evidenceCreated: integer("evidence_created").notNull().default(0),
     id: text("id").primaryKey(),
@@ -162,11 +173,14 @@ export const researchRuns = sqliteTable(
       .references(() => missions.id, { onDelete: "cascade" }),
     modelProvider: text("model_provider").notNull(),
     progressPercent: integer("progress_percent").notNull().default(0),
+    retryOfRunId: text("retry_of_run_id"),
     promptVersion: text("prompt_version").notNull(),
     sourcesScanned: integer("sources_scanned").notNull().default(0),
     startedAt: text("started_at").notNull(),
     status: text("status").notNull(),
     triggerType: text("trigger_type").notNull(),
+    createdAt: text("created_at"),
+    updatedAt: text("updated_at"),
   },
   (table) => [
     index("research_runs_mission_started_idx").on(
@@ -180,22 +194,28 @@ export const runSteps = sqliteTable(
   "run_steps",
   {
     agentType: text("agent_type").notNull(),
+    attempt: integer("attempt").notNull().default(1),
     completedAt: text("completed_at"),
+    createdAt: text("created_at"),
     durationMs: integer("duration_ms"),
+    errorCode: text("error_code"),
     errorMessage: text("error_message"),
     id: text("id").primaryKey(),
     inputSummary: text("input_summary").notNull(),
     name: text("name").notNull(),
+    metadataJson: text("metadata_json").notNull().default("{}"),
     outputSummary: text("output_summary"),
     progressPercent: integer("progress_percent").notNull().default(0),
     researchRunId: text("research_run_id")
       .notNull()
       .references(() => researchRuns.id, { onDelete: "cascade" }),
     sequenceNumber: integer("sequence_number").notNull(),
+    stepType: text("step_type"),
     startedAt: text("started_at"),
     status: text("status").notNull(),
     tokenUsage: integer("token_usage").notNull().default(0),
     toolName: text("tool_name").notNull(),
+    updatedAt: text("updated_at"),
   },
   (table) => [
     uniqueIndex("run_steps_run_sequence_unique").on(
@@ -241,6 +261,8 @@ export const sourceDocuments = sqliteTable(
     contentHash: text("content_hash").notNull(),
     dataStatus: text("data_status").notNull(),
     externalId: text("external_id").notNull(),
+    currentVersionId: text("current_version_id"),
+    firstRetrievedAt: text("first_retrieved_at"),
     id: text("id").primaryKey(),
     isDemo: integer("is_demo").notNull(),
     metadataJson: text("metadata_json").notNull(),
@@ -248,6 +270,8 @@ export const sourceDocuments = sqliteTable(
       .notNull()
       .references(() => missions.id, { onDelete: "cascade" }),
     normalizedContent: text("normalized_content").notNull(),
+    lastResearchRunId: text("last_research_run_id"),
+    lastRetrievedAt: text("last_retrieved_at"),
     promptInjectionFlag: integer("prompt_injection_flag").notNull().default(0),
     publishedAt: text("published_at").notNull(),
     publisher: text("publisher").notNull(),
@@ -257,6 +281,7 @@ export const sourceDocuments = sqliteTable(
     title: text("title").notNull(),
     trustState: text("trust_state").notNull(),
     version: integer("version").notNull(),
+    changeStatus: text("change_status").notNull().default("CREATED"),
     workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
@@ -272,6 +297,124 @@ export const sourceDocuments = sqliteTable(
       table.retrievedAt,
     ),
     index("source_documents_content_hash_idx").on(table.contentHash),
+    index("source_documents_workspace_connector_idx").on(
+      table.workspaceId,
+      table.connectorId,
+    ),
+    index("source_documents_last_retrieved_idx").on(
+      table.workspaceId,
+      table.lastRetrievedAt,
+    ),
+  ],
+);
+
+export const sourceDocumentVersions = sqliteTable(
+  "source_document_versions",
+  {
+    contentHash: text("content_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+    id: text("id").primaryKey(),
+    language: text("language"),
+    metadataJson: text("metadata_json").notNull(),
+    mimeType: text("mime_type").notNull(),
+    normalizedContent: text("normalized_content").notNull(),
+    rawContent: text("raw_content").notNull(),
+    researchRunId: text("research_run_id").references(() => researchRuns.id, {
+      onDelete: "set null",
+    }),
+    retrievedAt: text("retrieved_at").notNull(),
+    sourceDocumentId: text("source_document_id")
+      .notNull()
+      .references(() => sourceDocuments.id, { onDelete: "cascade" }),
+    storageKey: text("storage_key"),
+    versionNumber: integer("version_number").notNull(),
+  },
+  (table) => [
+    uniqueIndex("source_document_versions_document_version_unique").on(
+      table.sourceDocumentId,
+      table.versionNumber,
+    ),
+    uniqueIndex("source_document_versions_document_hash_unique").on(
+      table.sourceDocumentId,
+      table.contentHash,
+    ),
+    index("source_document_versions_run_idx").on(table.researchRunId),
+  ],
+);
+
+export const connectorCheckpoints = sqliteTable(
+  "connector_checkpoints",
+  {
+    checkpointKey: text("checkpoint_key").notNull(),
+    checkpointValue: text("checkpoint_value").notNull(),
+    connectorId: text("connector_id")
+      .notNull()
+      .references(() => sourceConnectors.id, { onDelete: "cascade" }),
+    id: text("id").primaryKey(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("connector_checkpoints_connector_key_unique").on(
+      table.connectorId,
+      table.checkpointKey,
+    ),
+  ],
+);
+
+export const retrievalFailures = sqliteTable(
+  "retrieval_failures",
+  {
+    attempt: integer("attempt").notNull(),
+    connectorId: text("connector_id")
+      .notNull()
+      .references(() => sourceConnectors.id, { onDelete: "restrict" }),
+    createdAt: text("created_at").notNull(),
+    errorCode: text("error_code").notNull(),
+    externalId: text("external_id"),
+    id: text("id").primaryKey(),
+    researchRunId: text("research_run_id")
+      .notNull()
+      .references(() => researchRuns.id, { onDelete: "cascade" }),
+    retryable: integer("retryable").notNull(),
+    safeMessage: text("safe_message").notNull(),
+    url: text("url"),
+  },
+  (table) => [
+    index("retrieval_failures_run_created_idx").on(
+      table.researchRunId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const jobQueue = sqliteTable(
+  "job_queue",
+  {
+    attempts: integer("attempts").notNull().default(0),
+    availableAt: text("available_at").notNull(),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull(),
+    deadLetteredAt: text("dead_lettered_at"),
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    lastErrorCode: text("last_error_code"),
+    leaseExpiresAt: text("lease_expires_at"),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    payloadJson: text("payload_json").notNull(),
+    queueName: text("queue_name").notNull(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => researchRuns.id, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("job_queue_claim_idx").on(
+      table.queueName,
+      table.status,
+      table.availableAt,
+    ),
+    index("job_queue_run_idx").on(table.runId),
   ],
 );
 

@@ -1,4 +1,9 @@
-import { getEventsForCurrentWorkspace } from "@/server/services/intelligence";
+import { getAuthContext } from "@/server/auth/context";
+import { listRunEvents } from "@/server/events/run-events";
+import { processResearchRun } from "@/server/jobs/research-run";
+import { isTerminalRunStatus } from "@/server/jobs/run-state";
+import { apiError } from "@/server/http/responses";
+import { getWorkspaceRun } from "@/server/repositories/runs";
 
 export const dynamic = "force-dynamic";
 
@@ -14,31 +19,62 @@ export async function GET(
     Number.isFinite(headerSequence) ? headerSequence : 0,
     Number.isFinite(querySequence) ? querySequence : 0,
   );
-  const events = await getEventsForCurrentWorkspace(runId, afterSequence);
+  const context = await getAuthContext();
+  const run = await getWorkspaceRun(context.workspace.id, runId);
 
-  if (!events) {
-    return Response.json(
-      { code: "RUN_NOT_FOUND", message: "Research run not found." },
-      { status: 404 },
-    );
+  if (!run) {
+    return apiError("RUN_NOT_FOUND", "Research run not found.", 404);
   }
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      controller.enqueue(
-        encoder.encode(": IntelBridge durable run event stream\n\n"),
-      );
-      for (const event of events) {
+      let sequence = afterSequence;
+      let lastHeartbeat = Date.now();
+      const deadline = Date.now() + 25_000;
+      const processing = processResearchRun(runId);
+
+      try {
         controller.enqueue(
-          encoder.encode(
-            `id: ${event.sequenceNumber}\ndata: ${JSON.stringify(event)}\n\n`,
-          ),
+          encoder.encode(": IntelBridge durable run event stream\n\n"),
         );
-        await new Promise((resolve) => setTimeout(resolve, 90));
+        while (Date.now() < deadline && !request.signal.aborted) {
+          const events = await listRunEvents(
+            context.workspace.id,
+            runId,
+            sequence,
+          );
+          if (!events) {
+            break;
+          }
+          for (const event of events) {
+            sequence = event.sequenceNumber;
+            controller.enqueue(
+              encoder.encode(
+                `id: ${event.sequenceNumber}\ndata: ${JSON.stringify(event)}\n\n`,
+              ),
+            );
+          }
+          const currentRun = await getWorkspaceRun(context.workspace.id, runId);
+          if (
+            currentRun &&
+            isTerminalRunStatus(currentRun.status) &&
+            events.length === 0
+          ) {
+            break;
+          }
+          if (Date.now() - lastHeartbeat >= 5_000) {
+            controller.enqueue(encoder.encode(": heartbeat\n\n"));
+            lastHeartbeat = Date.now();
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        await processing;
+      } catch {
+        controller.enqueue(encoder.encode(": stream reconnect required\n\n"));
+      } finally {
+        controller.close();
       }
-      controller.enqueue(encoder.encode(": stream checkpoint complete\n\n"));
-      controller.close();
     },
   });
 

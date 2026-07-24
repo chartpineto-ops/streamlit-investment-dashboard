@@ -55,6 +55,9 @@ export const schemaStatements = [
     last_successful_sync_at TEXT,
     last_error_at TEXT,
     checkpoint_json TEXT,
+    last_tested_at TEXT,
+    last_test_message TEXT,
+    response_time_ms INTEGER,
     updated_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS missions (
@@ -78,6 +81,9 @@ export const schemaStatements = [
     mission_id TEXT NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
     source_connector_id TEXT NOT NULL REFERENCES source_connectors(id) ON DELETE CASCADE,
     priority INTEGER NOT NULL DEFAULT 50,
+    inclusion_rules_json TEXT NOT NULL DEFAULT '[]',
+    exclusion_rules_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT,
     PRIMARY KEY (mission_id, source_connector_id)
   )`,
   `CREATE INDEX IF NOT EXISTS mission_sources_connector_idx
@@ -90,9 +96,14 @@ export const schemaStatements = [
     status TEXT NOT NULL,
     started_at TEXT NOT NULL,
     completed_at TEXT,
+    cancel_requested_at TEXT,
     progress_percent INTEGER NOT NULL DEFAULT 0,
     sources_scanned INTEGER NOT NULL DEFAULT 0,
+    documents_discovered INTEGER NOT NULL DEFAULT 0,
     documents_processed INTEGER NOT NULL DEFAULT 0,
+    documents_created INTEGER NOT NULL DEFAULT 0,
+    documents_updated INTEGER NOT NULL DEFAULT 0,
+    documents_unchanged INTEGER NOT NULL DEFAULT 0,
     evidence_created INTEGER NOT NULL DEFAULT 0,
     insights_created INTEGER NOT NULL DEFAULT 0,
     confidence_score REAL,
@@ -101,7 +112,10 @@ export const schemaStatements = [
     prompt_version TEXT NOT NULL,
     data_status TEXT NOT NULL,
     is_demo INTEGER NOT NULL,
-    created_by_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT
+    created_by_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    retry_of_run_id TEXT REFERENCES research_runs(id) ON DELETE SET NULL,
+    created_at TEXT,
+    updated_at TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS research_runs_mission_started_idx
     ON research_runs (mission_id, started_at DESC)`,
@@ -109,6 +123,7 @@ export const schemaStatements = [
     id TEXT PRIMARY KEY NOT NULL,
     research_run_id TEXT NOT NULL REFERENCES research_runs(id) ON DELETE CASCADE,
     agent_type TEXT NOT NULL,
+    step_type TEXT,
     name TEXT NOT NULL,
     status TEXT NOT NULL,
     sequence_number INTEGER NOT NULL,
@@ -120,7 +135,12 @@ export const schemaStatements = [
     tool_name TEXT NOT NULL,
     token_usage INTEGER NOT NULL DEFAULT 0,
     duration_ms INTEGER,
+    attempt INTEGER NOT NULL DEFAULT 1,
+    error_code TEXT,
     error_message TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT,
+    updated_at TEXT,
     UNIQUE(research_run_id, sequence_number)
   )`,
   `CREATE INDEX IF NOT EXISTS run_steps_run_status_idx
@@ -154,6 +174,11 @@ export const schemaStatements = [
     normalized_content TEXT NOT NULL,
     metadata_json TEXT NOT NULL,
     version INTEGER NOT NULL,
+    current_version_id TEXT,
+    first_retrieved_at TEXT,
+    last_retrieved_at TEXT,
+    last_research_run_id TEXT REFERENCES research_runs(id) ON DELETE SET NULL,
+    change_status TEXT NOT NULL DEFAULT 'CREATED',
     trust_state TEXT NOT NULL,
     prompt_injection_flag INTEGER NOT NULL DEFAULT 0,
     data_status TEXT NOT NULL,
@@ -164,6 +189,69 @@ export const schemaStatements = [
     ON source_documents (mission_id, retrieved_at DESC)`,
   `CREATE INDEX IF NOT EXISTS source_documents_content_hash_idx
     ON source_documents (content_hash)`,
+  `CREATE INDEX IF NOT EXISTS source_documents_workspace_connector_idx
+    ON source_documents (workspace_id, connector_id)`,
+  `CREATE TABLE IF NOT EXISTS source_document_versions (
+    id TEXT PRIMARY KEY NOT NULL,
+    source_document_id TEXT NOT NULL REFERENCES source_documents(id) ON DELETE CASCADE,
+    research_run_id TEXT REFERENCES research_runs(id) ON DELETE SET NULL,
+    version_number INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    raw_content TEXT NOT NULL,
+    normalized_content TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    language TEXT,
+    metadata_json TEXT NOT NULL,
+    storage_key TEXT,
+    retrieved_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_document_id, version_number),
+    UNIQUE(source_document_id, content_hash)
+  )`,
+  `CREATE INDEX IF NOT EXISTS source_document_versions_run_idx
+    ON source_document_versions (research_run_id)`,
+  `CREATE TABLE IF NOT EXISTS connector_checkpoints (
+    id TEXT PRIMARY KEY NOT NULL,
+    connector_id TEXT NOT NULL REFERENCES source_connectors(id) ON DELETE CASCADE,
+    checkpoint_key TEXT NOT NULL,
+    checkpoint_value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(connector_id, checkpoint_key)
+  )`,
+  `CREATE TABLE IF NOT EXISTS retrieval_failures (
+    id TEXT PRIMARY KEY NOT NULL,
+    research_run_id TEXT NOT NULL REFERENCES research_runs(id) ON DELETE CASCADE,
+    connector_id TEXT NOT NULL REFERENCES source_connectors(id) ON DELETE RESTRICT,
+    external_id TEXT,
+    url TEXT,
+    error_code TEXT NOT NULL,
+    safe_message TEXT NOT NULL,
+    retryable INTEGER NOT NULL,
+    attempt INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS retrieval_failures_run_created_idx
+    ON retrieval_failures (research_run_id, created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS job_queue (
+    id TEXT PRIMARY KEY NOT NULL,
+    queue_name TEXT NOT NULL,
+    run_id TEXT NOT NULL REFERENCES research_runs(id) ON DELETE CASCADE,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    available_at TEXT NOT NULL,
+    lease_expires_at TEXT,
+    completed_at TEXT,
+    dead_lettered_at TEXT,
+    last_error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS job_queue_claim_idx
+    ON job_queue (queue_name, status, available_at)`,
+  `CREATE INDEX IF NOT EXISTS job_queue_run_idx ON job_queue (run_id)`,
   `CREATE TABLE IF NOT EXISTS evidence (
     id TEXT PRIMARY KEY NOT NULL,
     source_document_id TEXT NOT NULL REFERENCES source_documents(id) ON DELETE CASCADE,
@@ -358,21 +446,21 @@ const projects = [
 ] as const;
 
 const connectors = [
-  ["connector-demo", "Deterministic demo corpus", "DEMO", "AVAILABLE"],
-  ["connector-rss", "RSS and Atom feeds", "RSS_ATOM", "NOT_CONNECTED"],
+  ["connector-demo", "Deterministic demo corpus", "DEMO", "CONNECTED"],
+  ["connector-rss", "RSS and Atom feeds", "RSS", "DISCONNECTED"],
   [
     "connector-public-web",
     "Approved public webpages",
-    "PUBLIC_WEB",
-    "NOT_CONNECTED",
+    "WEBPAGE",
+    "DISCONNECTED",
   ],
-  ["connector-manual-url", "Manual URL submissions", "MANUAL_URL", "AVAILABLE"],
-  ["connector-file-upload", "Uploaded documents", "FILE_UPLOAD", "AVAILABLE"],
+  ["connector-manual-url", "Manual URL submissions", "MANUAL_URL", "CONNECTED"],
+  ["connector-file-upload", "Uploaded documents", "FILE_UPLOAD", "CONNECTED"],
   [
     "connector-github-public",
     "GitHub public repositories",
-    "GITHUB_PUBLIC",
-    "NOT_CONNECTED",
+    "GITHUB",
+    "DISCONNECTED",
   ],
 ] as const;
 
@@ -391,7 +479,7 @@ const missions = [
       regions: ["North America", "Europe"],
       timeHorizonMonths: 12,
     },
-    status: "ACTIVE",
+    status: "READY",
     title: "Enterprise search launch impact",
   },
   {
@@ -408,7 +496,7 @@ const missions = [
       regions: ["United States"],
       timeHorizonMonths: 18,
     },
-    status: "ACTIVE",
+    status: "READY",
     title: "Mid-market buyer requirements",
   },
   {
@@ -425,7 +513,7 @@ const missions = [
       regions: ["Global"],
       timeHorizonMonths: 6,
     },
-    status: "ACTIVE",
+    status: "READY",
     title: "Developer platform capability baseline",
   },
 ] as const;
@@ -462,17 +550,17 @@ const runs = [
     userId: "user-maya-chen",
   },
   {
-    completedAt: null,
+    completedAt: "2026-07-23T12:18:00.000Z",
     confidence: 0.74,
     documents: 3,
     evidence: 9,
     id: "run-developer-0514",
     insights: 1,
     missionId: "mission-developer-platforms",
-    progress: 62,
+    progress: 100,
     sources: 3,
     startedAt: "2026-07-23T12:02:00.000Z",
-    status: "ACTIVE",
+    status: "COMPLETED",
     trigger: "MANUAL",
     userId: "user-alex-parker",
   },
@@ -800,7 +888,7 @@ const baseSeedStatements: BootstrapStatement[] = [
       DEMO_WORKSPACE_ID,
       "Alex Parker",
       "alex.parker@intelbridge.demo",
-      "OWNER",
+      "ADMIN",
       fixedCreatedAt,
       DEMO_AS_OF,
     ],
@@ -814,7 +902,7 @@ const baseSeedStatements: BootstrapStatement[] = [
       DEMO_WORKSPACE_ID,
       "Maya Chen",
       "maya.chen@intelbridge.demo",
-      "ANALYST",
+      "EDITOR",
       fixedCreatedAt,
       DEMO_AS_OF,
     ],
@@ -852,7 +940,20 @@ const baseSeedStatements: BootstrapStatement[] = [
       [
         id,
         JSON.stringify({
+          maximumItemsPerRun: 25,
           mode: id === "connector-demo" ? "deterministic-demo" : "user-managed",
+          type:
+            id === "connector-rss"
+              ? "RSS"
+              : id === "connector-public-web"
+                ? "WEBPAGE"
+                : id === "connector-manual-url"
+                  ? "MANUAL_URL"
+                  : id === "connector-file-upload"
+                    ? "FILE_UPLOAD"
+                    : id === "connector-github-public"
+                      ? "GITHUB"
+                      : "DEMO",
         }),
         id === "connector-demo" ? DEMO_AS_OF : null,
         null,
@@ -888,8 +989,9 @@ const baseSeedStatements: BootstrapStatement[] = [
   ...missions.map((mission) =>
     statement(
       `INSERT OR IGNORE INTO mission_sources
-        (mission_id, source_connector_id, priority) VALUES (?, ?, ?)`,
-      [mission.id, "connector-demo", 100],
+        (mission_id, source_connector_id, priority, inclusion_rules_json,
+         exclusion_rules_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [mission.id, "connector-demo", 100, "[]", "[]", fixedCreatedAt],
     ),
   ),
   ...runs.map((run) =>
@@ -926,12 +1028,13 @@ const baseSeedStatements: BootstrapStatement[] = [
 ];
 
 const stepDefinitions = [
-  ["PLANNER", "Mission planning", "plan_mission"],
-  ["RETRIEVAL", "Source discovery and retrieval", "retrieve_sources"],
-  ["EVIDENCE_EXTRACTION", "Evidence extraction", "extract_evidence"],
-  ["VALIDATION", "Claim validation", "validate_claims"],
-  ["SYNTHESIS", "Insight synthesis", "synthesize_insights"],
-  ["REPORTING", "Report generation", "generate_report"],
+  ["PLAN", "Mission plan", "plan_run"],
+  ["DISCOVER", "Source discovery", "discover_sources"],
+  ["RETRIEVE", "Document retrieval", "retrieve_documents"],
+  ["NORMALIZE", "Content normalization", "normalize_documents"],
+  ["DEDUPLICATE", "Document deduplication", "deduplicate_documents"],
+  ["PERSIST", "Document persistence", "persist_documents"],
+  ["FINALIZE", "Run finalization", "finalize_run"],
 ] as const;
 
 const runSeedStatements = runs.flatMap((run) => {
@@ -958,10 +1061,10 @@ const runSeedStatements = runs.flatMap((run) => {
       stepNumber <= completedStepCount
         ? "COMPLETED"
         : stepNumber === completedStepCount + 1
-          ? "ACTIVE"
+          ? "RUNNING"
           : "PENDING";
     const progress =
-      status === "COMPLETED" ? 100 : status === "ACTIVE" ? 42 : 0;
+      status === "COMPLETED" ? 100 : status === "RUNNING" ? 42 : 0;
     const startedAt =
       status === "PENDING"
         ? null

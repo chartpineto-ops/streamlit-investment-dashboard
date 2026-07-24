@@ -15,12 +15,15 @@ describe("connector security", () => {
     ).toBe("https://example.com/research?a=1&b=2");
   });
 
-  it("rejects private and insecure source URLs", () => {
-    expect(() => validatePublicUrl("http://example.com")).toThrow(
-      "SOURCE_URL_HTTPS_REQUIRED",
+  it("allows public HTTP and rejects private source URLs", () => {
+    expect(validatePublicUrl("http://example.com/path")).toBe(
+      "http://example.com/path",
     );
     expect(() => validatePublicUrl("https://127.0.0.1/source")).toThrow(
       "SOURCE_URL_PRIVATE_NETWORK_FORBIDDEN",
+    );
+    expect(() => validatePublicUrl("ftp://example.com/source")).toThrow(
+      "SOURCE_URL_PROTOCOL_UNSUPPORTED",
     );
   });
 

@@ -3,30 +3,27 @@ import { describe, expect, it } from "vitest";
 import { DemoConnectorAdapter } from "@/server/connectors/demo";
 
 describe("DemoConnectorAdapter", () => {
-  it("persists and returns a connector checkpoint", async () => {
-    const adapter = new DemoConnectorAdapter();
-    const checkpoint = {
-      cursor: "demo-cursor-1",
-      updatedAt: "2026-07-22T18:30:00.000Z",
-      version: 1,
-    };
-
-    expect(await adapter.getCheckpoint()).toBeNull();
-    await adapter.saveCheckpoint(checkpoint);
-    expect(await adapter.getCheckpoint()).toEqual(checkpoint);
-  });
-
   it("normalizes retrieved source content with a stable hash", async () => {
     const adapter = new DemoConnectorAdapter();
-    const [item] = await adapter.discover({
-      missionId: "mission-test",
-    });
-    const retrieved = await adapter.retrieve(item);
-    const first = await adapter.normalize(retrieved);
-    const second = await adapter.normalize(retrieved);
+    const context = {
+      configuration: { type: "DEMO" },
+      connectorId: "connector-demo",
+      requestId: "request-test",
+      workspaceId: "workspace-test",
+    };
+    const discovery = await adapter.discover(
+      {
+        missionId: "mission-test",
+      },
+      context,
+    );
+    const item = discovery.items[0]!;
+    const retrieved = await adapter.retrieve(item, context);
+    const first = await adapter.normalize(retrieved, context);
+    const second = await adapter.normalize(retrieved, context);
 
-    expect(first.contentHash).toBe(second.contentHash);
-    expect(first.trustState).toBe("UNTRUSTED_SOURCE");
-    expect(first.promptInjectionFlag).toBe(false);
+    expect(first.metadata.contentHash).toBe(second.metadata.contentHash);
+    expect(first.metadata.trustState).toBe("UNTRUSTED_SOURCE");
+    expect(first.metadata.promptInjectionFlag).toBe(false);
   });
 });

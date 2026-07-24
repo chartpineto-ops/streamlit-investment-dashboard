@@ -8,6 +8,8 @@ import {
   listProjects,
   type MissionListOptions,
 } from "@/server/repositories/missions";
+import { listWorkspaceDocuments } from "@/server/repositories/documents";
+import { listWorkspaceRuns } from "@/server/repositories/runs";
 import {
   createMissionSchema,
   missionScopeSchema,
@@ -29,14 +31,18 @@ export async function getShellData() {
 
 export async function getHomeData() {
   const context = await getAuthContext();
-  const [missions, summary] = await Promise.all([
+  const [documents, missions, runs, summary] = await Promise.all([
+    listWorkspaceDocuments(context.workspace.id, { limit: 5 }),
     listMissions(context.workspace.id),
+    listWorkspaceRuns(context.workspace.id),
     getWorkspaceSummary(context.workspace.id),
   ]);
 
   return {
     context,
+    documents,
     missions: missions.slice(0, 3),
+    runs: runs.slice(0, 5),
     summary,
   };
 }

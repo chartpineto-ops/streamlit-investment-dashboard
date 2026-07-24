@@ -16,14 +16,14 @@ describe("missionScopeWhere", () => {
     expect(
       missionScopeWhere("workspace-a", {
         projectId: "project-a",
-        status: MissionStatus.ACTIVE,
+        status: MissionStatus.RUNNING,
       }),
     ).toEqual({
       project: {
         id: "project-a",
         workspaceId: "workspace-a",
       },
-      status: MissionStatus.ACTIVE,
+      status: MissionStatus.RUNNING,
     });
   });
 });

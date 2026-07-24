@@ -83,7 +83,7 @@ export async function getAuthContext(): Promise<AuthContext> {
         DEMO_WORKSPACE_ID,
         forwardedName ?? forwardedEmail,
         forwardedEmail,
-        "ANALYST",
+        "EDITOR",
         now,
         now,
       )

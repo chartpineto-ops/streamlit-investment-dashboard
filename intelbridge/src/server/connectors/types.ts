@@ -1,7 +1,25 @@
+import type { ConnectorType } from "@/shared/domain";
+import type {
+  DiscoveredItem,
+  DiscoveryResult,
+  NormalizedDocument,
+  RetrievedDocument,
+} from "@/shared/schemas/connectors";
+
 export type ConnectionTestResult = {
   message: string;
   ok: boolean;
+  responseTimeMs: number;
   testedAt: string;
+};
+
+export type ConnectorCheckpointValue = Record<string, unknown>;
+
+export type ConnectorContext = {
+  configuration: Record<string, unknown>;
+  connectorId: string;
+  requestId: string;
+  workspaceId: string;
 };
 
 export type DiscoveryInput = {
@@ -10,37 +28,35 @@ export type DiscoveryInput = {
   since?: string;
 };
 
-export type DiscoveredItem = {
-  externalId: string;
-  publishedAt: string;
-  title: string;
-  url: string;
-};
-
-export type RetrievedDocument = DiscoveredItem & {
-  contentType: string;
-  rawContent: string;
-  retrievedAt: string;
-};
-
-export type NormalizedDocument = RetrievedDocument & {
-  contentHash: string;
-  normalizedContent: string;
-  promptInjectionFlag: boolean;
-  trustState: "UNTRUSTED_SOURCE";
-};
-
-export type ConnectorCheckpoint = {
-  cursor: string;
-  updatedAt: string;
-  version: number;
-};
-
 export interface SourceConnectorAdapter {
-  testConnection(): Promise<ConnectionTestResult>;
-  discover(input: DiscoveryInput): Promise<DiscoveredItem[]>;
-  retrieve(item: DiscoveredItem): Promise<RetrievedDocument>;
-  normalize(document: RetrievedDocument): Promise<NormalizedDocument>;
-  getCheckpoint(): Promise<ConnectorCheckpoint | null>;
-  saveCheckpoint(checkpoint: ConnectorCheckpoint): Promise<void>;
+  readonly type: ConnectorType;
+  testConnection(context: ConnectorContext): Promise<ConnectionTestResult>;
+  discover(
+    input: DiscoveryInput,
+    context: ConnectorContext,
+  ): Promise<DiscoveryResult>;
+  retrieve(
+    item: DiscoveredItem,
+    context: ConnectorContext,
+  ): Promise<RetrievedDocument>;
+  normalize(
+    document: RetrievedDocument,
+    context: ConnectorContext,
+  ): Promise<NormalizedDocument>;
+  getCheckpoint(
+    connectorId: string,
+    key: string,
+  ): Promise<ConnectorCheckpointValue | null>;
+  saveCheckpoint(
+    connectorId: string,
+    key: string,
+    value: ConnectorCheckpointValue,
+  ): Promise<void>;
 }
+
+export type {
+  DiscoveredItem,
+  DiscoveryResult,
+  NormalizedDocument,
+  RetrievedDocument,
+};

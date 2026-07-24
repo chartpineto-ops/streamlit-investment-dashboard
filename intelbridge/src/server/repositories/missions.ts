@@ -355,8 +355,10 @@ type WorkspaceSummaryRow = {
   active_mission_count: number;
   available_connector_count: number;
   connector_count: number;
+  document_count: number;
   mission_count: number;
   project_count: number;
+  run_count: number;
 };
 
 export async function getWorkspaceSummary(workspaceId: string) {
@@ -371,15 +373,29 @@ export async function getWorkspaceSummary(workspaceId: string) {
         (SELECT COUNT(*)
           FROM missions m
           INNER JOIN projects p ON p.id = m.project_id
-          WHERE p.workspace_id = ? AND m.status IN ('READY', 'ACTIVE')) AS active_mission_count,
+          WHERE p.workspace_id = ? AND m.status IN ('READY', 'RUNNING')) AS active_mission_count,
         (SELECT COUNT(*) FROM projects
           WHERE workspace_id = ? AND status = 'ACTIVE') AS project_count,
         (SELECT COUNT(*) FROM source_connectors
-          WHERE workspace_id = ? AND status = 'AVAILABLE') AS available_connector_count,
+          WHERE workspace_id = ? AND status = 'CONNECTED') AS available_connector_count,
         (SELECT COUNT(*) FROM source_connectors
-          WHERE workspace_id = ?) AS connector_count`,
+          WHERE workspace_id = ?) AS connector_count,
+        (SELECT COUNT(*) FROM source_documents
+          WHERE workspace_id = ?) AS document_count,
+        (SELECT COUNT(*) FROM research_runs rr
+          INNER JOIN missions m ON m.id = rr.mission_id
+          INNER JOIN projects p ON p.id = m.project_id
+          WHERE p.workspace_id = ?) AS run_count`,
     )
-    .bind(workspaceId, workspaceId, workspaceId, workspaceId, workspaceId)
+    .bind(
+      workspaceId,
+      workspaceId,
+      workspaceId,
+      workspaceId,
+      workspaceId,
+      workspaceId,
+      workspaceId,
+    )
     .first<WorkspaceSummaryRow>();
 
   if (!summary) {
@@ -390,8 +406,10 @@ export async function getWorkspaceSummary(workspaceId: string) {
     activeMissionCount: Number(summary.active_mission_count),
     availableConnectorCount: Number(summary.available_connector_count),
     connectorCount: Number(summary.connector_count),
+    documentCount: Number(summary.document_count),
     missionCount: Number(summary.mission_count),
     projectCount: Number(summary.project_count),
+    runCount: Number(summary.run_count),
   };
 }
 
