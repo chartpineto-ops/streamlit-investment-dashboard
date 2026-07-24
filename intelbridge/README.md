@@ -1,12 +1,32 @@
 # IntelBridge
 
-IntelBridge is a persistent intelligence-gathering and synthesis workspace. It
-turns approved sources into versioned documents, structured evidence, validated
-claims, decision-ready insights, monitored changes, and exportable reports with
-an inspectable source trail.
+IntelBridge is a persistent, workspace-scoped research operations platform.
+This release implements Milestones 1–3: foundation, the durable research-run
+engine, and governed connectors with versioned document ingestion.
+
+Active product areas:
+
+- Home
+- Missions
+- Sources
+- Runs
+- Documents
+- Projects
+- Settings
+- workspace search and operational diagnostics
+
+Evidence extraction, claims, AI synthesis, monitoring alerts, and report
+generation are intentionally outside this release.
+
+## Runtime
 
 The hosted application uses Vinext, React, TypeScript, Cloudflare Workers, D1,
-R2, Drizzle, Zod, Vitest, and the OpenAI Responses API provider boundary.
+R2, Drizzle, Zod, and Vitest. Sites supplies authenticated-user headers and
+keeps the production deployment owner-only.
+
+D1 and R2 are the repository-equivalent persistence services for the Sites
+runtime. The durable `job_queue`, `run_steps`, and `run_events` tables replace
+the PostgreSQL/Redis/BullMQ proposal without introducing in-memory state.
 
 ## Local development
 
@@ -17,8 +37,17 @@ pnpm install
 pnpm dev
 ```
 
-The local identity fallback is configured in `.env.example`. Sites production
-uses authenticated-user headers.
+The Cloudflare development runtime provides local D1 and R2 bindings from
+`vite.config.ts`. Do not commit `.env` files or credentials.
+
+Optional server environment:
+
+```text
+INTELBRIDGE_DEMO_USER_EMAIL=alex.parker@intelbridge.demo
+GITHUB_TOKEN=optional_server_only_token_for_higher_github_api_limits
+```
+
+Production secrets must be configured through Sites environment variables.
 
 ## Validation
 
@@ -29,20 +58,20 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
-pnpm audit --prod
 ```
 
-## Data mode
+Frontend validation uses Playwright through the connected in-app browser at
+desktop and mobile viewport widths.
 
-The default `AI_PROVIDER=mock` release contains a deterministic fictional corpus
-and is visibly labeled `DEMO`. Live user-ingested documents retain their own
-state and are not mixed silently into demo aggregates.
+## Data states
 
-Set `AI_PROVIDER=openai`, `OPENAI_API_KEY`, and `OPENAI_MODEL` through server-side
-environment configuration to activate the Responses API provider. Never commit
-API keys.
+The deterministic fixture corpus uses fictional sources and always stores
+`status=demo` with `is_demo=true`. Live connector records retain source,
+retrieval timestamp, MIME type, content hash, current version, change state,
+and raw-object reference where applicable. Unavailable values are never
+converted to zero.
 
 ## Documentation
 
-- [Milestone 1](docs/MILESTONE_1.md)
-- [Full vertical slice](docs/FULL_RELEASE.md)
+- [Milestones 1–3 architecture and operations](docs/MILESTONES_1_3.md)
+- [Milestone 1 historical checkpoint](docs/MILESTONE_1.md)
