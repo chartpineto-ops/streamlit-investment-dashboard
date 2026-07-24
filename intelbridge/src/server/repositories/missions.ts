@@ -31,6 +31,8 @@ type MissionJoinRow = {
   project_id: string;
   project_name: string;
   research_depth: ResearchDepth;
+  insight_count: number;
+  run_count: number;
   scope_json: string;
   status: MissionStatusType;
   title: string;
@@ -78,8 +80,8 @@ function rowsToMissions(rows: MissionJoinRow[]): MissionRecord[] {
     if (!mission) {
       mission = {
         _count: {
-          insights: 0,
-          researchRuns: 0,
+          insights: Number(row.insight_count),
+          researchRuns: Number(row.run_count),
         },
         createdAt: new Date(row.created_at),
         createdBy: {
@@ -140,6 +142,8 @@ function missionSelectSql(whereClause: string) {
     p.name AS project_name,
     u.id AS creator_id,
     u.name AS creator_name,
+    (SELECT COUNT(*) FROM research_runs rr WHERE rr.mission_id = m.id) AS run_count,
+    (SELECT COUNT(*) FROM insights i WHERE i.mission_id = m.id) AS insight_count,
     sc.id AS connector_id,
     sc.name AS connector_name,
     sc.type AS connector_type,
@@ -191,15 +195,79 @@ export async function getMissionById(workspaceId: string, missionId: string) {
     return null;
   }
 
+  const [counts, runs] = await Promise.all([
+    database
+      .prepare(
+        `SELECT
+          (SELECT COUNT(*) FROM research_runs WHERE mission_id = ?) AS research_run_count,
+          (SELECT COUNT(*) FROM evidence WHERE mission_id = ?) AS evidence_count,
+          (SELECT COUNT(*) FROM claims WHERE mission_id = ?) AS claim_count,
+          (SELECT COUNT(*) FROM insights WHERE mission_id = ?) AS insight_count`,
+      )
+      .bind(missionId, missionId, missionId, missionId)
+      .first<{
+        claim_count: number;
+        evidence_count: number;
+        insight_count: number;
+        research_run_count: number;
+      }>(),
+    database
+      .prepare(
+        `SELECT
+          id,
+          status,
+          trigger_type,
+          progress_percent,
+          sources_scanned,
+          documents_processed,
+          evidence_created,
+          insights_created,
+          confidence_score,
+          started_at,
+          completed_at
+        FROM research_runs
+        WHERE mission_id = ?
+        ORDER BY started_at DESC
+        LIMIT 5`,
+      )
+      .bind(missionId)
+      .all<{
+        completed_at: string | null;
+        confidence_score: number | null;
+        documents_processed: number;
+        evidence_created: number;
+        id: string;
+        insights_created: number;
+        progress_percent: number;
+        sources_scanned: number;
+        started_at: string;
+        status: string;
+        trigger_type: string;
+      }>(),
+  ]);
+
   return {
     ...mission,
     _count: {
-      claims: 0,
-      evidence: 0,
-      insights: 0,
-      researchRuns: 0,
+      claims: Number(counts?.claim_count ?? 0),
+      evidence: Number(counts?.evidence_count ?? 0),
+      insights: Number(counts?.insight_count ?? 0),
+      researchRuns: Number(counts?.research_run_count ?? 0),
     },
-    researchRuns: [],
+    researchRuns: runs.results.map((run) => ({
+      completedAt: run.completed_at ? new Date(run.completed_at) : null,
+      confidenceScore:
+        run.confidence_score === null ? null : Number(run.confidence_score),
+      documentsProcessed: Number(run.documents_processed),
+      evidenceCreated: Number(run.evidence_created),
+      id: run.id,
+      insightsCreated: Number(run.insights_created),
+      progressPercent: Number(run.progress_percent),
+      sourcesScanned: Number(run.sources_scanned),
+      startedAt: new Date(run.started_at),
+      status: run.status,
+      triggerType: run.trigger_type,
+    })),
   };
 }
 

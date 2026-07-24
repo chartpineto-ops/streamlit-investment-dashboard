@@ -8,6 +8,14 @@ export const serverEnvironmentSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
+  OPENAI_API_KEY: z.string().min(20).optional(),
+  OPENAI_MODEL: z.string().min(3).default("gpt-5.6-sol"),
+  OPENAI_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(60_000)
+    .default(20_000),
 });
 
 export type ServerEnvironment = z.infer<typeof serverEnvironmentSchema>;

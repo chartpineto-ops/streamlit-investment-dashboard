@@ -7,10 +7,31 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   description:
-    "Evidence-backed research missions with persistent workspace context and inspectable provenance.",
+    "Persistent intelligence operations with research runs, evidence, claims, insights, monitoring, reports, and inspectable provenance.",
+  openGraph: {
+    description:
+      "Turn approved sources into validated, traceable, decision-ready intelligence.",
+    images: [
+      {
+        alt: "IntelBridge evidence-to-decision workflow",
+        height: 921,
+        url: "/og.png",
+        width: 1792,
+      },
+    ],
+    title: "IntelBridge · Evidence to decision",
+    type: "website",
+  },
   title: {
     default: "IntelBridge",
     template: "%s | IntelBridge",
+  },
+  twitter: {
+    card: "summary_large_image",
+    description:
+      "Turn approved sources into validated, traceable, decision-ready intelligence.",
+    images: ["/og.png"],
+    title: "IntelBridge · Evidence to decision",
   },
 };
 

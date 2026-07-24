@@ -8,6 +8,20 @@
       "when": 1784832657971,
       "tag": "0000_round_inertia",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1784837875498,
+      "tag": "0001_icy_beast",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784851591614,
+      "tag": "0002_powerful_gargoyle",
+      "breakpoints": true
     }
   ]
 }

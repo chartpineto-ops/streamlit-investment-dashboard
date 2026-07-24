@@ -54,6 +54,7 @@ const navigation = [
   { href: "/reports", icon: FileBarChart, label: "Reports" },
   { href: "/datasets", icon: Database, label: "Datasets" },
   { href: "/agent-studio", icon: Bot, label: "Agent Studio" },
+  { href: "/projects", icon: Folder, label: "Projects" },
 ] as const;
 
 function isActive(pathname: string, href: string) {
@@ -171,12 +172,10 @@ export function ApplicationShell({
         </div>
 
         <div className="m-3 mt-auto rounded-[4px] border border-[var(--rule)] bg-[var(--surface-2)] p-3">
-          <div className="text-[12px] font-semibold">
-            Milestone 1 foundation
-          </div>
+          <div className="text-[12px] font-semibold">Full vertical slice</div>
           <p className="mb-0 mt-1 text-[10px] leading-4 text-[var(--text-3)]">
-            Persisted missions and workspace isolation are active. Research runs
-            begin in Milestone 2.
+            D1-backed missions, runs, evidence, insights, monitors, reports,
+            Q&amp;A, agents, and audit records are active.
           </p>
         </div>
       </aside>
@@ -201,37 +200,39 @@ export function ApplicationShell({
             />
           </div>
 
-          <div
-            aria-label="Global search is planned for Milestone 2"
+          <form
+            action="/search"
             className="ml-auto hidden w-full max-w-[360px] md:block"
+            method="get"
             role="search"
-            title="Global search is planned for Milestone 2"
           >
             <label className="sr-only" htmlFor="global-search">
-              Global search unavailable
+              Search missions, evidence, and insights
             </label>
             <div className="flex h-9 items-center gap-2 rounded-[4px] border border-[var(--rule)] bg-[var(--surface-2)] px-3 text-[var(--text-3)]">
               <Search aria-hidden="true" className="size-4" />
               <input
                 className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-[var(--text-3)]"
-                disabled
                 id="global-search"
+                name="q"
                 placeholder="Search missions and evidence"
               />
             </div>
-          </div>
+          </form>
 
-          <button
-            aria-label="Notifications are planned for Milestone 7"
+          <Link
+            aria-label="Open notifications"
             className="grid size-9 shrink-0 place-items-center rounded-[4px] border border-[var(--rule)] bg-[var(--surface-1)] text-[var(--text-2)] disabled:cursor-not-allowed disabled:opacity-60"
-            disabled
-            title="Notifications are planned for Milestone 7"
-            type="button"
+            href="/monitoring?view=alerts"
           >
             <Bell aria-hidden="true" className="size-4" />
-          </button>
+          </Link>
 
-          <div className="flex min-w-0 items-center gap-2 border-l border-[var(--rule)] pl-3">
+          <Link
+            className="flex min-w-0 items-center gap-2 border-l border-[var(--rule)] pl-3"
+            href="/diagnostics"
+            title="Open diagnostics and audit activity"
+          >
             <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--brand-user)] text-[10px] font-semibold text-[var(--accent-contrast)]">
               {getInitials(user.name)}
             </span>
@@ -243,7 +244,7 @@ export function ApplicationShell({
                 {user.role}
               </div>
             </div>
-          </div>
+          </Link>
         </header>
 
         <div className="border-b border-[var(--rule)] bg-[var(--surface-1)] lg:hidden">
@@ -251,7 +252,7 @@ export function ApplicationShell({
             aria-label="Mobile primary navigation"
             className="flex gap-1 overflow-x-auto px-3 py-2"
           >
-            {navigation.slice(0, 6).map((item) => (
+            {navigation.map((item) => (
               <Link
                 className={`shrink-0 rounded-[3px] px-3 py-2 text-[11px] font-medium ${
                   isActive(pathname, item.href)

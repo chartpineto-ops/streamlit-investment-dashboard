@@ -14,6 +14,18 @@ export function formatDateTime(value: Date): string {
   }).format(value);
 }
 
+export function formatPercent(value: number, digits = 0): string {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+    style: "percent",
+  }).format(value);
+}
+
+export function formatNumber(value: number): string {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
 export function getInitials(name: string): string {
   return name
     .split(/\s+/)

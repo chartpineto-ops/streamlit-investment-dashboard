@@ -1,96 +1,116 @@
-import { CircleDashed } from "lucide-react";
 import { notFound } from "next/navigation";
 
-import { PageHeader } from "@/components/page-header";
+import {
+  AgentStudioWorkspace,
+  DatasetsWorkspace,
+  EvidenceWorkspace,
+  InsightsWorkspace,
+  MonitoringWorkspace,
+  ProjectsWorkspace,
+  ReportsWorkspace,
+  SourcesWorkspace,
+} from "@/components/intelligence-workspaces";
+import {
+  getAgentStudioWorkspace,
+  getDatasetsWorkspace,
+  getEvidenceWorkspace,
+  getInsightsWorkspace,
+  getMonitoringWorkspace,
+  getProjectsWorkspace,
+  getReportsWorkspace,
+  getSourcesWorkspace,
+} from "@/server/services/intelligence";
 
-const sections = {
-  "agent-studio": {
-    milestone: 5,
-    purpose:
-      "Inspect grounded agent configuration, prompt versions, and allow-listed tools.",
-    title: "Agent Studio",
-  },
-  datasets: {
-    milestone: 3,
-    purpose:
-      "Review normalized source documents and managed dataset boundaries.",
-    title: "Datasets",
-  },
-  evidence: {
-    milestone: 4,
-    purpose:
-      "Search source excerpts, validation state, claim links, and evidence relationships.",
-    title: "Evidence",
-  },
-  insights: {
-    milestone: 6,
-    purpose:
-      "Review supported findings, risks, opportunities, contradictions, and uncertainty.",
-    title: "Insights",
-  },
-  monitoring: {
-    milestone: 7,
-    purpose:
-      "Configure incremental schedules, materiality rules, and alert health.",
-    title: "Monitoring",
-  },
-  projects: {
-    milestone: 1,
-    purpose: "Group durable missions under workspace-scoped research programs.",
-    title: "Projects",
-  },
-  reports: {
-    milestone: 6,
-    purpose: "Generate executive briefs and evidence-backed export packages.",
-    title: "Reports",
-  },
-  sources: {
-    milestone: 3,
-    purpose:
-      "Connect approved sources, test retrieval access, and inspect checkpoints.",
-    title: "Sources",
-  },
-} as const;
-
-type PlaceholderPageProps = {
+type WorkspacePageProps = {
   params: Promise<{
     section: string;
   }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function PlaceholderPage({
-  params,
-}: PlaceholderPageProps) {
-  const { section } = await params;
-  const sectionDefinition = sections[section as keyof typeof sections];
+function stringValue(value: string | string[] | undefined) {
+  return typeof value === "string" ? value : undefined;
+}
 
-  if (!sectionDefinition) {
-    notFound();
+export default async function WorkspacePage({
+  params,
+  searchParams,
+}: WorkspacePageProps) {
+  const [{ section }, query] = await Promise.all([params, searchParams]);
+  const missionId = stringValue(query.mission);
+  const notice = stringValue(query.notice);
+
+  if (section === "sources") {
+    return (
+      <SourcesWorkspace
+        data={await getSourcesWorkspace({
+          missionId,
+          query: stringValue(query.q),
+        })}
+        error={stringValue(query.error)}
+        missionId={missionId}
+        notice={notice}
+        query={stringValue(query.q)}
+      />
+    );
   }
 
-  return (
-    <>
-      <PageHeader
-        description={sectionDefinition.purpose}
-        eyebrow="Planned workspace"
-        title={sectionDefinition.title}
+  if (section === "evidence") {
+    return (
+      <EvidenceWorkspace
+        data={await getEvidenceWorkspace({
+          missionId,
+          query: stringValue(query.q),
+          selectedId: stringValue(query.selected),
+          status: stringValue(query.status),
+        })}
+        missionId={missionId}
+        query={stringValue(query.q)}
+        status={stringValue(query.status)}
       />
-      <section className="grid min-h-72 place-items-center rounded-[4px] border border-[var(--rule)] bg-[var(--surface-1)] p-8 text-center">
-        <div>
-          <CircleDashed
-            aria-hidden="true"
-            className="mx-auto size-7 text-[var(--text-3)]"
-          />
-          <h2 className="mb-0 mt-3 text-[13px] font-semibold">
-            Scheduled for Milestone {sectionDefinition.milestone}
-          </h2>
-          <p className="mb-0 mt-1 max-w-lg text-[11px] leading-5 text-[var(--text-3)]">
-            This route is present for stable navigation, but it does not display
-            fabricated records or expose inactive controls. The underlying
-            domain workflow will be connected in its scheduled milestone.
-          </p>
-        </div>
-      </section>
-    </>
-  );
+    );
+  }
+
+  if (section === "insights") {
+    return (
+      <InsightsWorkspace
+        category={stringValue(query.category)}
+        data={await getInsightsWorkspace({
+          category: stringValue(query.category),
+          missionId,
+          selectedId: stringValue(query.selected),
+        })}
+        missionId={missionId}
+      />
+    );
+  }
+
+  if (section === "monitoring") {
+    return (
+      <MonitoringWorkspace
+        data={await getMonitoringWorkspace()}
+        notice={notice}
+      />
+    );
+  }
+
+  if (section === "reports") {
+    return (
+      <ReportsWorkspace data={await getReportsWorkspace()} notice={notice} />
+    );
+  }
+
+  if (section === "datasets") {
+    return <DatasetsWorkspace data={await getDatasetsWorkspace()} />;
+  }
+
+  if (section === "agent-studio") {
+    return <AgentStudioWorkspace data={await getAgentStudioWorkspace()} />;
+  }
+
+  if (section === "projects") {
+    return <ProjectsWorkspace data={await getProjectsWorkspace()} />;
+  }
+
+  notFound();
 }
