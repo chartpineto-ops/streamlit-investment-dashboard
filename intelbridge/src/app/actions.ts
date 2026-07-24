@@ -5,16 +5,141 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import {
-  askForCurrentUser,
-  cancelResearchForCurrentUser,
-  createReportForCurrentUser,
-  ingestFileForCurrentUser,
-  ingestUrlForCurrentUser,
-  setMonitorStatusForCurrentUser,
-  startResearchForCurrentUser,
-} from "@/server/services/intelligence";
+  registerPublicUrlForCurrentWorkspace,
+  registerUploadedFileForCurrentWorkspace,
+} from "@/server/services/ingestion";
+import {
+  cancelRunForCurrentWorkspace,
+  retryRunForCurrentWorkspace,
+  startRunForCurrentWorkspace,
+} from "@/server/services/runs";
+import {
+  assignMissionSourceForCurrentWorkspace,
+  createConnectorForCurrentWorkspace,
+  createProjectForCurrentWorkspace,
+  testConnectorForCurrentWorkspace,
+  updateMissionForCurrentWorkspace,
+  updateProjectForCurrentWorkspace,
+} from "@/server/services/foundation";
+import { ConnectorStatus, ConnectorType, MissionStatus } from "@/shared/domain";
 
 const idSchema = z.string().min(3).max(180);
+
+function commaList(value: FormDataEntryValue | null) {
+  return String(value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export async function createProjectAction(formData: FormData) {
+  await createProjectForCurrentWorkspace({
+    description: formData.get("description"),
+    name: formData.get("name"),
+  });
+  revalidatePath("/projects");
+  redirect("/projects?notice=created");
+}
+
+export async function archiveProjectAction(formData: FormData) {
+  const projectId = idSchema.parse(formData.get("projectId"));
+  await updateProjectForCurrentWorkspace(projectId, { status: "ARCHIVED" });
+  revalidatePath("/projects");
+  redirect("/projects?notice=archived");
+}
+
+export async function createConnectorAction(formData: FormData) {
+  const type = z.enum(ConnectorType).parse(formData.get("type"));
+  const endpoint = z
+    .string()
+    .trim()
+    .max(2_000)
+    .optional()
+    .parse(formData.get("endpoint") || undefined);
+  let configuration: Record<string, unknown>;
+
+  if (type === ConnectorType.RSS) {
+    configuration = {
+      feedUrl: z.url().parse(endpoint),
+      maximumItemsPerRun: 25,
+      type,
+    };
+  } else if (type === ConnectorType.WEBPAGE) {
+    const startUrl = z.url().parse(endpoint);
+    configuration = {
+      allowedDomains: [new URL(startUrl).hostname],
+      maximumPagesPerRun: 10,
+      startUrls: [startUrl],
+      type,
+    };
+  } else if (type === ConnectorType.GITHUB) {
+    const [owner, repository] = String(endpoint ?? "").split("/");
+    configuration = {
+      includeIssues: true,
+      includeReleases: true,
+      maximumItemsPerRun: 25,
+      owner,
+      repository,
+      type,
+    };
+  } else if (type === ConnectorType.MANUAL_URL) {
+    configuration = {
+      type,
+      urls: endpoint ? [z.url().parse(endpoint)] : [],
+    };
+  } else {
+    configuration = { type };
+  }
+
+  await createConnectorForCurrentWorkspace({
+    configuration,
+    name: formData.get("name"),
+    status:
+      type === ConnectorType.DEMO ||
+      type === ConnectorType.FILE_UPLOAD ||
+      type === ConnectorType.MANUAL_URL
+        ? ConnectorStatus.CONNECTED
+        : ConnectorStatus.DISCONNECTED,
+  });
+  revalidatePath("/sources");
+  redirect("/sources?notice=created");
+}
+
+export async function testConnectorAction(formData: FormData) {
+  const connectorId = idSchema.parse(formData.get("connectorId"));
+  const result = await testConnectorForCurrentWorkspace(connectorId);
+  revalidatePath("/sources");
+  redirect(`/sources?notice=${result?.ok ? "test-passed" : "test-failed"}`);
+}
+
+export async function updateMissionAction(formData: FormData) {
+  const missionId = idSchema.parse(formData.get("missionId"));
+  await updateMissionForCurrentWorkspace(missionId, {
+    objective: formData.get("objective"),
+    researchDepth: formData.get("researchDepth"),
+    scope: {
+      focusAreas: commaList(formData.get("focusAreas")),
+      regions: commaList(formData.get("regions")),
+      timeHorizonMonths: Number(formData.get("timeHorizonMonths")),
+    },
+    status: z.enum(MissionStatus).parse(formData.get("status")),
+    title: formData.get("title"),
+  });
+  revalidatePath(`/missions/${missionId}`);
+  redirect(`/missions/${missionId}?notice=updated`);
+}
+
+export async function assignMissionSourceAction(formData: FormData) {
+  const missionId = idSchema.parse(formData.get("missionId"));
+  await assignMissionSourceForCurrentWorkspace(missionId, {
+    connectorId: idSchema.parse(formData.get("connectorId")),
+    exclusionRules: commaList(formData.get("exclusionRules")),
+    inclusionRules: commaList(formData.get("inclusionRules")),
+    priority: Number(formData.get("priority") ?? 50),
+  });
+  revalidatePath(`/missions/${missionId}`);
+  redirect(`/missions/${missionId}?notice=source-assigned`);
+}
 
 export async function startResearchAction(formData: FormData) {
   const missionId = idSchema.parse(formData.get("missionId"));
@@ -24,40 +149,26 @@ export async function startResearchAction(formData: FormData) {
     .max(220)
     .optional()
     .parse(formData.get("idempotencyKey") || undefined);
-  const run = await startResearchForCurrentUser(missionId, idempotencyKey);
+  const result = await startRunForCurrentWorkspace(missionId, idempotencyKey);
   revalidatePath(`/missions/${missionId}`);
-  redirect(`/runs/${run.id}`);
+  redirect(`/runs/${result.run.id}`);
 }
 
 export async function cancelResearchAction(formData: FormData) {
   const runId = idSchema.parse(formData.get("runId"));
-  await cancelResearchForCurrentUser(runId);
+  await cancelRunForCurrentWorkspace(runId);
   revalidatePath(`/runs/${runId}`);
   redirect(`/runs/${runId}?notice=cancelled`);
 }
 
-export async function setMonitorStatusAction(formData: FormData) {
-  const monitorId = idSchema.parse(formData.get("monitorId"));
-  const status = z.enum(["ACTIVE", "PAUSED"]).parse(formData.get("status"));
-  await setMonitorStatusForCurrentUser(monitorId, status);
-  revalidatePath("/monitoring");
-  redirect(`/monitoring?notice=${status.toLowerCase()}`);
-}
-
-export async function createReportAction(formData: FormData) {
-  const missionId = idSchema.parse(formData.get("missionId"));
-  const type = z
-    .enum([
-      "EXECUTIVE_BRIEF",
-      "SOURCE_APPENDIX",
-      "COMPETITOR_MATRIX",
-      "EVIDENCE_CSV",
-      "JSON_PACKAGE",
-    ])
-    .parse(formData.get("type"));
-  const report = await createReportForCurrentUser(missionId, type);
-  revalidatePath("/reports");
-  redirect(`/reports?notice=generated&report=${report.id}`);
+export async function retryResearchAction(formData: FormData) {
+  const runId = idSchema.parse(formData.get("runId"));
+  const result = await retryRunForCurrentWorkspace(
+    runId,
+    `retry:${runId}:${crypto.randomUUID()}`,
+  );
+  revalidatePath("/runs");
+  redirect(`/runs/${result.run.id}`);
 }
 
 export async function ingestSourceAction(formData: FormData) {
@@ -65,70 +176,22 @@ export async function ingestSourceAction(formData: FormData) {
   const mode = z.enum(["url", "file"]).parse(formData.get("mode"));
 
   try {
-    const result =
-      mode === "url"
-        ? await ingestUrlForCurrentUser(
-            missionId,
-            z.url().parse(formData.get("url")),
-          )
-        : await ingestFileForCurrentUser(
-            missionId,
-            z.instanceof(File).parse(formData.get("file")),
-          );
-    revalidatePath("/sources");
-    redirect(
-      `/sources?notice=${result.changeState.toLowerCase()}&document=${result.id}`,
-    );
+    if (mode === "url") {
+      await registerPublicUrlForCurrentWorkspace(
+        missionId,
+        z.url().parse(formData.get("url")),
+      );
+    } else {
+      await registerUploadedFileForCurrentWorkspace(
+        missionId,
+        z.instanceof(File).parse(formData.get("file")),
+      );
+    }
   } catch (error) {
     const code =
       error instanceof Error ? error.message : "SOURCE_INGEST_FAILED";
     redirect(`/sources?error=${encodeURIComponent(code)}`);
   }
-}
-
-export type AskState = {
-  answer: string;
-  citations: {
-    evidenceId: string;
-    label: number;
-    publisher: string;
-  }[];
-  confidence: number;
-  limitations: string;
-  status: "idle" | "answered" | "error";
-};
-
-export async function askIntelBridgeAction(
-  _previousState: AskState,
-  formData: FormData,
-): Promise<AskState> {
-  try {
-    const missionId = idSchema.parse(formData.get("missionId"));
-    const question = z
-      .string()
-      .trim()
-      .min(5, "Enter a specific evidence question.")
-      .max(500)
-      .parse(formData.get("question"));
-    const result = await askForCurrentUser(missionId, question);
-
-    return {
-      answer: result.answer,
-      citations: result.citations,
-      confidence: result.confidence,
-      limitations: result.limitations,
-      status: "answered",
-    };
-  } catch (error) {
-    return {
-      answer:
-        error instanceof Error
-          ? error.message
-          : "The grounded answer could not be generated.",
-      citations: [],
-      confidence: 0,
-      limitations: "No answer was persisted.",
-      status: "error",
-    };
-  }
+  revalidatePath("/sources");
+  redirect("/sources?notice=queued");
 }

@@ -7,10 +7,10 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   description:
-    "Persistent intelligence operations with research runs, evidence, claims, insights, monitoring, reports, and inspectable provenance.",
+    "Persistent research operations with projects, missions, queued ingestion runs, governed connectors, and versioned source documents.",
   openGraph: {
     description:
-      "Turn approved sources into validated, traceable, decision-ready intelligence.",
+      "Run governed research ingestion with durable events and versioned source documents.",
     images: [
       {
         alt: "IntelBridge evidence-to-decision workflow",
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
         width: 1792,
       },
     ],
-    title: "IntelBridge · Evidence to decision",
+    title: "IntelBridge · Research operations",
     type: "website",
   },
   title: {
@@ -29,9 +29,9 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     description:
-      "Turn approved sources into validated, traceable, decision-ready intelligence.",
+      "Run governed research ingestion with durable events and versioned source documents.",
     images: ["/og.png"],
-    title: "IntelBridge · Evidence to decision",
+    title: "IntelBridge · Research operations",
   },
 };
 

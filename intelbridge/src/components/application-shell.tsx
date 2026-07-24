@@ -3,19 +3,16 @@
 import {
   Bell,
   BookOpenText,
-  Bot,
   Boxes,
   ChevronDown,
-  Database,
-  FileBarChart,
-  FileSearch,
+  FileText,
   Folder,
   Home,
-  Lightbulb,
   ListChecks,
   Plus,
-  RadioTower,
+  Radio,
   Search,
+  Settings,
   ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
@@ -48,13 +45,10 @@ const navigation = [
   { href: "/", icon: Home, label: "Home" },
   { href: "/missions", icon: ListChecks, label: "Missions" },
   { href: "/sources", icon: BookOpenText, label: "Sources" },
-  { href: "/evidence", icon: FileSearch, label: "Evidence" },
-  { href: "/insights", icon: Lightbulb, label: "Insights" },
-  { href: "/monitoring", icon: RadioTower, label: "Monitoring" },
-  { href: "/reports", icon: FileBarChart, label: "Reports" },
-  { href: "/datasets", icon: Database, label: "Datasets" },
-  { href: "/agent-studio", icon: Bot, label: "Agent Studio" },
+  { href: "/runs", icon: Radio, label: "Runs" },
+  { href: "/documents", icon: FileText, label: "Documents" },
   { href: "/projects", icon: Folder, label: "Projects" },
+  { href: "/settings", icon: Settings, label: "Settings" },
 ] as const;
 
 function isActive(pathname: string, href: string) {
@@ -172,10 +166,10 @@ export function ApplicationShell({
         </div>
 
         <div className="m-3 mt-auto rounded-[4px] border border-[var(--rule)] bg-[var(--surface-2)] p-3">
-          <div className="text-[12px] font-semibold">Full vertical slice</div>
+          <div className="text-[12px] font-semibold">Milestones 1–3</div>
           <p className="mb-0 mt-1 text-[10px] leading-4 text-[var(--text-3)]">
-            D1-backed missions, runs, evidence, insights, monitors, reports,
-            Q&amp;A, agents, and audit records are active.
+            Projects, missions, queued runs, connectors, document versions, and
+            audit records are active.
           </p>
         </div>
       </aside>
@@ -207,7 +201,7 @@ export function ApplicationShell({
             role="search"
           >
             <label className="sr-only" htmlFor="global-search">
-              Search missions, evidence, and insights
+              Search missions, projects, sources, runs, and documents
             </label>
             <div className="flex h-9 items-center gap-2 rounded-[4px] border border-[var(--rule)] bg-[var(--surface-2)] px-3 text-[var(--text-3)]">
               <Search aria-hidden="true" className="size-4" />
@@ -215,7 +209,7 @@ export function ApplicationShell({
                 className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-[var(--text-3)]"
                 id="global-search"
                 name="q"
-                placeholder="Search missions and evidence"
+                placeholder="Search research records"
               />
             </div>
           </form>
@@ -223,7 +217,7 @@ export function ApplicationShell({
           <Link
             aria-label="Open notifications"
             className="grid size-9 shrink-0 place-items-center rounded-[4px] border border-[var(--rule)] bg-[var(--surface-1)] text-[var(--text-2)] disabled:cursor-not-allowed disabled:opacity-60"
-            href="/monitoring?view=alerts"
+            href="/runs"
           >
             <Bell aria-hidden="true" className="size-4" />
           </Link>

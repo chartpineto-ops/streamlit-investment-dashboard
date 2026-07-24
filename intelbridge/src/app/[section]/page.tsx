@@ -1,30 +1,24 @@
 import { notFound } from "next/navigation";
 
 import {
-  AgentStudioWorkspace,
-  DatasetsWorkspace,
-  EvidenceWorkspace,
-  InsightsWorkspace,
-  MonitoringWorkspace,
   ProjectsWorkspace,
-  ReportsWorkspace,
+  SettingsWorkspace,
   SourcesWorkspace,
-} from "@/components/intelligence-workspaces";
+} from "@/components/foundation-workspaces";
 import {
-  getAgentStudioWorkspace,
-  getDatasetsWorkspace,
-  getEvidenceWorkspace,
-  getInsightsWorkspace,
-  getMonitoringWorkspace,
-  getProjectsWorkspace,
-  getReportsWorkspace,
-  getSourcesWorkspace,
-} from "@/server/services/intelligence";
+  DocumentsWorkspace,
+  RunsWorkspace,
+} from "@/components/operations-workspaces";
+import { getDocumentsWorkspaceData } from "@/server/services/documents";
+import {
+  getProjectsWorkspaceData,
+  getSettingsWorkspaceData,
+  getSourcesWorkspaceData,
+} from "@/server/services/foundation";
+import { getRunsWorkspaceData } from "@/server/services/runs";
 
 type WorkspacePageProps = {
-  params: Promise<{
-    section: string;
-  }>;
+  params: Promise<{ section: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
@@ -37,80 +31,59 @@ export default async function WorkspacePage({
   searchParams,
 }: WorkspacePageProps) {
   const [{ section }, query] = await Promise.all([params, searchParams]);
-  const missionId = stringValue(query.mission);
   const notice = stringValue(query.notice);
 
   if (section === "sources") {
+    const filters = {
+      project: stringValue(query.project),
+      q: stringValue(query.q),
+      status: stringValue(query.status),
+      type: stringValue(query.type),
+    };
     return (
       <SourcesWorkspace
-        data={await getSourcesWorkspace({
-          missionId,
-          query: stringValue(query.q),
-        })}
-        error={stringValue(query.error)}
-        missionId={missionId}
-        notice={notice}
-        query={stringValue(query.q)}
-      />
-    );
-  }
-
-  if (section === "evidence") {
-    return (
-      <EvidenceWorkspace
-        data={await getEvidenceWorkspace({
-          missionId,
-          query: stringValue(query.q),
-          selectedId: stringValue(query.selected),
-          status: stringValue(query.status),
-        })}
-        missionId={missionId}
-        query={stringValue(query.q)}
-        status={stringValue(query.status)}
-      />
-    );
-  }
-
-  if (section === "insights") {
-    return (
-      <InsightsWorkspace
-        category={stringValue(query.category)}
-        data={await getInsightsWorkspace({
-          category: stringValue(query.category),
-          missionId,
-          selectedId: stringValue(query.selected),
-        })}
-        missionId={missionId}
-      />
-    );
-  }
-
-  if (section === "monitoring") {
-    return (
-      <MonitoringWorkspace
-        data={await getMonitoringWorkspace()}
+        data={await getSourcesWorkspaceData()}
+        filters={filters}
         notice={notice}
       />
     );
   }
-
-  if (section === "reports") {
+  if (section === "runs") {
+    return <RunsWorkspace data={await getRunsWorkspaceData()} />;
+  }
+  if (section === "documents") {
+    const filters = {
+      after: stringValue(query.after),
+      change: stringValue(query.change),
+      connector: stringValue(query.connector),
+      mission: stringValue(query.mission),
+      q: stringValue(query.q),
+    };
     return (
-      <ReportsWorkspace data={await getReportsWorkspace()} notice={notice} />
+      <DocumentsWorkspace
+        data={await getDocumentsWorkspaceData({
+          change: filters.change || undefined,
+          connectorId: filters.connector || undefined,
+          missionId: filters.mission || undefined,
+          query: filters.q || undefined,
+          retrievedAfter: filters.after
+            ? new Date(`${filters.after}T00:00:00.000Z`).toISOString()
+            : undefined,
+        })}
+        filters={filters}
+      />
     );
   }
-
-  if (section === "datasets") {
-    return <DatasetsWorkspace data={await getDatasetsWorkspace()} />;
-  }
-
-  if (section === "agent-studio") {
-    return <AgentStudioWorkspace data={await getAgentStudioWorkspace()} />;
-  }
-
   if (section === "projects") {
-    return <ProjectsWorkspace data={await getProjectsWorkspace()} />;
+    return (
+      <ProjectsWorkspace
+        data={await getProjectsWorkspaceData()}
+        notice={notice}
+      />
+    );
   }
-
+  if (section === "settings") {
+    return <SettingsWorkspace data={await getSettingsWorkspaceData()} />;
+  }
   notFound();
 }

@@ -195,7 +195,7 @@ export function NewMissionForm({
         </div>
         <div className="grid gap-px bg-[var(--rule)] sm:grid-cols-2 xl:grid-cols-3">
           {connectors.map((connector) => {
-            const available = connector.status === "AVAILABLE";
+            const available = connector.status === "CONNECTED";
 
             return (
               <label

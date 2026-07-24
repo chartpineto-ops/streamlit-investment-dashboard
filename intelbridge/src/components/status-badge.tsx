@@ -7,6 +7,12 @@ const statusStyles: Record<string, string> = {
     "border-[var(--status-positive-border)] bg-[var(--status-positive-fill)] text-[var(--status-positive-text)]",
   COMPLETED:
     "border-[var(--status-positive-border)] bg-[var(--status-positive-fill)] text-[var(--status-positive-text)]",
+  CONNECTED:
+    "border-[var(--status-positive-border)] bg-[var(--status-positive-fill)] text-[var(--status-positive-text)]",
+  CREATED:
+    "border-[var(--status-positive-border)] bg-[var(--status-positive-fill)] text-[var(--status-positive-text)]",
+  CURRENT:
+    "border-[var(--status-positive-border)] bg-[var(--status-positive-fill)] text-[var(--status-positive-text)]",
   CONFIRMED:
     "border-[var(--status-positive-border)] bg-[var(--status-positive-fill)] text-[var(--status-positive-text)]",
   HIGH: "border-[var(--status-negative-border)] bg-[var(--status-negative-fill)] text-[var(--status-negative-text)]",
@@ -18,6 +24,10 @@ const statusStyles: Record<string, string> = {
   VALIDATED:
     "border-[var(--status-positive-border)] bg-[var(--status-positive-fill)] text-[var(--status-positive-text)]",
   READY:
+    "border-[var(--status-info-border)] bg-[var(--status-info-fill)] text-[var(--status-info-text)]",
+  RUNNING:
+    "border-[var(--status-info-border)] bg-[var(--status-info-fill)] text-[var(--status-info-text)]",
+  UPDATED:
     "border-[var(--status-info-border)] bg-[var(--status-info-fill)] text-[var(--status-info-text)]",
   CONTRADICTION:
     "border-[var(--status-info-border)] bg-[var(--status-info-fill)] text-[var(--status-info-text)]",
@@ -37,7 +47,17 @@ const statusStyles: Record<string, string> = {
     "border-[var(--status-neutral-border)] bg-[var(--status-neutral-fill)] text-[var(--text-2)]",
   PENDING:
     "border-[var(--status-neutral-border)] bg-[var(--status-neutral-fill)] text-[var(--text-2)]",
+  QUEUED:
+    "border-[var(--status-neutral-border)] bg-[var(--status-neutral-fill)] text-[var(--text-2)]",
+  UNCHANGED:
+    "border-[var(--status-neutral-border)] bg-[var(--status-neutral-fill)] text-[var(--text-2)]",
+  DISCONNECTED:
+    "border-[var(--status-neutral-border)] bg-[var(--status-neutral-fill)] text-[var(--text-2)]",
   PAUSED:
+    "border-[var(--status-warning-border)] bg-[var(--status-warning-fill)] text-[var(--status-warning-text)]",
+  CANCEL_REQUESTED:
+    "border-[var(--status-warning-border)] bg-[var(--status-warning-fill)] text-[var(--status-warning-text)]",
+  PARTIALLY_COMPLETED:
     "border-[var(--status-warning-border)] bg-[var(--status-warning-fill)] text-[var(--status-warning-text)]",
   MEDIUM:
     "border-[var(--status-warning-border)] bg-[var(--status-warning-fill)] text-[var(--status-warning-text)]",
@@ -53,6 +73,8 @@ const statusStyles: Record<string, string> = {
   CONTRADICTED:
     "border-[var(--status-negative-border)] bg-[var(--status-negative-fill)] text-[var(--status-negative-text)]",
   FAILED:
+    "border-[var(--status-negative-border)] bg-[var(--status-negative-fill)] text-[var(--status-negative-text)]",
+  ERROR:
     "border-[var(--status-negative-border)] bg-[var(--status-negative-fill)] text-[var(--status-negative-text)]",
 };
 

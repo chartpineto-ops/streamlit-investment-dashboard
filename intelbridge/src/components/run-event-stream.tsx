@@ -1,31 +1,35 @@
 "use client";
 
 import { RadioTower } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-type StreamEvent = {
+export type StreamEvent = {
   createdAt: string;
-  payload: {
-    message?: string;
-  };
+  payload: Record<string, unknown>;
   sequenceNumber: number;
   type: string;
 };
 
 export function RunEventStream({
+  initialEvents,
   runId,
   terminal,
 }: {
+  initialEvents: StreamEvent[];
   runId: string;
   terminal: boolean;
 }) {
+  const router = useRouter();
   const [connection, setConnection] = useState<
     "connecting" | "live" | "reconnecting" | "complete"
   >(terminal ? "complete" : "connecting");
-  const [events, setEvents] = useState<StreamEvent[]>([]);
+  const [events, setEvents] = useState<StreamEvent[]>(initialEvents);
 
   useEffect(() => {
-    const source = new EventSource(`/api/runs/${runId}/events`);
+    if (terminal) return;
+    const after = initialEvents.at(-1)?.sequenceNumber ?? 0;
+    const source = new EventSource(`/api/runs/${runId}/events?after=${after}`);
     source.onopen = () => setConnection("live");
     source.onmessage = (message) => {
       const event = JSON.parse(message.data) as StreamEvent;
@@ -36,19 +40,17 @@ export function RunEventStream({
           ? current
           : [...current, event],
       );
-      if (event.type === "run.completed" || event.type === "run.failed") {
+      if (
+        ["run.cancelled", "run.completed", "run.failed"].includes(event.type)
+      ) {
         setConnection("complete");
         source.close();
+        router.refresh();
       }
     };
-    source.onerror = () => {
-      if (!terminal) {
-        setConnection("reconnecting");
-      }
-    };
-
+    source.onerror = () => setConnection("reconnecting");
     return () => source.close();
-  }, [runId, terminal]);
+  }, [initialEvents, router, runId, terminal]);
 
   return (
     <section className="rounded-[4px] border border-[var(--rule)] bg-[var(--surface-1)]">
@@ -68,7 +70,7 @@ export function RunEventStream({
       </div>
       <ol
         aria-live="polite"
-        className="m-0 max-h-80 list-none divide-y divide-[var(--rule-subtle)] overflow-y-auto p-0"
+        className="m-0 max-h-[520px] list-none divide-y divide-[var(--rule-subtle)] overflow-y-auto p-0"
       >
         {events.length ? (
           events.map((event) => (
@@ -81,7 +83,9 @@ export function RunEventStream({
               </span>
               <div>
                 <div className="text-[11px] font-semibold">
-                  {event.payload.message ?? event.type.replaceAll(".", " ")}
+                  {typeof event.payload.message === "string"
+                    ? event.payload.message
+                    : event.type.replaceAll(".", " ")}
                 </div>
                 <div className="mt-1 text-[10px] uppercase text-[var(--text-3)]">
                   {event.type}
@@ -99,7 +103,7 @@ export function RunEventStream({
         ) : (
           <li className="px-4 py-8 text-center text-[11px] text-[var(--text-3)]">
             {connection === "connecting"
-              ? "Connecting to the run event ledger…"
+              ? "Connecting to the run event ledger..."
               : "No new events after the saved sequence."}
           </li>
         )}

@@ -3,30 +3,29 @@ import Link from "next/link";
 
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
-import { getSearchWorkspace } from "@/server/services/intelligence";
+import { searchCurrentWorkspace } from "@/server/services/search";
 
-type SearchPageProps = {
+export default async function SearchPage({
+  searchParams,
+}: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
-};
-
-export default async function SearchPage({ searchParams }: SearchPageProps) {
+}) {
   const params = await searchParams;
   const query = typeof params.q === "string" ? params.q.trim() : "";
-  const data = await getSearchWorkspace(query);
-
+  const data = await searchCurrentWorkspace(query);
   return (
     <>
       <PageHeader
-        description="Workspace-scoped lookup across mission objectives, persisted evidence excerpts, and supported insights."
+        description="Workspace-scoped lookup across projects, missions, sources, runs, and versioned documents."
         eyebrow="Global search"
-        title="Search intelligence"
+        title="Search research records"
       />
       <form
         className="mb-4 flex gap-2 rounded-[4px] border border-[var(--rule)] bg-[var(--surface-1)] p-3"
         method="get"
       >
         <label className="sr-only" htmlFor="workspace-search">
-          Search missions, evidence, and insights
+          Search research records
         </label>
         <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-[3px] border border-[var(--rule)] bg-[var(--surface-2)] px-3">
           <Search aria-hidden="true" className="size-4 text-[var(--text-3)]" />
@@ -36,7 +35,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
             defaultValue={query}
             id="workspace-search"
             name="q"
-            placeholder="Search mission objectives, evidence, or findings"
+            placeholder="Search projects, missions, sources, runs, or documents"
           />
         </div>
         <button
@@ -46,7 +45,6 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
           Search
         </button>
       </form>
-
       <section className="overflow-hidden rounded-[4px] border border-[var(--rule)] bg-[var(--surface-1)]">
         <div className="border-b border-[var(--rule)] px-4 py-3">
           <h2 className="m-0 text-[13px] font-semibold">
@@ -83,7 +81,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         ) : (
           <div className="grid min-h-64 place-items-center p-8 text-center text-[11px] leading-5 text-[var(--text-3)]">
             {query
-              ? "No mission, evidence, or insight record matches this query."
+              ? "No project, mission, source, run, or document matches this query."
               : "Search is ready. Results remain scoped to the authenticated workspace."}
           </div>
         )}
